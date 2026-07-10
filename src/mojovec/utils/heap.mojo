@@ -1,6 +1,6 @@
 # heap.mojo
 
-struct HeapResult:
+struct HeapResult(TrivialRegisterPassable):
     var dist: Float32
     var label: Int
     def __init__(out self, dist: Float32, label: Int):
@@ -166,7 +166,7 @@ def max_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafeP
 
 # heap.mojo
 
-struct HeapResult32:
+struct HeapResult32(TrivialRegisterPassable):
     var dist: Float32
     var label: Int32
     def __init__(out self, dist: Float32, label: Int32):
