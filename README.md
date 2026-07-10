@@ -1,57 +1,65 @@
 # MojoVec 🔥
 
-<p align="center">
-  <b>A Vector Database (HNSW, IVF, PQ) written entirely in Mojo.</b>
-</p>
+**A Vector Database (HNSW) written entirely in Mojo.**
 
-MojoVec is a high-performance Approximate Nearest Neighbor (ANN) search library built from scratch, featuring **HNSW (Hierarchical Navigable Small World)**, **Inverted Files (IVF)**, and **Product Quantization (PQ)**.
+MojoVec is an Approximate Nearest Neighbor (ANN) search library built from scratch in pure Mojo — no C++ dependencies. HNSW is implemented and benchmarked below. IVF and Product Quantization are in progress (see Status).
 
 ---
 
-## ⚡️ Design Decisions
+## Why
 
-1. **Pure Mojo Implementation** — zero C++ dependencies, natively compiled.
-2. **Flattened Graph Memory Layout** — the entire HNSW graph lives in a flattened list. Node IDs are strictly `Int32`, packing 16 neighbors into a single 64-byte CPU cache line.
-3. **Hardware-Optimized SIMD Distances** — L2 and Inner Product distances are deeply vectorized and unroll directly into hardware SIMD registers for massive Instruction-Level Parallelism.
-4. **Cache-Line Aligned Ticket Locks** — multi-threaded inverted list insertions use strictly controlled ticket locks to safely handle concurrent indexing.
-5. **Zero-cost Traits** — Built on a strict system of abstractions (`StorageTrait`, `DistanceComputerTrait`), allowing composition without virtual dispatch or runtime overhead.
-6. **Value Semantics & Manual Memory** — core heaps and lists use `TrivialRegisterPassable` structs and raw `UnsafePointer` memory allocations to bypass all overhead.
+FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narrower question: can a pure-Mojo implementation get close to hand-tuned C++ SIMD performance without dropping into C/C++/assembly, using only what the language and its `SIMD` type give you today. This was prompted by curiosity about Mojo's SIMD codegen and a desire to build a zero-dependency, bare-metal alternative to FAISS for the Mojo ecosystem.
 
 ---
 
-## 🚀 Performance Snapshot
+## Status
 
-Apple Silicon (M-series), 100,000 vectors, 128 dimensions, 10,000 queries:
-
-| Index (efSearch=40) | Upsert / Build Time | QPS | Recall@10 |
-|---------------------|---------------------|------------|-----------|
-| **FAISS** (HNSW, C++ backend) | ~2.4 sec | **~218k** | **0.999** |
-| **MojoVec** (Pure Mojo HNSW)| **~3.1 sec** | **~118k** | **0.999** |
-| ChromaDB (hnswlib, Python) | ~5.1 sec | ~15k | 0.999 |
-
-> **Note on Performance:** MojoVec matches the exact recall of heavily optimized FAISS while providing QPS that sits squarely between bare-metal C++ and slower Python wrappers. MojoVec does this using pure Mojo SIMD loops without a single line of C/C++ or assembly! *(HNSW Parameters: `M=32`, `efConstruction=200`)*
+| Component | Status |
+|---|---|
+| HNSW (build + search) | ✅ Implemented, benchmarked below |
+| SQ8 / F16 scalar quantization | ✅ Implemented — memory numbers not yet benchmarked (see below) |
+| IVF + PQ (`IndexIVFPQ`) | 🚧 In progress — no working example or benchmark yet |
+| Python bindings (`pip install mojovec`) | 🚧 Planned, not published |
 
 ---
 
-## 🎯 Honest Tradeoffs
+## Design Decisions
 
-MojoVec is a cutting edge project leveraging an evolving language. While it offers extreme performance out of the box, please consider the following:
-
-- **Mojo is Evolving.** MojoVec targets the very latest Mojo nightly builds. As the language matures, some syntaxes may require updates.
-- **Python Wrappers.** We are actively working on wrapping MojoVec using Mojo's FFI capabilities into a standard Python wheel (`pip install mojovec`), but currently it is best consumed directly from Mojo.
-
----
-
-## 🗜️ Advanced Quantization (Memory Savings)
-
-MojoVec supports extreme memory compression while maintaining incredible search speeds through Product Quantization and Scalar Quantization.
-
-- **`IndexScalarQuantizer`**: Compresses `Float32` vectors into 8-bit integers (`SQ8`) or `Float16`, reducing memory by 4x-2x on the fly.
-- **`IndexIVFPQ`**: Combines Inverted Files (IVF) and Product Quantization (PQ) for massive dataset compression. Vectors are split into sub-vectors and quantized to centroids, and searched via Asymmetric Distance Computation (ADC) lookup tables.
+1. **Pure Mojo implementation** — no C++ dependencies, natively compiled.
+2. **Flattened graph memory layout** — the HNSW graph lives in a flat array; node IDs are `Int32`, 16 neighbors packed per 64-byte cache line.
+3. **SIMD distance kernels** — L2 and Inner Product distances are vectorized to hardware SIMD registers.
+4. **Cache-line-aligned ticket locks** — concurrent inverted-list insertion uses ticket locks. *(Not yet exercised by any example below — add a multi-threaded ingest sample once this is validated under load.)*
+5. **Static trait-based abstractions** (`StorageTrait`, `DistanceComputerTrait`) instead of virtual dispatch.
+6. **Manual memory management** — core structures use `TrivialRegisterPassable` + `UnsafePointer`, no GC overhead.
 
 ---
 
-## 📦 Quick Start
+## Performance
+
+100,000 vectors, 128 dimensions, 10,000 queries, `efSearch=40`, `M=32`, `efConstruction=200`.
+
+| Index | Build Time | QPS | Recall@10 |
+|---|---|---|---|
+| FAISS (HNSW, C++) | ~2.4 s | ~218k | 0.999 |
+| MojoVec (pure Mojo HNSW) | ~3.1 s | ~118k | 0.999 |
+| ChromaDB (hnswlib, Python) | ~5.1 s | ~15k | 0.999 |
+
+**Methodology:** Apple Silicon M-series (ARM64), multi-threaded index build, single-threaded queries, random synthetic dataset (uniform distribution). Recall computed by directly intersecting with exact 100% ground-truth brute-force Flat index results in the benchmark script (not assumed).
+
+MojoVec's QPS sits between FAISS and a Python-wrapped hnswlib, using SIMD loops without C/C++/assembly. The gap to FAISS (~118k vs ~218k QPS) is the honest cost of a younger compiler and no hand-tuned intrinsics — closing it further is the current focus, not something to gloss over.
+
+---
+
+## Quantization (Memory Compression)
+
+- **`IndexScalarQuantizer`** — compresses `Float32` vectors to 8-bit (`SQ8`) or `Float16`, a 4x/2x reduction on paper.
+- **`IndexIVFPQ`** — IVF + PQ for larger compression ratios via Asymmetric Distance Computation. *(Status: in progress, no benchmark yet.)*
+
+*(Note: measured memory footprint before/after quantization, and recall delta vs full-precision benchmarks are coming soon.)*
+
+---
+
+## Quick Start
 
 ### 1. Initialize the Index (Mojo)
 
@@ -62,11 +70,8 @@ from src.mojovec.core.types import METRIC_L2
 
 def main() raises:
     var d = 128
-    
-    # Initialize the underlying storage (Flat)
+
     var storage = IndexFlat(d, METRIC_L2)
-    
-    # Initialize HNSW index on top of the storage
     var hnsw = IndexHNSW[IndexFlat](storage^, d, METRIC_L2, M=32)
     hnsw.hnsw.efConstruction = 200
     hnsw.hnsw.efSearch = 40
@@ -79,29 +84,26 @@ from std.memory import alloc
 
     var num_vectors = 1000
     var xb = alloc[Float32](num_vectors * d)
-    
-    # ... (fill xb with data) ...
-    
-    # Add to index
+
+    # ... fill xb with data ...
+
     hnsw.add(num_vectors, xb)
 ```
 
-### 3. High-Speed Querying
+### 3. Search
 
 ```mojo
     var num_queries = 10
     var xq = alloc[Float32](num_queries * d)
     var k = 10
-    
-    # ... (fill xq with query vectors) ...
-    
+
+    # ... fill xq with query vectors ...
+
     var distances = alloc[Float32](num_queries * k)
     var labels = alloc[Int](num_queries * k)
-    
-    # Search top_k nearest neighbors
+
     hnsw.search(num_queries, xq, k, distances, labels)
-    
-    # Process results
+
     for i in range(num_queries):
         print("Query", i)
         for j in range(k):
@@ -113,16 +115,13 @@ from std.memory import alloc
 ```mojo
 from src.mojovec.io.index_io import write_index, read_index
 
-    # Save to disk
     write_index(hnsw, "my_index.bin")
-    
-    # Load from disk
     var loaded_index = read_index("my_index.bin")
 ```
 
 ---
 
-## 🧪 Running Tests & Benchmarks
+## Running Tests & Benchmarks
 
 Requires Mojo (via Pixi/Magic).
 
@@ -130,7 +129,7 @@ Requires Mojo (via Pixi/Magic).
 # Run all tests
 for f in tests/test_*.mojo; do mojo run -I . "$f"; done
 
-# Run benchmarking suite
+# Run benchmark suite
 mojo run -I . benchmarks/suite/bench_mojovec.mojo
 ```
 
