@@ -379,8 +379,16 @@ struct HNSWGraph(Movable):
                 var c_dist = popped.dist
                 var keep = True
                 
+                # Prefetch 'c' vector since it will be compared against multiple 'e' vectors
+                comp.prefetch_vector(c)
+                
                 for r in range(return_size):
                     var e = return_list[r]
+                    
+                    # Prefetch the next 'e' vector to hide memory latency
+                    if r + 1 < return_size:
+                        comp.prefetch_vector(return_list[r + 1])
+                        
                     var e_c_dist = comp.symmetric_distance(c, e)
                     if e_c_dist < c_dist:
                         keep = False
