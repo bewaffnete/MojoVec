@@ -37,10 +37,19 @@ The architecture and design philosophy are heavily inspired by Meta's **Faiss**.
 ## Benchmarks
 On an Apple Silicon M-series chip with 100,000 vectors ($d=128$), MojoVec matches Faiss C++ in recall while approaching its heavily hand-tuned assembly speeds on pure CPU:
 
-| Index (efSearch=10) | QPS | Recall@10 |
+| Index (efSearch=40) | QPS | Recall@10 |
 |---------------------|---------|-----------|
-| **Faiss** | ~430k | 0.925 |
-| **MojoVec** | ~241k | 0.921 |
+| **Faiss** | ~218k | 0.999 |
+| **MojoVec** | ~118k | 0.999 |
+| **ChromaDB** | ~15k | 0.999 |
+
+### Benchmark Parameters and Dataset
+- **Hardware**: Apple Silicon M-series (CPU)
+- **Dataset Size ($N$)**: 100,000 vectors
+- **Vector Dimensions ($d$)**: 128
+- **Queries**: 10,000 vectors
+- **Metric**: L2 (Euclidean Distance)
+- **HNSW Parameters**: `M = 32`, `efConstruction = 200`
 
 *(MojoVec's speed is achieved with pure Mojo SIMD loops without a single line of C++ or assembly).*
 

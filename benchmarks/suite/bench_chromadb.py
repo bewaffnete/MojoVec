@@ -34,7 +34,8 @@ def main():
         metadata={
             "hnsw:space": "l2",
             "hnsw:construction_ef": efConstruction,
-            "hnsw:M": M
+            "hnsw:M": M,
+            "hnsw:search_ef": 40
         }
     )
     

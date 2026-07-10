@@ -44,6 +44,7 @@ def main() raises:
     
     var ef_list = List[Int]()
     ef_list.append(10)
+    ef_list.append(40)
     ef_list.append(50)
     ef_list.append(100)
     ef_list.append(200)

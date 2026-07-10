@@ -37,7 +37,7 @@ def main():
     
     # 2. Search
     print("Search:")
-    for ef in [10, 50, 100, 200]:
+    for ef in [10, 40, 50, 100, 200]:
         index.hnsw.efSearch = ef
         
         # warmup
