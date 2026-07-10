@@ -9,7 +9,7 @@ struct HeapResult:
 
 
 @always_inline
-def max_heap_replace_top(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], heap_labels: UnsafePointer[Int, MutUntrackedOrigin], k: Int, dist: Float32, label: Int):
+def max_heap_replace_top[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], k: Int, dist: Float32, label: Int):
     """
     Replaces the top element (max) of the max-heap with a new element and sifts down.
     Assumes the heap has size k and the top is at index 0.
@@ -43,7 +43,7 @@ def max_heap_replace_top(heap_distances: UnsafePointer[Float32, MutUntrackedOrig
             break
 
 @always_inline
-def max_heap_push(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], heap_labels: UnsafePointer[Int, MutUntrackedOrigin], current_size: Int, dist: Float32, label: Int):
+def max_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int, dist: Float32, label: Int):
     """
     Pushes a new element into the max-heap and sifts up.
     """
@@ -68,7 +68,7 @@ def max_heap_push(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], he
             break
 
 @always_inline
-def min_heap_push(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], heap_labels: UnsafePointer[Int, MutUntrackedOrigin], current_size: Int, dist: Float32, label: Int):
+def min_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int, dist: Float32, label: Int):
     var i = current_size
     heap_distances[i] = dist
     heap_labels[i] = label
@@ -89,7 +89,7 @@ def min_heap_push(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], he
             break
 
 @always_inline
-def min_heap_pop(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], heap_labels: UnsafePointer[Int, MutUntrackedOrigin], current_size: Int) -> HeapResult:
+def min_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int) -> HeapResult:
     var popped_dist = heap_distances[0]
     var popped_label = heap_labels[0]
     
@@ -127,7 +127,7 @@ def min_heap_pop(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], hea
     return HeapResult(popped_dist, popped_label)
 
 @always_inline
-def max_heap_pop(heap_distances: UnsafePointer[Float32, MutUntrackedOrigin], heap_labels: UnsafePointer[Int, MutUntrackedOrigin], current_size: Int) -> HeapResult:
+def max_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int) -> HeapResult:
     var popped_dist = heap_distances[0]
     var popped_label = heap_labels[0]
     
