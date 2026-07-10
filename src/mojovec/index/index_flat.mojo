@@ -43,7 +43,7 @@ struct FlatDistanceComputer(DistanceComputerTrait):
         the next neighbor's vector data is being loaded into cache.
         """
         var ptr = self.codes + (id * self.d)
-        comptime opts = PrefetchOptions().for_read().medium_locality().to_data_cache()
+        comptime opts = PrefetchOptions().for_read().low_locality().to_data_cache()
         prefetch[opts](ptr)
 
 struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):

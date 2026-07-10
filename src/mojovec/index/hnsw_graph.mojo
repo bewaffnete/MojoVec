@@ -1,6 +1,7 @@
 from std.random import rand
 from std.math import log
 from std.atomic import Atomic
+from std.sys.intrinsics import prefetch, PrefetchOptions
 from src.mojovec.utils.heap import max_heap_push, max_heap_replace_top, min_heap_push, min_heap_pop
 from src.mojovec.utils.distance_computer import DistanceComputerTrait
 from .hnsw_visited import VisitedTable
@@ -208,6 +209,13 @@ struct HNSWGraph(Movable):
             if W_size == ef and c_dist > worst_w_dist:
                 break
                 
+            # Prefetch the next node's neighbor list if there are still candidates left
+            if C_size > 0:
+                var next_c_id = C_labels[0]
+                var next_info = self.get_neighbors(next_c_id, level)
+                comptime opts_list = PrefetchOptions().for_read().low_locality().to_data_cache()
+                prefetch[opts_list](next_info.ptr.bitcast[UInt8]())
+                
             var neighbors_info = self.get_neighbors(c_id, level)
             var neighbors = neighbors_info.ptr
             var max_links = neighbors_info.max_links
@@ -215,6 +223,13 @@ struct HNSWGraph(Movable):
                 var e = neighbors[i]
                 if e < 0:
                     break
+                    
+                # Prefetch the visited table flag for the next neighbor
+                if i + 1 < max_links:
+                    var next_e = neighbors[i + 1]
+                    if next_e >= 0:
+                        vt[].prefetch(next_e)
+                        
                 if not vt[].is_visited(e):
                     vt[].set_visited(e)
                     

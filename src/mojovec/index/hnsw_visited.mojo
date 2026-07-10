@@ -46,7 +46,13 @@ struct VisitedTable(Movable):
     def set_visited(self, node: Int):
         self.marks[node] = self.current_mark
 
+    @always_inline
+    def prefetch(self, node: Int):
+        comptime opts = PrefetchOptions().for_read().low_locality().to_data_cache()
+        prefetch[opts](self.marks + node)
+
 from std.atomic import Atomic
+from std.sys.intrinsics import prefetch, PrefetchOptions
 
 struct VisitedTablePool(Movable):
     var capacity: Int
