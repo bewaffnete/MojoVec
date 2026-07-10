@@ -358,32 +358,25 @@ struct HNSWGraph(Movable):
             var C_dists = alloc[Float32](C_size)
             
             for j in range(info.max_links):
-                C_nodes[j] = neighbors[j]
-                C_dists[j] = comp.distance(neighbors[j])
+                var node_dist = comp.distance(neighbors[j])
+                min_heap_push(C_dists, C_nodes, j, node_dist, neighbors[j])
                 
-            C_nodes[info.max_links] = dest
-            C_dists[info.max_links] = comp.distance(dest)
+            var dest_dist = comp.distance(dest)
+            min_heap_push(C_dists, C_nodes, info.max_links, dest_dist, dest)
             
-            for j in range(1, C_size):
-                var key_node = C_nodes[j]
-                var key_dist = C_dists[j]
-                var p = j - 1
-                while p >= 0 and C_dists[p] > key_dist:
-                    C_nodes[p + 1] = C_nodes[p]
-                    C_dists[p + 1] = C_dists[p]
-                    p -= 1
-                C_nodes[p + 1] = key_node
-                C_dists[p + 1] = key_dist
-                
             var return_list = alloc[Int](info.max_links)
             var return_size = 0
             
-            for j in range(C_size):
+            var current_heap_size = C_size
+            
+            while current_heap_size > 0:
                 if return_size >= info.max_links:
                     break
                 
-                var c = C_nodes[j]
-                var c_dist = C_dists[j]
+                var popped = min_heap_pop(C_dists, C_nodes, current_heap_size)
+                current_heap_size -= 1
+                var c = popped.label
+                var c_dist = popped.dist
                 var keep = True
                 
                 for r in range(return_size):
