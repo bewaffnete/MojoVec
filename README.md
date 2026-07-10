@@ -111,10 +111,15 @@ from std.memory import alloc
 ### 4. Disk Persistence
 
 ```mojo
-from mojovec import write_index, read_index
+from mojovec import write_index_flat, read_index_flat
 
-    write_index(hnsw, "my_index.bin")
-    var loaded_index = read_index("my_index.bin")
+    var f_w = open("my_index.bin", "w")
+    write_index_flat(f_w, index)
+    f_w.close()
+
+    var f_r = open("my_index.bin", "r")
+    var loaded_index = read_index_flat(f_r)
+    f_r.close()
 ```
 
 ---
