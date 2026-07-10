@@ -1,5 +1,11 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
+
+# Hardware-optimized for Apple Silicon (ARM NEON)
+# While NEON physical width is 4 (128-bit), we unroll by a larger multiple 
+# for maximum instruction-level parallelism.
+comptime SIMD_WIDTH = 64
+
 from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..utils.heap import max_heap_push, max_heap_replace_top
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
@@ -21,18 +27,18 @@ struct FlatDistanceComputer(DistanceComputerTrait):
     def distance(self, id: Int) -> Float32:
         var db_ptr = self.codes + (id * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd[16](self.query, db_ptr, self.d)
+            return l2_distance_simd[SIMD_WIDTH](self.query, db_ptr, self.d)
         else:
-            return -inner_product_simd[16](self.query, db_ptr, self.d)
+            return -inner_product_simd[SIMD_WIDTH](self.query, db_ptr, self.d)
             
     @always_inline
     def symmetric_distance(self, i: Int, j: Int) -> Float32:
         var ptr_i = self.codes + (i * self.d)
         var ptr_j = self.codes + (j * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd[16](ptr_i, ptr_j, self.d)
+            return l2_distance_simd[SIMD_WIDTH](ptr_i, ptr_j, self.d)
         else:
-            return -inner_product_simd[16](ptr_i, ptr_j, self.d)
+            return -inner_product_simd[SIMD_WIDTH](ptr_i, ptr_j, self.d)
 
     @always_inline
     def prefetch_vector(self, id: Int):

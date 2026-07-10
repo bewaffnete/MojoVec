@@ -14,11 +14,11 @@ from .hnsw_visited import VisitedTable
 
 
 struct NeighborsInfo:
-    var ptr: UnsafePointer[Int, MutUntrackedOrigin]
+    var ptr: UnsafePointer[Int32, MutUntrackedOrigin]
     var max_links: Int
 
     def __init__(
-        out self, ptr: UnsafePointer[Int, MutUntrackedOrigin], max_links: Int
+        out self, ptr: UnsafePointer[Int32, MutUntrackedOrigin], max_links: Int
     ):
         self.ptr = ptr
         self.max_links = max_links
@@ -35,7 +35,7 @@ struct HNSWGraph(Movable):
 
     var levels: UnsafePointer[Int, MutUntrackedOrigin]
     var offsets: UnsafePointer[Int, MutUntrackedOrigin]
-    var neighbors: UnsafePointer[Int, MutUntrackedOrigin]
+    var neighbors: UnsafePointer[Int32, MutUntrackedOrigin]
     var cum_nneighbor_per_level: UnsafePointer[Int, MutUntrackedOrigin]
 
     var capacity: Int
@@ -71,7 +71,7 @@ struct HNSWGraph(Movable):
         self.levels = alloc[Int](self.capacity)
         self.offsets = alloc[Int](self.capacity + 1)
         self.offsets[0] = 0
-        self.neighbors = alloc[Int](self.neighbors_capacity)
+        self.neighbors = alloc[Int32](self.neighbors_capacity)
         for i in range(self.neighbors_capacity):
             self.neighbors[i] = -1
 
@@ -173,7 +173,7 @@ struct HNSWGraph(Movable):
 
     def grow_neighbors(mut self, required_capacity: Int, current_offset: Int):
         var new_capacity = max(self.neighbors_capacity * 2, required_capacity)
-        var new_neighbors = alloc[Int](new_capacity)
+        var new_neighbors = alloc[Int32](new_capacity)
         for i in range(new_capacity):
             new_neighbors[i] = -1
 
@@ -201,10 +201,10 @@ struct HNSWGraph(Movable):
         level: Int,
         vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
         mut res_dist: UnsafePointer[Float32, origin1],
-        mut res_labels: UnsafePointer[Int, origin2],
+        mut res_labels: UnsafePointer[Int32, origin2],
     ) -> Int:
         var c_dist_array = InlineArray[Float32, 2048](uninitialized=True)
-        var c_labels_array = InlineArray[Int, 2048](uninitialized=True)
+        var c_labels_array = InlineArray[Int32, 2048](uninitialized=True)
         var C_dist = c_dist_array.unsafe_ptr()
         var C_labels = c_labels_array.unsafe_ptr()
         var C_cap = 2048  # Max pre-allocated capacity
@@ -217,15 +217,15 @@ struct HNSWGraph(Movable):
         vt[].advance()
         vt[].set_visited(ep_id)
 
-        min_heap_push(C_dist, C_labels, C_size, ep_dist, ep_id)
+        min_heap_push(C_dist, C_labels, C_size, ep_dist, Int32(ep_id))
         C_size += 1
 
-        max_heap_push(W_dist, W_labels, W_size, ep_dist, ep_id)
+        max_heap_push(W_dist, W_labels, W_size, ep_dist, Int32(ep_id))
         W_size += 1
 
         while C_size > 0:
             var c_dist: Float32 = 0.0
-            var c_id: Int = 0
+            var c_id: Int32 = 0
             var popped = min_heap_pop(C_dist, C_labels, C_size)
             c_dist = popped.dist
             c_id = popped.label
@@ -238,11 +238,11 @@ struct HNSWGraph(Movable):
             # Prefetch the next node's neighbor list if there are still candidates left
             if C_size > 0:
                 var next_c_id = C_labels[0]
-                var next_info = self.get_neighbors(next_c_id, level)
+                var next_info = self.get_neighbors(Int(next_c_id), level)
                 comptime opts_list = PrefetchOptions().for_read().low_locality().to_data_cache()
                 prefetch[opts_list](next_info.ptr.bitcast[UInt8]())
 
-            var neighbors_info = self.get_neighbors(c_id, level)
+            var neighbors_info = self.get_neighbors(Int(c_id), level)
             var neighbors = neighbors_info.ptr
             var max_links = neighbors_info.max_links
             for i in range(max_links):
@@ -254,10 +254,10 @@ struct HNSWGraph(Movable):
                 if i + 1 < max_links:
                     var next_e = neighbors[i + 1]
                     if next_e >= 0:
-                        vt[].prefetch(next_e)
+                        vt[].prefetch(Int(next_e))
 
-                if not vt[].is_visited(e):
-                    vt[].set_visited(e)
+                if not vt[].is_visited(Int(e)):
+                    vt[].set_visited(Int(e))
 
                     # Prefetch next unvisited neighbor's vector while computing distance for current one.
                     # This hides memory latency: while CPU does SIMD math for vector `e`,
@@ -266,11 +266,11 @@ struct HNSWGraph(Movable):
                         var next_e = neighbors[look_ahead]
                         if next_e < 0:
                             break
-                        if not vt[].is_visited(next_e):
-                            comp.prefetch_vector(next_e)
+                        if not vt[].is_visited(Int(next_e)):
+                            comp.prefetch_vector(Int(next_e))
                             break
 
-                    var e_dist = comp.distance(e)
+                    var e_dist = comp.distance(Int(e))
 
                     worst_w_dist = W_dist[0]
                     if W_size < ef or e_dist < worst_w_dist:
@@ -308,11 +308,11 @@ struct HNSWGraph(Movable):
         # Simple heuristic: keep the closest max_links neighbors
         # Sort by distance
         var dists = alloc[Float32](current_links)
-        var labels = alloc[Int](current_links)
+        var labels = alloc[Int32](current_links)
 
         for i in range(current_links):
             labels[i] = neighbors[i]
-            dists[i] = comp.distance(neighbors[i])
+            dists[i] = comp.distance(Int(neighbors[i]))
 
         # We can just sort them manually (selection sort since M is small)
         for i in range(current_links):
@@ -358,31 +358,31 @@ struct HNSWGraph(Movable):
 
         var i = 0
         while i < info.max_links and neighbors[i] != -1:
-            if neighbors[i] == dest:
+            if neighbors[i] == Int32(dest):
                 self.unlock_node(src)
                 return  # Already linked
             i += 1
 
         if i < info.max_links:
-            neighbors[i] = dest
+            neighbors[i] = Int32(dest)
             if i + 1 < info.max_links:
                 neighbors[i + 1] = -1
             self.unlock_node(src)
         else:
             var C_size = info.max_links + 1
-            var c_nodes_array = InlineArray[Int, 2048](uninitialized=True)
+            var c_nodes_array = InlineArray[Int32, 2048](uninitialized=True)
             var c_dists_array = InlineArray[Float32, 2048](uninitialized=True)
             var C_nodes = c_nodes_array.unsafe_ptr()
             var C_dists = c_dists_array.unsafe_ptr()
 
             for j in range(info.max_links):
-                var node_dist = comp.distance(neighbors[j])
+                var node_dist = comp.symmetric_distance(src, Int(neighbors[j]))
                 min_heap_push(C_dists, C_nodes, j, node_dist, neighbors[j])
 
-            var dest_dist = comp.distance(dest)
-            min_heap_push(C_dists, C_nodes, info.max_links, dest_dist, dest)
+            var dest_dist = comp.symmetric_distance(src, dest)
+            min_heap_push(C_dists, C_nodes, info.max_links, dest_dist, Int32(dest))
 
-            var return_list_array = InlineArray[Int, 2048](uninitialized=True)
+            var return_list_array = InlineArray[Int32, 2048](uninitialized=True)
             var return_list = return_list_array.unsafe_ptr()
             var return_size = 0
 
@@ -399,16 +399,16 @@ struct HNSWGraph(Movable):
                 var keep = True
 
                 # Prefetch 'c' vector since it will be compared against multiple 'e' vectors
-                comp.prefetch_vector(c)
+                comp.prefetch_vector(Int(c))
 
                 for r in range(return_size):
                     var e = return_list[r]
 
                     # Prefetch the next 'e' vector to hide memory latency
                     if r + 1 < return_size:
-                        comp.prefetch_vector(return_list[r + 1])
+                        comp.prefetch_vector(Int(return_list[r + 1]))
 
-                    var e_c_dist = comp.symmetric_distance(c, e)
+                    var e_c_dist = comp.symmetric_distance(Int(c), Int(e))
                     if e_c_dist < c_dist:
                         keep = False
                         break

@@ -23,7 +23,7 @@ def main() raises:
         queries[i] = Float32(random_float64(-1.0, 1.0))
     print("Data and queries .")
     var flat_quantizer = alloc[IndexFlat](1)
-    flat_quantizer[0] = IndexFlat(d)
+    flat_quantizer.init_pointee_move(IndexFlat(d))
     var ivf = IndexIVFFlat[IndexFlat](flat_quantizer, d, nlist)
     
     print("Training IVF...")

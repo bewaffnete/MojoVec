@@ -113,16 +113,16 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                         var neigh = neighbors[j]
                         if neigh < 0:
                             break
-                        var d = comp.distance(neigh)
+                        var d = comp.distance(Int(neigh))
                         if d < ep_dist:
                             ep_dist = d
-                            ep_id = neigh
+                            ep_id = Int(neigh)
                             changed = True
 
             var vt_id = vt_pool.acquire()
             var vt = vt_pool.get(vt_id)
             var w_dist_array = InlineArray[Float32, 2048](uninitialized=True)
-            var w_labels_array = InlineArray[Int, 2048](uninitialized=True)
+            var w_labels_array = InlineArray[Int32, 2048](uninitialized=True)
             var W_dist = w_dist_array.unsafe_ptr()
             var W_labels = w_labels_array.unsafe_ptr()
 
@@ -141,7 +141,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                 var w_sorted_dist_array = InlineArray[Float32, 2048](
                     uninitialized=True
                 )
-                var w_sorted_labels_array = InlineArray[Int, 2048](
+                var w_sorted_labels_array = InlineArray[Int32, 2048](
                     uninitialized=True
                 )
                 var W_sorted_dist = w_sorted_dist_array.unsafe_ptr()
@@ -159,10 +159,28 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                 if level == 0:
                     M_l = self.hnsw.M * 2
 
+                # Apply extended heuristic to select M_l diverse neighbors from the candidates
+                var return_size = 0
+                for j in range(total_w):
+                    if return_size >= M_l:
+                        break
+                    var c_id = Int(W_sorted_labels[j])
+                    var c_dist = W_sorted_dist[j]
+                    var keep = True
+                    for r in range(return_size):
+                        var e_id = Int(W_sorted_labels[r])
+                        var e_c_dist = comp.symmetric_distance(c_id, e_id)
+                        if e_c_dist < c_dist:
+                            keep = False
+                            break
+                    if keep:
+                        W_sorted_labels[return_size] = Int32(c_id)
+                        W_sorted_dist[return_size] = c_dist
+                        return_size += 1
+
                 # Add links from pt_id to neighbors
-                var links_to_add = min(total_w, M_l)
-                for j in range(links_to_add):
-                    var n_id = W_sorted_labels[j]
+                for j in range(return_size):
+                    var n_id = Int(W_sorted_labels[j])
                     self.hnsw.add_link(comp, pt_id, n_id, level, vt)
 
                     var n_comp = self.storage.get_distance_computer(
@@ -170,9 +188,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                     )
                     self.hnsw.add_link(n_comp, n_id, pt_id, level, vt)
 
-                # The entry point for the next level is the closest in W
+                # The entry point for the next level is the closest in W (which is index 0)
+
                 if total_w > 0:
-                    ep_id = W_sorted_labels[0]
+                    ep_id = Int(W_sorted_labels[0])
                     ep_dist = W_sorted_dist[0]
 
             vt_pool.release(vt_id)
@@ -214,7 +233,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
             var vt = vt_pool.get(vt_id)
 
             var w_dist_array = InlineArray[Float32, 2048](uninitialized=True)
-            var w_labels_array = InlineArray[Int, 2048](uninitialized=True)
+            var w_labels_array = InlineArray[Int32, 2048](uninitialized=True)
             var W_dist = w_dist_array.unsafe_ptr()
             var W_labels = w_labels_array.unsafe_ptr()
 
@@ -240,10 +259,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                         var neigh = neighbors[j]
                         if neigh < 0:
                             break
-                        var d = comp.distance(neigh)
+                        var d = comp.distance(Int(neigh))
                         if d < ep_dist:
                             ep_dist = d
-                            ep_id = neigh
+                            ep_id = Int(neigh)
                             changed = True
 
             # Beam search on level 0
@@ -266,7 +285,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                 W_size -= 1
                 var idx = result_count - 1 - j
                 res_dist_ptr[idx] = popped.dist
-                res_labels_ptr[idx] = popped.label
+                res_labels_ptr[idx] = Int(popped.label)
 
             for j in range(result_count, k):
                 res_dist_ptr[j] = 0.0
