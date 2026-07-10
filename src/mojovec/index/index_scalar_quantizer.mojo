@@ -4,6 +4,7 @@ from ..core.quantizer import ScalarQuantizer
 from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..utils.heap import max_heap_push, max_heap_replace_top
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
+from std.sys.intrinsics import prefetch, PrefetchOptions
 
 struct SQDistanceComputer(DistanceComputerTrait):
     var d: Int
@@ -13,7 +14,9 @@ struct SQDistanceComputer(DistanceComputerTrait):
     var codes: UnsafePointer[UInt8, MutUntrackedOrigin]
     var query: UnsafePointer[Float32, MutUntrackedOrigin]
     var scratch_x: UnsafePointer[Float32, MutUntrackedOrigin]
-    
+    # Second scratch buffer for symmetric_distance(i, j): decodes j while scratch_x holds i.
+    var scratch_y: UnsafePointer[Float32, MutUntrackedOrigin]
+
     def __init__(out self, d: Int, code_size: Int, metric_type: MetricType, sq: ScalarQuantizer, codes: UnsafePointer[UInt8, MutUntrackedOrigin], query: UnsafePointer[Float32, MutUntrackedOrigin]):
         self.d = d
         self.code_size = code_size
@@ -22,7 +25,8 @@ struct SQDistanceComputer(DistanceComputerTrait):
         self.codes = codes
         self.query = query
         self.scratch_x = alloc[Float32](self.d)
-        
+        self.scratch_y = alloc[Float32](self.d)
+
     def __init__(out self, *, deinit move: Self):
         self.d = move.d
         self.code_size = move.code_size
@@ -31,11 +35,14 @@ struct SQDistanceComputer(DistanceComputerTrait):
         self.codes = move.codes
         self.query = move.query
         self.scratch_x = move.scratch_x
-        
+        self.scratch_y = move.scratch_y
+
     def __del__(deinit self):
         # In Mojo, we can't check pointer truthiness, so we just free if address is not 0
         if Int(self.scratch_x) != 0:
             self.scratch_x.free()
+        if Int(self.scratch_y) != 0:
+            self.scratch_y.free()
         
     @always_inline
     def distance(self, id: Int) -> Float32:
@@ -45,6 +52,29 @@ struct SQDistanceComputer(DistanceComputerTrait):
             return l2_distance_simd[4](self.query, self.scratch_x, self.d)
         else:
             return -inner_product_simd[4](self.query, self.scratch_x, self.d)
+
+    @always_inline
+    def symmetric_distance(self, i: Int, j: Int) -> Float32:
+        # Decode both codes into separate scratch buffers — scratch_x holds i,
+        # scratch_y holds j. Sharing one buffer would overwrite i before the
+        # distance is computed. Mirrors FlatDistanceComputer's metric handling.
+        self.sq.decode(self.codes + (i * self.code_size), self.scratch_x)
+        self.sq.decode(self.codes + (j * self.code_size), self.scratch_y)
+        if self.metric_type == METRIC_L2:
+            return l2_distance_simd[4](self.scratch_x, self.scratch_y, self.d)
+        else:
+            return -inner_product_simd[4](self.scratch_x, self.scratch_y, self.d)
+
+    @always_inline
+    def prefetch_vector(self, id: Int):
+        """Prefetch quantized codes for `id` into CPU cache.
+        
+        For SQ, prefetching the encoded bytes ahead of decode+distance
+        hides memory latency during HNSW neighbor traversal.
+        """
+        var ptr = self.codes + (id * self.code_size)
+        comptime opts = PrefetchOptions().for_read().medium_locality().to_data_cache()
+        prefetch[opts](ptr)
 
 struct IndexScalarQuantizer(Index, StorageTrait):
     comptime ComputerType = SQDistanceComputer
@@ -60,21 +90,27 @@ struct IndexScalarQuantizer(Index, StorageTrait):
     var codes: UnsafePointer[UInt8, MutUntrackedOrigin]
     # Capacity allocated for codes (in vectors)
     var capacity: Int
+    # Reusable scratch buffer for get_vector() — decodes a code into Float32 space.
+    # Persistent allocation avoids per-call alloc/free in HNSW build paths.
+    var scratch_x: UnsafePointer[Float32, MutUntrackedOrigin]
 
     def __init__(out self, d: Int, qtype: QuantizerType, metric: MetricType = METRIC_L2):
         self.d = d
         self.ntotal = 0
         self.metric_type = metric
-        
+
         self.sq = ScalarQuantizer(d, qtype)
         self.code_size = self.sq.code_size()
         self.is_trained = self.sq.is_trained
-        
+
         self.capacity = 1024  # Initial capacity for 1024 vectors
         self.codes = alloc[UInt8](self.capacity * self.code_size)
+        self.scratch_x = alloc[Float32](self.d)
 
     def __del__(deinit self):
-        self.codes.free()
+        self.scratch_x.free()
+        if Int(self.codes) != 0:
+            self.codes.free()
         
     def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
         self.sq.train(n, x)

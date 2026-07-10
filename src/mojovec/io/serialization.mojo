@@ -122,12 +122,11 @@ def write_invlists(mut f: FileHandle, invlists: ArrayInvertedLists) raises:
     
     _ = Int(invlists.lists) # Alias analysis workaround
     for i in range(invlists.nlist):
-        var bucket = invlists.lists[i]
-        write_int(f, bucket.size)
-        write_int(f, bucket.capacity)
-        
-        write_unsafe_pointer_int(f, bucket.ids, bucket.size)
-        write_unsafe_pointer_uint8(f, bucket.codes, bucket.size * invlists.code_size)
+        write_int(f, invlists.lists[i].size)
+        write_int(f, invlists.lists[i].capacity)
+
+        write_unsafe_pointer_int(f, invlists.lists[i].ids, invlists.lists[i].size)
+        write_unsafe_pointer_uint8(f, invlists.lists[i].codes, invlists.lists[i].size * invlists.code_size)
 
 def read_invlists(mut f: FileHandle, mut invlists: ArrayInvertedLists) raises:
     var magic = read_int(f)
@@ -147,9 +146,7 @@ def read_invlists(mut f: FileHandle, mut invlists: ArrayInvertedLists) raises:
         
         invlists.resize(i, capacity)
         _ = Int(invlists.lists)
-        var bucket = invlists.lists[i]
-        bucket.size = size
-        invlists.lists[i] = bucket
+        invlists.lists[i].size = size
         
         var list_codes = invlists.get_codes(i)
         var list_ids = invlists.get_ids(i)

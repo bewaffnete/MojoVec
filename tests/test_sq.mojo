@@ -4,12 +4,14 @@ from src.mojovec.index.index_scalar_quantizer import IndexScalarQuantizer
 
 def test_index_scalar_quantizer_sq8_l2() raises:
     var index = IndexScalarQuantizer(4, QT_8bit, METRIC_L2)
-    
+
     var data = alloc[Float32](12)
     for i in range(4): data[i] = 0.0
     for i in range(4): data[4 + i] = 100.0
     for i in range(4): data[8 + i] = 200.0
-        
+
+    # SQ8 requires explicit training (convention: add() is a no-op until trained).
+    index.train(3, data)
     index.add(3, data)
     assert_equal(index.ntotal, 3)
     
@@ -69,6 +71,7 @@ def test_index_scalar_quantizer_sq8_negative_bounds() raises:
     data[0] = -100.0; data[1] = -100.0
     data[2] = 0.0; data[3] = 0.0
     data[4] = 100.0; data[5] = 100.0
+    index.train(3, data)
     index.add(3, data)
     
     var query = alloc[Float32](2)

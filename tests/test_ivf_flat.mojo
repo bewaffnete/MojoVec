@@ -21,7 +21,7 @@ def main() raises:
     var queries = alloc[Float32](nq * d)
     for i in range(nq * d):
         queries[i] = Float32(random_float64(-1.0, 1.0))
-        
+    print("Data and queries .")
     var flat_quantizer = alloc[IndexFlat](1)
     flat_quantizer[0] = IndexFlat(d)
     var ivf = IndexIVFFlat[IndexFlat](flat_quantizer, d, nlist)

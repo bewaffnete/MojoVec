@@ -3,6 +3,7 @@ from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..utils.heap import max_heap_push, max_heap_replace_top
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
+from std.sys.intrinsics import prefetch, PrefetchOptions
 
 struct FlatDistanceComputer(DistanceComputerTrait):
     var d: Int
@@ -32,6 +33,18 @@ struct FlatDistanceComputer(DistanceComputerTrait):
             return l2_distance_simd[4](ptr_i, ptr_j, self.d)
         else:
             return -inner_product_simd[4](ptr_i, ptr_j, self.d)
+
+    @always_inline
+    def prefetch_vector(self, id: Int):
+        """Prefetch vector data for `id` into CPU cache (L1, read intent).
+        
+        This is called ahead of distance() to hide memory latency:
+        while the CPU computes distance for the current neighbor,
+        the next neighbor's vector data is being loaded into cache.
+        """
+        var ptr = self.codes + (id * self.d)
+        comptime opts = PrefetchOptions().for_read().medium_locality().to_data_cache()
+        prefetch[opts](ptr)
 
 struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
     comptime ComputerType = FlatDistanceComputer

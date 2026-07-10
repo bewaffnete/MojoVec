@@ -1,5 +1,6 @@
 from std.random import rand
 from std.math import log
+from std.atomic import Atomic
 from src.mojovec.utils.heap import max_heap_push, max_heap_replace_top, min_heap_push, min_heap_pop
 from src.mojovec.utils.distance_computer import DistanceComputerTrait
 from .hnsw_visited import VisitedTable
@@ -29,6 +30,10 @@ struct HNSWGraph(Movable):
     var capacity: Int
     var neighbors_capacity: Int
     
+    var next_tickets: UnsafePointer[UInt32, MutUntrackedOrigin]
+    var now_serving: UnsafePointer[UInt32, MutUntrackedOrigin]
+    var num_locks: Int
+    
     def __init__(out self, M: Int = 32, efConstruction: Int = 40, efSearch: Int = 16):
         self.M = M
         self.efConstruction = efConstruction
@@ -50,12 +55,23 @@ struct HNSWGraph(Movable):
         self.offsets = alloc[Int](self.capacity + 1)
         self.offsets[0] = 0
         self.neighbors = alloc[Int](self.neighbors_capacity)
+        for i in range(self.neighbors_capacity):
+            self.neighbors[i] = -1
+        
+        self.num_locks = 65536
+        self.next_tickets = alloc[UInt32](self.num_locks)
+        self.now_serving = alloc[UInt32](self.num_locks)
+        for i in range(self.num_locks):
+            self.next_tickets[i] = 0
+            self.now_serving[i] = 0
             
     def __del__(deinit self):
         if Int(self.levels) != 0: self.levels.free()
         if Int(self.offsets) != 0: self.offsets.free()
         if Int(self.neighbors) != 0: self.neighbors.free()
         if Int(self.cum_nneighbor_per_level) != 0: self.cum_nneighbor_per_level.free()
+        if Int(self.next_tickets) != 0: self.next_tickets.free()
+        if Int(self.now_serving) != 0: self.now_serving.free()
         
     def __init__(out self, *, deinit move: Self):
         self.M = move.M
@@ -70,6 +86,9 @@ struct HNSWGraph(Movable):
         self.offsets = move.offsets
         self.neighbors = move.neighbors
         self.cum_nneighbor_per_level = move.cum_nneighbor_per_level
+        self.next_tickets = move.next_tickets
+        self.now_serving = move.now_serving
+        self.num_locks = move.num_locks
         
     def random_level(self) -> Int:
         var ptr = alloc[Float64](1)
@@ -97,6 +116,18 @@ struct HNSWGraph(Movable):
         # We store the sentinel -1 to mark the end of the neighbor list
         if new_len < info.max_links:
             info.ptr[new_len] = -1
+            
+    @always_inline
+    def lock_node(self, node: Int):
+        var lock_idx = node % self.num_locks
+        var ticket = Atomic.fetch_add(self.next_tickets + lock_idx, 1)
+        while Atomic.load(self.now_serving + lock_idx) != ticket:
+            pass
+
+    @always_inline
+    def unlock_node(self, node: Int):
+        var lock_idx = node % self.num_locks
+        Atomic.fetch_add(self.now_serving + lock_idx, 1)
         
     def _grow(mut self):
         var new_capacity = self.capacity * 2
@@ -113,11 +144,14 @@ struct HNSWGraph(Movable):
         self.offsets.free()
         self.offsets = new_offsets
         
+        
         self.capacity = new_capacity
 
     def grow_neighbors(mut self, required_capacity: Int, current_offset: Int):
         var new_capacity = max(self.neighbors_capacity * 2, required_capacity)
         var new_neighbors = alloc[Int](new_capacity)
+        for i in range(new_capacity):
+            new_neighbors[i] = -1
         
         var old_total_size = current_offset
             
@@ -139,7 +173,7 @@ struct HNSWGraph(Movable):
         ep_dist: Float32, 
         ef: Int, 
         level: Int, 
-        mut vt: VisitedTable,
+        vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
         mut res_dist: UnsafePointer[Float32, MutUntrackedOrigin], 
         mut res_labels: UnsafePointer[Int, MutUntrackedOrigin]
     ) -> Int:
@@ -153,8 +187,8 @@ struct HNSWGraph(Movable):
         var W_labels = res_labels
         var W_size = 0
         
-        vt.advance()
-        vt.set_visited(ep_id)
+        vt[].advance()
+        vt[].set_visited(ep_id)
         
         min_heap_push(C_dist, C_labels, C_size, ep_dist, ep_id)
         C_size += 1
@@ -181,8 +215,20 @@ struct HNSWGraph(Movable):
                 var e = neighbors[i]
                 if e < 0:
                     break
-                if not vt.is_visited(e):
-                    vt.set_visited(e)
+                if not vt[].is_visited(e):
+                    vt[].set_visited(e)
+                    
+                    # Prefetch next unvisited neighbor's vector while computing distance for current one.
+                    # This hides memory latency: while CPU does SIMD math for vector `e`,
+                    # the hardware prefetcher loads the next neighbor's data into L1 cache.
+                    for look_ahead in range(i + 1, max_links):
+                        var next_e = neighbors[look_ahead]
+                        if next_e < 0:
+                            break
+                        if not vt[].is_visited(next_e):
+                            comp.prefetch_vector(next_e)
+                            break
+                    
                     var e_dist = comp.distance(e)
                     
                     worst_w_dist = W_dist[0]
@@ -271,6 +317,7 @@ struct HNSWGraph(Movable):
         dest: Int,
         level: Int
     ):
+        self.lock_node(src)
         var info = self.get_neighbors(src, level)
         var neighbors = info.ptr
         
@@ -281,6 +328,7 @@ struct HNSWGraph(Movable):
         var i = 0
         while i < info.max_links and neighbors[i] != -1:
             if neighbors[i] == dest:
+                self.unlock_node(src)
                 return # Already linked
             i += 1
             
@@ -288,6 +336,7 @@ struct HNSWGraph(Movable):
             neighbors[i] = dest
             if i + 1 < info.max_links:
                 neighbors[i + 1] = -1
+            self.unlock_node(src)
         else:
             var C_size = info.max_links + 1
             var C_nodes = alloc[Int](C_size)
@@ -339,6 +388,7 @@ struct HNSWGraph(Movable):
             if return_size < info.max_links:
                 neighbors[return_size] = -1
                 
+            self.unlock_node(src)
             return_list.free()
             C_nodes.free()
             C_dists.free()

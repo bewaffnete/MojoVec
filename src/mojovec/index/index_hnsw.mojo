@@ -3,7 +3,8 @@ from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from .hnsw_graph import HNSWGraph
-from .hnsw_visited import VisitedTable
+from .hnsw_visited import VisitedTable, VisitedTablePool
+from std.algorithm import parallelize
 
 struct IndexHNSW[StorageType: StorageTrait](Index):
     var d: Int
@@ -30,17 +31,22 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
         self.hnsw = move.hnsw^
         
     def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        if n == 0:
+            return
+            
         self.storage.add(n, x)
         
-        var vt = VisitedTable(self.hnsw.capacity)
+        var old_ntotal = self.ntotal
+        var pt_levels = alloc[Int](n)
         
+        # Preallocate topology
         for i in range(n):
-            var pt_id = self.ntotal + i
+            var pt_id = old_ntotal + i
             var pt_level = self.hnsw.random_level()
+            pt_levels[i] = pt_level
             
             while pt_id >= self.hnsw.capacity:
                 self.hnsw._grow()
-                vt = VisitedTable(self.hnsw.capacity)
                 
             self.hnsw.levels[pt_id] = pt_level
             
@@ -55,19 +61,30 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
             self.hnsw.offsets[pt_id] = current_offset
             self.hnsw.ntotal = pt_id + 1
             
-            var q_ptr = x + (i * self.d)
+        var start_idx = 0
+        if old_ntotal == 0:
+            self.hnsw.max_level = pt_levels[0]
+            self.hnsw.entry_point = 0
+            start_idx = 1
+            
+        # Initialize neighbor lists sequentially to avoid race conditions
+        # where thread A sees thread B's node before thread B initializes it.
+        for i in range(n):
+            var pt_id = old_ntotal + i
+            for l in range(pt_levels[i] + 1):
+                self.hnsw.set_neighbors_len(pt_id, l, 0)
+            
+        var vt_pool = VisitedTablePool(self.hnsw.capacity)
+        
+        @parameter
+        def add_point(i: Int):
+            var actual_i = i + start_idx
+            var pt_id = old_ntotal + actual_i
+            var pt_level = pt_levels[actual_i]
+            
+            var q_ptr = x + (actual_i * self.d)
             var comp = self.storage.get_distance_computer(q_ptr)
             
-            if pt_id == 0:
-                self.hnsw.max_level = pt_level
-                self.hnsw.entry_point = 0
-                for l in range(pt_level + 1):
-                    self.hnsw.set_neighbors_len(pt_id, l, 0)
-                continue
-                
-            for l in range(pt_level + 1):
-                self.hnsw.set_neighbors_len(pt_id, l, 0)
-                
             var ep_id = self.hnsw.entry_point
             var ep_dist = comp.distance(ep_id)
             
@@ -77,22 +94,26 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                     changed = False
                     var neighbors_info = self.hnsw.get_neighbors(ep_id, level)
                     var neighbors = neighbors_info.ptr
-                    var j = 0
-                    while j < neighbors_info.max_links and neighbors[j] != -1:
+                    var max_links = neighbors_info.max_links
+                    for j in range(max_links):
                         var neigh = neighbors[j]
+                        if neigh < 0:
+                            break
                         var d = comp.distance(neigh)
                         if d < ep_dist:
                             ep_dist = d
                             ep_id = neigh
                             changed = True
-                        j += 1
-                        
+                            
             var W_dist = alloc[Float32](self.hnsw.efConstruction)
             var W_labels = alloc[Int](self.hnsw.efConstruction)
             
+            var vt_id = vt_pool.acquire()
+            var vt_ptr = vt_pool.get(vt_id)
+            
             for level in range(min(pt_level, self.hnsw.max_level), -1, -1):
                 var W_size = self.hnsw.search_layer(
-                    comp, ep_id, ep_dist, self.hnsw.efConstruction, level, vt, W_dist, W_labels
+                    comp, ep_id, ep_dist, self.hnsw.efConstruction, level, vt_ptr, W_dist, W_labels
                 )
                 
                 var W_sorted_dist = alloc[Float32](W_size)
@@ -128,11 +149,17 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                 
             W_dist.free()
             W_labels.free()
+            vt_pool.release(vt_id)
             
-            if pt_level > self.hnsw.max_level:
-                self.hnsw.max_level = pt_level
-                self.hnsw.entry_point = pt_id
+        parallelize[add_point](n - start_idx)
+        
+        # Update entry point globally
+        for i in range(n):
+            if pt_levels[i] > self.hnsw.max_level:
+                self.hnsw.max_level = pt_levels[i]
+                self.hnsw.entry_point = old_ntotal + i
                 
+        pt_levels.free()
         self.ntotal += n
 
     def search(
@@ -143,7 +170,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
         distances: UnsafePointer[Float32, MutUntrackedOrigin], 
         labels: UnsafePointer[Int, MutUntrackedOrigin]
     ):
-        if self.ntotal == 0:
+        if n == 0 or self.ntotal == 0:
             for i in range(n * k):
                 labels[i] = -1
                 distances[i] = 0.0
@@ -153,13 +180,17 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
         if ef < k:
             ef = k
             
-        var W_dist = alloc[Float32](ef)
-        var W_labels = alloc[Int](ef)
-        var W_size = 0
+        var vt_pool = VisitedTablePool(self.hnsw.capacity)
         
-        var vt = VisitedTable(self.hnsw.capacity)
-        
-        for i in range(n):
+        @parameter
+        def search_point(i: Int):
+            var W_dist = alloc[Float32](ef)
+            var W_labels = alloc[Int](ef)
+            var W_size = 0
+            
+            var vt_id = vt_pool.acquire()
+            var vt_ptr = vt_pool.get(vt_id)
+            
             for j in range(k):
                 distances[i * k + j] = -1.0
                 labels[i * k + j] = -1
@@ -190,7 +221,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                             
             # Beam search on level 0
             W_size = self.hnsw.search_layer(
-                comp, ep_id, ep_dist, ef, 0, vt, W_dist, W_labels
+                comp, ep_id, ep_dist, ef, 0, vt_ptr, W_dist, W_labels
             )
             
             # W is a max-heap of nearest neighbors. We need to pop them and reverse to get sorted order.
@@ -219,5 +250,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
                     if res_labels_ptr[j] != -1:
                         res_dist_ptr[j] = -res_dist_ptr[j]
                         
-        W_dist.free()
-        W_labels.free()
+            W_dist.free()
+            W_labels.free()
+            vt_pool.release(vt_id)
+            
+        parallelize[search_point](n)
