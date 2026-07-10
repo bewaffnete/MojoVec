@@ -1,6 +1,6 @@
 from std.testing import assert_equal, assert_true, TestSuite
-from src.mojovec.index.index_flat import IndexFlat
-from src.mojovec.core.types import METRIC_L2, METRIC_INNER_PRODUCT
+from mojovec.index.index_flat import IndexFlat
+from mojovec.core.types import METRIC_L2, METRIC_INNER_PRODUCT
 
 def test_index_flat_l2() raises:
     var index = IndexFlat(4, METRIC_L2)

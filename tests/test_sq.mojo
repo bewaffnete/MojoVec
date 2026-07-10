@@ -1,6 +1,6 @@
 from std.testing import assert_equal, assert_true, TestSuite
-from src.mojovec.core.types import METRIC_L2, METRIC_INNER_PRODUCT, QT_8bit, QT_fp16
-from src.mojovec.index.index_scalar_quantizer import IndexScalarQuantizer
+from mojovec.core.types import METRIC_L2, METRIC_INNER_PRODUCT, QT_8bit, QT_fp16
+from mojovec.index.index_scalar_quantizer import IndexScalarQuantizer
 
 def test_index_scalar_quantizer_sq8_l2() raises:
     var index = IndexScalarQuantizer(4, QT_8bit, METRIC_L2)

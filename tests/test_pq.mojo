@@ -1,7 +1,7 @@
 from std.memory import alloc
 from std.random import random_float64
-from src.mojovec.quantization.pq import ProductQuantizer
-from src.mojovec.utils.distances import l2_distance_simd
+from mojovec.quantization.pq import ProductQuantizer
+from mojovec.utils.distances import l2_distance_simd
 
 def assert_true(cond: Bool, msg: String = "Assertion failed") raises:
     if not cond:

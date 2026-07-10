@@ -1,7 +1,7 @@
 from std.memory import alloc
 from std.random import random_float64
-from src.mojovec.index.index_flat import IndexFlat
-from src.mojovec.index.index_ivf_pq import IndexIVFPQ
+from mojovec.index.index_flat import IndexFlat
+from mojovec.index.index_ivf_pq import IndexIVFPQ
 
 def assert_true(cond: Bool, msg: String = "Assertion failed") raises:
     if not cond:

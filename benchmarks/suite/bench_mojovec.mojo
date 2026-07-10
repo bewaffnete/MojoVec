@@ -1,8 +1,8 @@
 from std.time import perf_counter_ns
 from std.memory import alloc, memcpy
-from src.mojovec.index.index_hnsw import IndexHNSW
-from src.mojovec.index.index_flat import IndexFlat
-from src.mojovec.core.types import METRIC_L2
+from mojovec.index.index_hnsw import IndexHNSW
+from mojovec.index.index_flat import IndexFlat
+from mojovec.core.types import METRIC_L2
 
 def load_bin_data(path: String) raises -> List[UInt8]:
     var f = open(path, "r")

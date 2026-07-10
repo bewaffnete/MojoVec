@@ -1,6 +1,6 @@
-from src.mojovec.index.index_hnsw import IndexHNSW
-from src.mojovec.index.index_flat import IndexFlat
-from src.mojovec.core.types import METRIC_L2
+from mojovec.index.index_hnsw import IndexHNSW
+from mojovec.index.index_flat import IndexFlat
+from mojovec.core.types import METRIC_L2
 from std.random import rand
 from std.memory import alloc
 

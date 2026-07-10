@@ -1,11 +1,11 @@
 from std.memory import alloc
 from std.random import random_float64
 from std.time import perf_counter_ns
-from src.mojovec.index.index_flat import IndexFlat
-from src.mojovec.index.index_ivf_flat import IndexIVFFlat
-from src.mojovec.index.index_ivf_pq import IndexIVFPQ
-from src.mojovec.index.index_hnsw import IndexHNSW
-from src.mojovec.core.types import METRIC_L2
+from mojovec.index.index_flat import IndexFlat
+from mojovec.index.index_ivf_flat import IndexIVFFlat
+from mojovec.index.index_ivf_pq import IndexIVFPQ
+from mojovec.index.index_hnsw import IndexHNSW
+from mojovec.core.types import METRIC_L2
 
 def compute_recall(ground_truth_labels: UnsafePointer[Int, MutUntrackedOrigin], 
                    pred_labels: UnsafePointer[Int, MutUntrackedOrigin], 

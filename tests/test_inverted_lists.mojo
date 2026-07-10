@@ -1,4 +1,4 @@
-from src.mojovec.storage.inverted_lists import ArrayInvertedLists
+from mojovec.storage.inverted_lists import ArrayInvertedLists
 from std.memory import alloc
 
 def assert_true(cond: Bool, msg: String = "Assertion failed") raises:

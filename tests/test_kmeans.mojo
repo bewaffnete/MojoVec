@@ -1,4 +1,4 @@
-from src.mojovec.clustering.kmeans import KMeans
+from mojovec.clustering.kmeans import KMeans
 from std.memory import alloc
 from std.random import rand
 

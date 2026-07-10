@@ -1,11 +1,11 @@
 from std.memory import alloc
 from std.random import random_float64
-from src.mojovec.index.index_flat import IndexFlat
-from src.mojovec.index.index_ivf_flat import IndexIVFFlat
-from src.mojovec.index.index_ivf_pq import IndexIVFPQ
-from src.mojovec.io.serialization import write_index_flat, read_index_flat
-from src.mojovec.io.serialization import write_index_ivf_flat, read_index_ivf_flat
-from src.mojovec.io.serialization import write_index_ivf_pq, read_index_ivf_pq
+from mojovec.index.index_flat import IndexFlat
+from mojovec.index.index_ivf_flat import IndexIVFFlat
+from mojovec.index.index_ivf_pq import IndexIVFPQ
+from mojovec.io.serialization import write_index_flat, read_index_flat
+from mojovec.io.serialization import write_index_ivf_flat, read_index_ivf_flat
+from mojovec.io.serialization import write_index_ivf_pq, read_index_ivf_pq
 from std.io.file import FileHandle
 
 def assert_true(cond: Bool, msg: String = "Assertion failed") raises:

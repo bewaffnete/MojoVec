@@ -64,7 +64,7 @@ MojoVec's QPS sits between FAISS and a Python-wrapped hnswlib, using SIMD loops 
 ### 1. Initialize the Index (Mojo)
 
 ```mojo
-from src.mojovec import IndexHNSW, IndexFlat, METRIC_L2
+from mojovec import IndexHNSW, IndexFlat, METRIC_L2
 
 def main() raises:
     var d = 128
@@ -111,7 +111,7 @@ from std.memory import alloc
 ### 4. Disk Persistence
 
 ```mojo
-from src.mojovec import write_index, read_index
+from mojovec import write_index, read_index
 
     write_index(hnsw, "my_index.bin")
     var loaded_index = read_index("my_index.bin")

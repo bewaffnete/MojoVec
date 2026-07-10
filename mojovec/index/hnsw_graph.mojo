@@ -3,13 +3,13 @@ from std.math import log
 from std.atomic import Atomic
 from std.collections import InlineArray
 from std.sys.intrinsics import prefetch, PrefetchOptions
-from src.mojovec.utils.heap import (
+from mojovec.utils.heap import (
     max_heap_push,
     max_heap_replace_top,
     min_heap_push,
     min_heap_pop,
 )
-from src.mojovec.utils.distance_computer import DistanceComputerTrait
+from mojovec.utils.distance_computer import DistanceComputerTrait
 from .hnsw_visited import VisitedTable
 
 
