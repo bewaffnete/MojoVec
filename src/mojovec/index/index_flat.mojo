@@ -7,7 +7,7 @@ from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 comptime SIMD_WIDTH = 64
 
 from ..utils.distances import l2_distance_simd, inner_product_simd
-from ..utils.heap import max_heap_push, max_heap_replace_top
+from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from std.sys.intrinsics import prefetch, PrefetchOptions
 
@@ -117,7 +117,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
             # Iterate over all database vectors
             for j in range(self.ntotal):
                 var db_ptr = self.codes + (j * self.d)
-                var dist: Float32 = 0.0
+                var dist: Float32
                 
                 # Compute distance based on metric
                 if self.metric_type == METRIC_L2:
@@ -131,6 +131,15 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
                     heap_size += 1
                 elif dist < res_dist_ptr[0]:
                     max_heap_replace_top(res_dist_ptr, res_labels_ptr, k, dist, j)
+            
+            
+            var current_k = heap_size
+            for j in range(current_k):
+                var popped = max_heap_pop(res_dist_ptr, res_labels_ptr, heap_size)
+                heap_size -= 1
+                var idx = current_k - 1 - j
+                res_dist_ptr[idx] = popped.dist
+                res_labels_ptr[idx] = popped.label
             
             # Un-negate inner product distances
             if self.metric_type == METRIC_INNER_PRODUCT:

@@ -152,7 +152,7 @@ struct HNSWGraph(Movable):
     @always_inline
     def unlock_node(self, node: Int):
         var lock_idx = node % self.num_locks
-        Atomic.fetch_add(self.now_serving + lock_idx, 1)
+        _ = Atomic.fetch_add(self.now_serving + lock_idx, 1)
 
     def _grow(mut self):
         var new_capacity = self.capacity * 2
@@ -224,11 +224,9 @@ struct HNSWGraph(Movable):
         W_size += 1
 
         while C_size > 0:
-            var c_dist: Float32 = 0.0
-            var c_id: Int32 = 0
             var popped = min_heap_pop(C_dist, C_labels, C_size)
-            c_dist = popped.dist
-            c_id = popped.label
+            var c_dist = popped.dist
+            var c_id = popped.label
             C_size -= 1
 
             var worst_w_dist = W_dist[0]
@@ -351,10 +349,6 @@ struct HNSWGraph(Movable):
         self.lock_node(src)
         var info = self.get_neighbors(src, level)
         var neighbors = info.ptr
-
-        var max_links = self.M
-        if level == 0:
-            max_links = self.M * 2
 
         var i = 0
         while i < info.max_links and neighbors[i] != -1:

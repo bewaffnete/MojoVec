@@ -1,6 +1,6 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
-from ..utils.heap import max_heap_push, max_heap_replace_top
+from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..clustering.kmeans import KMeans
 from ..quantization.pq import ProductQuantizer
@@ -63,7 +63,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
             
             self.quantizer[0].search(n, x, 1, assign_distances, assign_labels)
             
-            var q_codes = self.quantizer[0].get_vector(0) # Not quite, IndexFlat gets all codes
+
             # Wait, quantizer is IndexFlat, we can use its .codes directly!
             # But wait, IndexFlat has `get_vector(id)`
             for i in range(n):
@@ -152,7 +152,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
             var heap_size = 0
             
             if not self.by_residual:
-                self.pq.compute_distance_table(q_ptr, dis_table)
+                self.pq.compute_distance_table(q_ptr, dis_table, self.metric_type)
             
             for p in range(nprobe):
                 var list_no = q_labels[i * nprobe + p]
@@ -168,7 +168,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                     var c_ptr = self.quantizer[0].get_vector(list_no)
                     for j in range(self.d):
                         q_residual[j] = q_ptr[j] - c_ptr[j]
-                    self.pq.compute_distance_table(q_residual, dis_table)
+                    self.pq.compute_distance_table(q_residual, dis_table, self.metric_type)
                 
                 for j in range(list_size):
                     var c_ptr = list_codes + j * self.M
@@ -184,6 +184,14 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                         heap_size += 1
                     elif dist < res_dist_ptr[0]:
                         max_heap_replace_top(res_dist_ptr, res_labels_ptr, k, dist, list_ids[j])
+                        
+            var current_k = heap_size
+            for j in range(current_k):
+                var popped = max_heap_pop(res_dist_ptr, res_labels_ptr, heap_size)
+                heap_size -= 1
+                var idx = current_k - 1 - j
+                res_dist_ptr[idx] = popped.dist
+                res_labels_ptr[idx] = popped.label
                         
             # Un-negate inner product distances
             if self.metric_type == METRIC_INNER_PRODUCT:

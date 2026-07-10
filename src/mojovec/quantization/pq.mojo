@@ -1,6 +1,7 @@
 from std.memory import alloc
 from ..clustering.kmeans import KMeans
-from ..utils.distances import l2_distance_simd
+from ..utils.distances import l2_distance_simd, inner_product_simd
+from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 
 struct ProductQuantizer(Movable):
     var d: Int
@@ -87,7 +88,7 @@ struct ProductQuantizer(Movable):
                 for j in range(self.dsub):
                     sub_x[j] = c_ptr[j]
 
-    def compute_distance_table(self, query: UnsafePointer[Float32, MutUntrackedOrigin], dis_table: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def compute_distance_table(self, query: UnsafePointer[Float32, MutUntrackedOrigin], dis_table: UnsafePointer[Float32, MutUntrackedOrigin], metric_type: MetricType = METRIC_L2):
         for m in range(self.M):
             var sub_q = query + m * self.dsub
             var centroids_m = self.centroids + m * self.ksub * self.dsub
@@ -95,4 +96,7 @@ struct ProductQuantizer(Movable):
             
             for k in range(self.ksub):
                 var c_ptr = centroids_m + k * self.dsub
-                table_m[k] = l2_distance_simd[4](sub_q, c_ptr, self.dsub)
+                if metric_type == METRIC_L2:
+                    table_m[k] = l2_distance_simd[4](sub_q, c_ptr, self.dsub)
+                else:
+                    table_m[k] = -inner_product_simd[4](sub_q, c_ptr, self.dsub)

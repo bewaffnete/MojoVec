@@ -23,3 +23,11 @@ faiss/
 *.md
 !README.md
 *.bin
+.venv/
+__pycache__/
+*.bin
+bench_mojovec
+mojovec_bench
+mojovec_bench.dSYM/
+profile.txt
+.agents/

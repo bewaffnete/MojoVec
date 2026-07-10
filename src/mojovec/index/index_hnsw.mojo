@@ -276,7 +276,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index):
 
             # Pop to get sorted results (since it's a max heap, popping gives largest first)
             while W_size > k:
-                var popped = max_heap_pop(W_dist, W_labels, W_size)
+                _ = max_heap_pop(W_dist, W_labels, W_size)
                 W_size -= 1
 
             var result_count = W_size

@@ -2,6 +2,7 @@ from std.algorithm import parallelize
 from std.memory import alloc
 from std.random import random_si64
 from ..utils.distances import l2_distance_simd
+from std.math import min
 
 struct KMeans:
     var d: Int
@@ -38,6 +39,11 @@ struct KMeans:
             for j in range(self.d):
                 dst_ptr[j] = src_ptr[j]
                 
+        var num_chunks = 32
+        var chunk_size = (n + num_chunks - 1) // num_chunks
+        var local_centroids = alloc[Float32](num_chunks * self.k * self.d)
+        var local_counts = alloc[Int](num_chunks * self.k)
+        
         # Main loop
         for _ in range(self.niter):
             # E-step: Assign points to centroids
@@ -59,27 +65,78 @@ struct KMeans:
                 
             parallelize[process_point](n)
             
-            # M-step: Update centroids
+            # Zero out thread-local accumulators
+            for i in range(num_chunks * self.k * self.d):
+                local_centroids[i] = 0.0
+            for i in range(num_chunks * self.k):
+                local_counts[i] = 0
+                
+            # M-step: Update centroids in parallel
+            @parameter
+            def process_chunk(chunk_id: Int):
+                var start = chunk_id * chunk_size
+                var end = min(start + chunk_size, n)
+                var my_centroids = local_centroids + chunk_id * self.k * self.d
+                var my_counts = local_counts + chunk_id * self.k
+                
+                for i in range(start, end):
+                    var c = self.assignments[i]
+                    my_counts[c] += 1
+                    var c_ptr = my_centroids + c * self.d
+                    var x_ptr = x + i * self.d
+                    
+                    var j = 0
+                    while j <= self.d - 4:
+                        var cx = c_ptr.load[width=4](j)
+                        var xx = x_ptr.load[width=4](j)
+                        c_ptr.store(j, cx + xx)
+                        j += 4
+                    while j < self.d:
+                        c_ptr[j] += x_ptr[j]
+                        j += 1
+                        
+            parallelize[process_chunk](num_chunks)
+            
+            # Reduce phase
             for c in range(self.k):
                 self.counts[c] = 0
                 var c_ptr = self.centroids + c * self.d
                 for j in range(self.d):
                     c_ptr[j] = 0.0
                     
-            for i in range(n):
-                var c = self.assignments[i]
-                self.counts[c] += 1
-                var c_ptr = self.centroids + c * self.d
-                var x_ptr = x + i * self.d
+            for chunk_id in range(num_chunks):
+                var my_centroids = local_centroids + chunk_id * self.k * self.d
+                var my_counts = local_counts + chunk_id * self.k
                 
-                for j in range(self.d):
-                    c_ptr[j] += x_ptr[j]
-                
+                for c in range(self.k):
+                    self.counts[c] += my_counts[c]
+                    var c_ptr = self.centroids + c * self.d
+                    var src_ptr = my_centroids + c * self.d
+                    
+                    var j = 0
+                    while j <= self.d - 4:
+                        var cx = c_ptr.load[width=4](j)
+                        var sx = src_ptr.load[width=4](j)
+                        c_ptr.store(j, cx + sx)
+                        j += 4
+                    while j < self.d:
+                        c_ptr[j] += src_ptr[j]
+                        j += 1
+            
             for c in range(self.k):
                 var count = self.counts[c]
                 if count > 0:
                     var c_ptr = self.centroids + c * self.d
                     var inv_count: Float32 = 1.0 / Float32(count)
                     
-                    for j in range(self.d):
+                    var j = 0
+                    while j <= self.d - 4:
+                        var cx = c_ptr.load[width=4](j)
+                        c_ptr.store(j, cx * inv_count)
+                        j += 4
+                    while j < self.d:
                         c_ptr[j] *= inv_count
+                        j += 1
+
+        local_centroids.free()
+        local_counts.free()

@@ -1,7 +1,7 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..utils.distances import l2_distance_simd, inner_product_simd
-from ..utils.heap import max_heap_push, max_heap_replace_top
+from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..clustering.kmeans import KMeans
 from std.memory import alloc
@@ -115,7 +115,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
                 
                 for j in range(list_size):
                     var db_ptr = list_codes + j * self.d
-                    var dist: Float32 = 0.0
+                    var dist: Float32
                     
                     if self.metric_type == METRIC_L2:
                         dist = l2_distance_simd[4](q_ptr, db_ptr, self.d)
@@ -127,6 +127,14 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
                         heap_size += 1
                     elif dist < res_dist_ptr[0]:
                         max_heap_replace_top(res_dist_ptr, res_labels_ptr, k, dist, list_ids[j])
+                        
+            var current_k = heap_size
+            for j in range(current_k):
+                var popped = max_heap_pop(res_dist_ptr, res_labels_ptr, heap_size)
+                heap_size -= 1
+                var idx = current_k - 1 - j
+                res_dist_ptr[idx] = popped.dist
+                res_labels_ptr[idx] = popped.label
                         
             if self.metric_type == METRIC_INNER_PRODUCT:
                 for j in range(k):

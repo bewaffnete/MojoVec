@@ -1,5 +1,6 @@
 from std.memory import alloc
 from std.math import max
+from std.atomic import Atomic
 
 trait InvertedListsTrait(Movable, ImplicitlyDeletable):
     def list_size(self, list_no: Int) -> Int: ...
@@ -24,22 +25,30 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
     var nlist: Int
     var code_size: Int
     var lists: UnsafePointer[InvertedListBucket, MutUntrackedOrigin]
+    var next_tickets: UnsafePointer[UInt32, MutUntrackedOrigin]
+    var now_serving: UnsafePointer[UInt32, MutUntrackedOrigin]
 
     def __init__(out self, nlist: Int, code_size: Int):
         self.nlist = nlist
         self.code_size = code_size
         self.lists = alloc[InvertedListBucket](nlist)
+        self.next_tickets = alloc[UInt32](nlist)
+        self.now_serving = alloc[UInt32](nlist)
         for i in range(nlist):
             self.lists[i] = InvertedListBucket(
                 size=0, capacity=0,
                 ids=alloc[Int](1),
                 codes=alloc[UInt8](1),
             )
+            self.next_tickets[i] = 0
+            self.now_serving[i] = 0
 
     def __init__(out self, *, deinit move: Self):
         self.nlist = move.nlist
         self.code_size = move.code_size
         self.lists = move.lists
+        self.next_tickets = move.next_tickets
+        self.now_serving = move.now_serving
 
     def __del__(deinit self):
         if self.nlist > 0 and Int(self.lists) != 0:
@@ -51,6 +60,10 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
                 if Int(codes_ptr) != 0:
                     codes_ptr.free()
             self.lists.free()
+            if Int(self.next_tickets) != 0:
+                self.next_tickets.free()
+            if Int(self.now_serving) != 0:
+                self.now_serving.free()
 
     @always_inline
     def list_size(self, list_no: Int) -> Int:
@@ -94,7 +107,18 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
         self.lists[list_no].capacity = new_cap
         self.lists[list_no].size = new_size
 
+    @always_inline
+    def lock_list(self, list_no: Int):
+        var ticket = Atomic.fetch_add(self.next_tickets + list_no, 1)
+        while Atomic.load(self.now_serving + list_no) != ticket:
+            pass  # spin
+
+    @always_inline
+    def unlock_list(self, list_no: Int):
+        _ = Atomic.fetch_add(self.now_serving + list_no, 1)
+
     def add_entries(mut self, list_no: Int, n_entry: Int, ids: UnsafePointer[Int, MutUntrackedOrigin], codes: UnsafePointer[UInt8, MutUntrackedOrigin]):
+        self.lock_list(list_no)
         _ = Int(self.lists)  # WORKAROUND: Force memory materialization to avoid MLIR/LLVM alias analysis bug in Mojo 2.4+
         var old_size = self.lists[list_no].size
         self.resize(list_no, old_size + n_entry)
@@ -105,3 +129,5 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
         var code_offset = old_size * self.code_size
         for i in range(n_entry * self.code_size):
             self.lists[list_no].codes[code_offset + i] = codes[i]
+            
+        self.unlock_list(list_no)
