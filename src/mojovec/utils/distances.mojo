@@ -1,6 +1,6 @@
 # distances.mojo
 
-
+from std.math import fma
 @always_inline
 def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrigin], y: UnsafePointer[Float32, MutUntrackedOrigin], d: Int) -> Float32:
     """
@@ -12,7 +12,7 @@ def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrig
         var vx = x.load[width=simd_width](i)
         var vy = y.load[width=simd_width](i)
         var diff = vx - vy
-        dist += diff * diff
+        dist = fma(diff, diff, dist)
         i += simd_width
     
     var res = dist.reduce_add()
@@ -35,7 +35,7 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOr
     while i <= d - simd_width:
         var vx = x.load[width=simd_width](i)
         var vy = y.load[width=simd_width](i)
-        prod += vx * vy
+        prod = fma(vx, vy, prod)
         i += simd_width
         
     var res = prod.reduce_add()

@@ -21,18 +21,18 @@ struct FlatDistanceComputer(DistanceComputerTrait):
     def distance(self, id: Int) -> Float32:
         var db_ptr = self.codes + (id * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd[4](self.query, db_ptr, self.d)
+            return l2_distance_simd[16](self.query, db_ptr, self.d)
         else:
-            return -inner_product_simd[4](self.query, db_ptr, self.d)
+            return -inner_product_simd[16](self.query, db_ptr, self.d)
             
     @always_inline
     def symmetric_distance(self, i: Int, j: Int) -> Float32:
         var ptr_i = self.codes + (i * self.d)
         var ptr_j = self.codes + (j * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd[4](ptr_i, ptr_j, self.d)
+            return l2_distance_simd[16](ptr_i, ptr_j, self.d)
         else:
-            return -inner_product_simd[4](ptr_i, ptr_j, self.d)
+            return -inner_product_simd[16](ptr_i, ptr_j, self.d)
 
     @always_inline
     def prefetch_vector(self, id: Int):
