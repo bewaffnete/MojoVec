@@ -110,6 +110,35 @@ def main() raises:
 
 ---
 
+## Python API
+
+MojoVec now includes high-performance native Python bindings. You can install the pre-compiled `.whl` from the GitHub Releases page.
+
+```python
+import mojovec
+
+# Initialize collection (dimension=128, M=32, ef_construction=200, ef_search=40)
+collection = mojovec.Collection(128, 32, 200, 40)
+
+# Add vectors
+ids = [1, 2, 3]
+embeddings = [0.1] * (128 * 3) # Flattened 1D list
+collection.upsert_batch(ids, embeddings)
+
+# Search
+res = collection.query_batch(embeddings[:128], 3)
+print("IDs:", res["ids"])             # [[2, 3, 1]]
+print("Distances:", res["distances"]) # [[0.0, 0.0, 0.0]]
+
+# Save to disk
+collection.save("my_database.bin")
+
+# Load from disk
+loaded_collection = mojovec.Collection.load("my_database.bin")
+```
+
+---
+
 ## Running Tests & Benchmarks
 
 Requires Mojo (via Pixi/Magic).
