@@ -1,13 +1,10 @@
 from std.memory import alloc
 from std.random import random_float64
+from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 from mojovec.quantization.pq import ProductQuantizer
 from mojovec.utils.distances import l2_distance_simd
 
-def assert_true(cond: Bool, msg: String = "Assertion failed") raises:
-    if not cond:
-        raise Error(msg)
-
-def main() raises:
+def test_pq() raises:
     var d = 16
     var n = 1000
     var M = 4
@@ -64,3 +61,6 @@ def main() raises:
     codes.free()
     decoded.free()
     dis_table.free()
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()

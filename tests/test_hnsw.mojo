@@ -4,9 +4,7 @@ from mojovec.core.types import METRIC_L2
 from std.random import rand
 from std.memory import alloc
 
-def assert_true(cond: Bool, msg: String = "Assertion failed") raises:
-    if not cond:
-        raise Error(msg)
+from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 
 def test_hnsw_recall() raises:
     var d = 16
@@ -74,7 +72,37 @@ def test_hnsw_recall() raises:
     hnsw_dist.free()
     hnsw_labels.free()
     
+def test_hnsw_edge_cases() raises:
+    var d = 4
+    var storage = IndexFlat(d, METRIC_L2)
+    var hnsw = IndexHNSW[IndexFlat](storage^, d, METRIC_L2, M=4)
+    
+    # 1. efSearch < k should not crash but maybe just return whatever it can
+    hnsw.hnsw.efSearch = 1
+    
+    var xb = alloc[Float32](8)
+    for i in range(8): xb[i] = Float32(i)
+    hnsw.add(2, xb)
+    
+    var xq = alloc[Float32](4)
+    for i in range(4): xq[i] = 1.0
+        
+    var dist = alloc[Float32](5)
+    var labels = alloc[Int](5)
+    hnsw.search(1, xq, 5, dist, labels) # k=5 > efSearch=1
+    
+    # Check that padded labels are -1
+    var num_valid = 0
+    for i in range(5):
+        if labels[i] != -1:
+            num_valid += 1
+            
+    assert_true(num_valid <= 2, "Cannot return more than database size")
+    
+    xb.free()
+    xq.free()
+    dist.free()
+    labels.free()
+
 def main() raises:
-    pass  # print("Testing HNSW Index...")
-    test_hnsw_recall()
-    print("All HNSW tests passed!")
+    TestSuite.discover_tests[__functions_in_module()]().run()

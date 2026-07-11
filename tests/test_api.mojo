@@ -1,9 +1,7 @@
 from mojovec import Client, Collection, CollectionIVFPQ, QueryResults
 from std.collections import List
 
-def assert_true(cond: Bool, msg: String = "Assertion failed") raises:
-    if not cond:
-        raise Error(msg)
+from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 
 def test_collection_hnsw() raises:
     var client = Client()
@@ -74,9 +72,57 @@ def test_collection_ivfpq() raises:
 
 
     
+def test_empty_collection() raises:
+    var client = Client()
+    var col = client.create_collection("test_empty", 16)
+    
+    var q = List[Float32](capacity=16)
+    for i in range(16):
+        q.append(Float32(i) / 16.0)
+        
+    var results = col.query(q, n_results=5)
+    assert_true(len(results.ids) == 1, "Should have 1 query result list")
+    assert_true(len(results.ids[0]) == 5, "Should return padded results even if empty")
+    assert_true(results.ids[0][0] == -1, "Results should be padded with -1 for empty collection")
+    
+def test_zero_length_inputs() raises:
+    var client = Client()
+    var col = client.create_collection("test_zero", 16)
+    
+    var empty_ids = List[Int]()
+    var empty_embeddings = List[Float32]()
+    
+    # Adding zero vectors should not crash
+    col.add(empty_ids, empty_embeddings)
+    
+    # Querying with zero vectors should return empty results
+    var results = col.query(empty_embeddings, n_results=5)
+    assert_true(len(results.ids) == 0, "Should have 0 query result lists for empty query")
+
+def test_dimension_mismatch() raises:
+    var client = Client()
+    var col = client.create_collection("test_dim", 16)
+    
+    var ids = List[Int]()
+    ids.append(1)
+    
+    var bad_embeddings = List[Float32]()
+    for i in range(15):  # one float short
+        bad_embeddings.append(0.0)
+        
+    var add_failed = False
+    try:
+        col.add(ids, bad_embeddings)
+    except:
+        add_failed = True
+    assert_true(add_failed, "Should raise error on add dimension mismatch")
+        
+    var query_failed = False
+    try:
+        _ = col.query(bad_embeddings)
+    except:
+        query_failed = True
+    assert_true(query_failed, "Should raise error on query dimension mismatch")
+
 def main() raises:
-    pass  # print("Testing API Collection HNSW...")
-    test_collection_hnsw()
-    pass  # print("Testing API Collection IVFPQ...")
-    test_collection_ivfpq()
-    print("All API Unit Tests passed!")
+    TestSuite.discover_tests[__functions_in_module()]().run()

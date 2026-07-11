@@ -1,11 +1,9 @@
 from mojovec.storage.inverted_lists import ArrayInvertedLists
 from std.memory import alloc
 
-def assert_true(cond: Bool, msg: String = "Assertion failed") raises:
-    if not cond:
-        raise Error(msg)
+from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 
-def main() raises:
+def test_inverted_lists() raises:
     var nlist = 10
     var code_size = 4
     
@@ -35,3 +33,6 @@ def main() raises:
     
     ids.free()
     codes.free()
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()

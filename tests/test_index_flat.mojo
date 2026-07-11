@@ -41,6 +41,7 @@ def test_index_flat_l2() raises:
     labels.free()
     data.free()
 
+
 def test_index_flat_inner_product() raises:
     var index = IndexFlat(4, METRIC_INNER_PRODUCT)
     var data = alloc[Float32](12)

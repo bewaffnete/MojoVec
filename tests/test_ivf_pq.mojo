@@ -3,11 +3,9 @@ from std.random import random_float64
 from mojovec.index.index_flat import IndexFlat
 from mojovec.index.index_ivf_pq import IndexIVFPQ
 
-def assert_true(cond: Bool, msg: String = "Assertion failed") raises:
-    if not cond:
-        raise Error(msg)
+from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 
-def main() raises:
+def test_ivf_pq() raises:
     var d = 16
     var n = 1000
     var nlist = 10
@@ -62,3 +60,6 @@ def main() raises:
     ids.free()
     dists.free()
     labels.free()
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()
