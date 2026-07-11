@@ -12,18 +12,6 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 
 ---
 
-## Status
-
-| Component | Status |
-|---|---|
-| HNSW (build + search) | ✅ Implemented, benchmarked below |
-| High-Level API (`Client`, `Collection`) | ✅ Implemented, Chroma-like developer experience |
-| IVF + PQ (`IndexIVFPQ`) | ✅ Implemented, extreme compression with automatic training |
-| SQ8 / F16 scalar quantization | ✅ Implemented — memory numbers not yet benchmarked |
-| Python bindings (`pip install mojovec`) | 🚧 Planned, not published |
-
----
-
 ## Design Decisions
 
 1. **Pure Mojo implementation** — no C++ dependencies, natively compiled.
