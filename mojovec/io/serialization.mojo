@@ -291,23 +291,30 @@ def write_index_ivf_flat(mut f: FileHandle, index: IndexIVFFlat[IndexFlat]) rais
     write_index_flat(f, index.quantizer[0])
     write_invlists(f, index.invlists)
 
-def read_index_ivf_flat(mut f: FileHandle, mut index: IndexIVFFlat[IndexFlat]) raises:
+def read_index_ivf_flat(mut f: FileHandle) raises -> IndexIVFFlat[IndexFlat]:
     var magic = read_int(f)
     if magic != MAGIC_IVF_FLAT: raise Error("Invalid magic for IndexIVFFlat")
     
-    index.d = read_int(f)
-    index.nlist = read_int(f)
-    index.nprobe = read_int(f)
-    index.ntotal = read_int(f)
-    index.is_trained = read_bool(f)
+    var d = read_int(f)
+    var nlist = read_int(f)
+    var nprobe = read_int(f)
+    var ntotal = read_int(f)
+    var is_trained = read_bool(f)
     var metric_int = read_int(f)
     
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-    index.metric_type = metric
         
-    index.quantizer[0] = read_index_flat(f)
+    var quantizer = alloc[IndexFlat](1)
+    quantizer.init_pointee_move(read_index_flat(f))
+    
+    var index = IndexIVFFlat[IndexFlat](quantizer, d, nlist, metric)
+    index.nprobe = nprobe
+    index.ntotal = ntotal
+    index.is_trained = is_trained
+    
     read_invlists(f, index.invlists)
+    return index^
 
 # --- IndexIVFPQ ---
 
@@ -328,22 +335,29 @@ def write_index_ivf_pq(mut f: FileHandle, index: IndexIVFPQ[IndexFlat]) raises:
     write_invlists(f, index.invlists)
     write_pq(f, index.pq)
 
-def read_index_ivf_pq(mut f: FileHandle, mut index: IndexIVFPQ[IndexFlat]) raises:
+def read_index_ivf_pq(mut f: FileHandle) raises -> IndexIVFPQ[IndexFlat]:
     var magic = read_int(f)
     if magic != MAGIC_IVF_PQ: raise Error("Invalid magic for IndexIVFPQ")
     
-    index.d = read_int(f)
-    index.nlist = read_int(f)
-    index.M = read_int(f)
-    index.nprobe = read_int(f)
-    index.ntotal = read_int(f)
-    index.is_trained = read_bool(f)
+    var d = read_int(f)
+    var nlist = read_int(f)
+    var M = read_int(f)
+    var nprobe = read_int(f)
+    var ntotal = read_int(f)
+    var is_trained = read_bool(f)
     var metric_int = read_int(f)
     
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-    index.metric_type = metric
         
-    index.quantizer[0] = read_index_flat(f)
+    var quantizer = alloc[IndexFlat](1)
+    quantizer.init_pointee_move(read_index_flat(f))
+    
+    var index = IndexIVFPQ[IndexFlat](quantizer, d, nlist, M, metric)
+    index.nprobe = nprobe
+    index.ntotal = ntotal
+    index.is_trained = is_trained
+    
     read_invlists(f, index.invlists)
     read_pq(f, index.pq)
+    return index^

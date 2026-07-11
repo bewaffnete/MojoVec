@@ -87,10 +87,7 @@ def test_ivf_pq() raises:
     
     pass  # print("Reading index")
     var f_r = open("test_ivfpq.bin", "r")
-    var quantizer_r = alloc[IndexFlat](1)
-    quantizer_r.init_pointee_move(IndexFlat(d))
-    var index2 = IndexIVFPQ[IndexFlat](quantizer_r, d, 10, 4)
-    read_index_ivf_pq(f_r, index2)
+    var index2 = read_index_ivf_pq(f_r)
     f_r.close()
     index2.nprobe = 3
     

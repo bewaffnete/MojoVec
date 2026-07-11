@@ -31,3 +31,6 @@ mojovec_bench
 mojovec_bench.dSYM/
 profile.txt
 .agents/
+*.so
+dist/
+*.egg-info/
