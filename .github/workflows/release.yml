@@ -43,7 +43,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          mojo test tests/ || echo "Warning: Tests had non-zero exit code but continuing."
+          mojo test -I . tests/
           
       - name: Build Python Wheel
         working-directory: python
