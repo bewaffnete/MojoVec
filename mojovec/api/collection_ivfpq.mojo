@@ -74,6 +74,7 @@ struct CollectionIVFPQ(Movable):
             var src = read_data.unsafe_ptr().bitcast[Int]()
             for i in range(num_ids):
                 col._user_ids.append(src[i])
+            _ = len(read_data)
                 
         read_index_ivf_pq(f, col._ivfpq_ptr[])
         f.close()

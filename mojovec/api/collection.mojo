@@ -65,6 +65,7 @@ struct Collection(Movable, Writable):
             var src = read_data.unsafe_ptr().bitcast[Int]()
             for i in range(num_ids):
                 col._user_ids.append(src[i])
+            _ = len(read_data)
                 
         var loaded_hnsw = read_index_hnsw(f)
         col._hnsw = loaded_hnsw^
