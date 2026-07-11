@@ -23,17 +23,17 @@ def main() raises:
     for i in range(nq * d):
         queries[i] = Float32(random_float64(-1.0, 1.0))
         
-    print("Allocating flat_quantizer")
+    pass  # print("Allocating flat_quantizer")
     var flat_quantizer = alloc[IndexFlat](1)
     flat_quantizer.init_pointee_move(IndexFlat(d))
-    print("Allocating IndexIVFPQ")
+    pass  # print("Allocating IndexIVFPQ")
     var ivf = IndexIVFPQ[IndexFlat](flat_quantizer, d, nlist, M)
     
-    print("Training IVFPQ...")
+    pass  # print("Training IVFPQ...")
     ivf.train(n, data)
     assert_true(ivf.is_trained, "Should be trained")
     
-    print("Adding vectors...")
+    pass  # print("Adding vectors...")
     
     var ids = alloc[Int](n)
     for i in range(n):
@@ -42,14 +42,14 @@ def main() raises:
     assert_true(ivf.ntotal == n, "Total should match")
     
     ivf.nprobe = 3
-    print("Searching IVFPQ...")
+    pass  # print("Searching IVFPQ...")
     var dists = alloc[Float32](nq * k)
     var labels = alloc[Int](nq * k)
     
     ivf.search(nq, queries, k, dists, labels)
     
     for i in range(nq):
-        print("Query", i, "top-1 ID:", labels[i * k], "dist:", dists[i * k])
+        pass  # print("Query", i, "top-1 ID:", labels[i * k], "dist:", dists[i * k])
         
     print("All IndexIVFPQ tests passed!")
     

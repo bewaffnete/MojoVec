@@ -56,7 +56,7 @@ def test_flat() raises:
     labels2.free()
 
 def test_ivf_pq() raises:
-    print("Starting IVFPQ test")
+    pass  # print("Starting IVFPQ test")
     var d = 16
     var n = 1000
     var k = 5
@@ -74,18 +74,18 @@ def test_ivf_pq() raises:
     index.add_with_ids(n, data, ids)
     index.nprobe = 3
     
-    print("Searching before save")
+    pass  # print("Searching before save")
     # Search before
     var dists1 = alloc[Float32](k * k)
     var labels1 = alloc[Int](k * k)
     index.search(k, queries, k, dists1, labels1)
     
-    print("Writing index")
+    pass  # print("Writing index")
     var f_w = open("test_ivfpq.bin", "w")
     write_index_ivf_pq(f_w, index)
     f_w.close()
     
-    print("Reading index")
+    pass  # print("Reading index")
     var f_r = open("test_ivfpq.bin", "r")
     var quantizer_r = alloc[IndexFlat](1)
     quantizer_r.init_pointee_move(IndexFlat(d))
@@ -94,7 +94,7 @@ def test_ivf_pq() raises:
     f_r.close()
     index2.nprobe = 3
     
-    print("Searching after load")
+    pass  # print("Searching after load")
     # Search after
     var dists2 = alloc[Float32](k * k)
     var labels2 = alloc[Int](k * k)

@@ -19,15 +19,15 @@ def main() raises:
     # Print the graph
     for i in range(nb):
         var level = hnsw.hnsw.levels[i]
-        print("Node", i, "level", level)
+        pass  # print("Node", i, "level", level)
         for l in range(level + 1):
             var neighbors_info = hnsw.hnsw.get_neighbors(i, l)
             var neighbors = neighbors_info.ptr
-            print("  level", l, "neighbors: ", end="")
+            pass  # print("  level", l, "neighbors: ", end="")
             for j in range(neighbors_info.max_links):
                 var neigh = neighbors[j]
                 if neigh == -1:
                     break
-                print(neigh, end=" ")
-            print("")
+                pass  # print(neigh, end=" ")
+            pass  # print("")
     xb.free()

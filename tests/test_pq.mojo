@@ -19,15 +19,15 @@ def main() raises:
         
     var pq = ProductQuantizer(d, M, ksub)
     
-    print("Training PQ...")
+    pass  # print("Training PQ...")
     pq.train(n, data)
     assert_true(pq.is_trained, "Should be trained")
     
-    print("Encoding vectors...")
+    pass  # print("Encoding vectors...")
     var codes = alloc[UInt8](n * M)
     pq.compute_codes(n, data, codes)
     
-    print("Decoding vectors...")
+    pass  # print("Decoding vectors...")
     var decoded = alloc[Float32](n * d)
     pq.decode(n, codes, decoded)
     
@@ -41,7 +41,7 @@ def main() raises:
     print("Average reconstruction error:", total_error / Float32(n))
     
     # Test distance table
-    print("Computing ADC distance table...")
+    pass  # print("Computing ADC distance table...")
     var query = data + 0
     var dis_table = alloc[Float32](M * ksub)
     pq.compute_distance_table(query, dis_table)
@@ -56,7 +56,7 @@ def main() raises:
     print("ADC distance to self (should be exactly equal to reconstruction error of vector 0):", approx_dist)
     var dec_0 = decoded + 0
     var exact_recon_dist = l2_distance_simd[4](query, dec_0, d)
-    print("Exact distance to decoded self:", exact_recon_dist)
+    pass  # print("Exact distance to decoded self:", exact_recon_dist)
     
     print("All PQ tests passed!")
     

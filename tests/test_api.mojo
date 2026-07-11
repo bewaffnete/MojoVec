@@ -75,8 +75,8 @@ def test_collection_ivfpq() raises:
 
     
 def main() raises:
-    print("Testing API Collection HNSW...")
+    pass  # print("Testing API Collection HNSW...")
     test_collection_hnsw()
-    print("Testing API Collection IVFPQ...")
+    pass  # print("Testing API Collection IVFPQ...")
     test_collection_ivfpq()
     print("All API Unit Tests passed!")

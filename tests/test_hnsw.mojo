@@ -43,14 +43,14 @@ def test_hnsw_recall() raises:
     
     # 4. Compare recall
     for i in range(5):
-        print("Query", i)
-        print("GT  : ", end="")
+        pass  # print("Query", i)
+        pass  # print("GT  : ", end="")
         for j in range(k):
-            print(gt_labels[i * k + j], end=" ")
-        print("\nHNSW: ", end="")
+            pass  # print(gt_labels[i * k + j], end=" ")
+        pass  # print("\nHNSW: ", end="")
         for j in range(k):
-            print(hnsw_labels[i * k + j], end=" ")
-        print("\n")
+            pass  # print(hnsw_labels[i * k + j], end=" ")
+        pass  # print("\n")
         
     var matches = 0
     for i in range(nq):
@@ -63,7 +63,7 @@ def test_hnsw_recall() raises:
                     break
                     
     var recall = Float32(matches) / Float32(nq * k)
-    print("HNSW Recall@5:", recall)
+    pass  # print("HNSW Recall@5:", recall)
     
     assert_true(recall > 0.8, "Recall is too low, HNSW implementation might be flawed.")
     
@@ -75,6 +75,6 @@ def test_hnsw_recall() raises:
     hnsw_labels.free()
     
 def main() raises:
-    print("Testing HNSW Index...")
+    pass  # print("Testing HNSW Index...")
     test_hnsw_recall()
     print("All HNSW tests passed!")
