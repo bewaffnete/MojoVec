@@ -29,7 +29,9 @@ def write_int(mut f: FileHandle, val: Int) raises:
 def read_int(mut f: FileHandle) raises -> Int:
     var read_data = f.read_bytes(8)
     var ptr = read_data.unsafe_ptr().bitcast[Int]()
-    return ptr[0]
+    var val = ptr[0]
+    _ = len(read_data)
+    return val
 
 def write_bool(mut f: FileHandle, val: Bool) raises:
     var ptr = alloc[Bool](1)
@@ -41,7 +43,9 @@ def write_bool(mut f: FileHandle, val: Bool) raises:
 def read_bool(mut f: FileHandle) raises -> Bool:
     var read_data = f.read_bytes(1)
     var ptr = read_data.unsafe_ptr().bitcast[Bool]()
-    return ptr[0]
+    var val = ptr[0]
+    _ = len(read_data)
+    return val
 
 def write_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
@@ -54,6 +58,7 @@ def read_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, M
     var src = read_data.unsafe_ptr().bitcast[Float32]()
     for i in range(count):
         ptr[i] = src[i]
+    _ = len(read_data)
 
 def write_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
@@ -66,6 +71,7 @@ def read_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUn
     var src = read_data.unsafe_ptr()
     for i in range(count):
         ptr[i] = src[i]
+    _ = len(read_data)
 
 def write_unsafe_pointer_int(mut f: FileHandle, ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
@@ -78,6 +84,7 @@ def read_unsafe_pointer_int(mut f: FileHandle, ptr: UnsafePointer[Int, MutUntrac
     var src = read_data.unsafe_ptr().bitcast[Int]()
     for i in range(count):
         ptr[i] = src[i]
+    _ = len(read_data)
 
 # --- IndexFlat ---
 
@@ -167,6 +174,7 @@ def read_hnsw_graph(mut f: FileHandle, mut graph: HNSWGraph) raises:
         var src = read_data.unsafe_ptr().bitcast[Int32]()
         for i in range(neighbors_capacity):
             graph.neighbors[i] = src[i]
+        _ = len(read_data)
         
     read_unsafe_pointer_int(f, graph.cum_nneighbor_per_level, 33)
 
