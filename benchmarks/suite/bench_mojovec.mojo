@@ -41,9 +41,7 @@ def main() raises:
     print("[MojoVec] Collection API (HNSW, M=" + String(M) + ", efConstruction=" + String(efConstruction) + ")")
     
     var client = Client()
-    # Note: efConstruction is defaulted in Collection, we can't easily change it
-    # without modifying Collection.__init__, but we will benchmark the API's default (which is 200).
-    var collection = client.create_collection("bench_hnsw", dimension=d)
+    var collection = client.create_collection("bench_hnsw", dimension=d, M=M, ef_construction=efConstruction)
     
     var t0 = perf_counter_ns()
     collection.add(ids_list, db_list)

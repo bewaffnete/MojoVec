@@ -11,12 +11,12 @@ struct Collection(Movable):
     var _hnsw: IndexHNSW[IndexFlat]
     var _user_ids: List[Int]
 
-    def __init__(out self, dimension: Int):
+    def __init__(out self, dimension: Int, M: Int = 32, ef_construction: Int = 200, ef_search: Int = 40):
         self._dimension = dimension
         var storage = IndexFlat(dimension, METRIC_L2)
-        self._hnsw = IndexHNSW[IndexFlat](storage^, dimension, METRIC_L2, M=32)
-        self._hnsw.hnsw.efConstruction = 200
-        self._hnsw.hnsw.efSearch = 40
+        self._hnsw = IndexHNSW[IndexFlat](storage^, dimension, METRIC_L2, M=M)
+        self._hnsw.hnsw.efConstruction = ef_construction
+        self._hnsw.hnsw.efSearch = ef_search
         self._user_ids = List[Int]()
         
     def __init__(out self, *, deinit take: Self):
@@ -77,6 +77,9 @@ struct Collection(Movable):
             
         var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](embeddings.unsafe_ptr())
         self._hnsw.add(num_vectors, ptr)
+
+    def set_ef_search(mut self, ef: Int):
+        self._hnsw.hnsw.efSearch = ef
 
     def query(self, query_embeddings: List[Float32], n_results: Int = 10) raises -> QueryResults:
         var num_queries = len(query_embeddings) // self._dimension
