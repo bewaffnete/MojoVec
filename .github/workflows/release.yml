@@ -43,7 +43,11 @@ jobs:
 
       - name: Run Tests
         run: |
-          for f in tests/test_*.mojo; do mojo run -I . "$f"; done
+          for f in tests/test_*.mojo; do
+            echo ">>> Running $f"
+            mojo build -debug-level=line-tables -I . "$f" -o test_bin
+            ./test_bin || exit 1
+          done
           
       - name: Build Python Wheel
         working-directory: python
