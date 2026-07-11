@@ -5,7 +5,7 @@ struct Client:
     def __init__(out self):
         pass
 
-    def create_collection(self, name: String, dimension: Int, M: Int = 32, ef_construction: Int = 200, ef_search: Int = 40) -> Collection:
+    def create_collection(self, name: String, dimension: Int, M: Int = 32, ef_construction: Int = 40, ef_search: Int = 16) -> Collection:
         """
         Creates a new vector collection with the specified name and dimension.
         """

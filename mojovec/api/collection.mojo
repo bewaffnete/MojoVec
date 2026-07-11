@@ -11,7 +11,7 @@ struct Collection(Movable):
     var _hnsw: IndexHNSW[IndexFlat]
     var _user_ids: List[Int]
 
-    def __init__(out self, dimension: Int, M: Int = 32, ef_construction: Int = 200, ef_search: Int = 40):
+    def __init__(out self, dimension: Int, M: Int = 32, ef_construction: Int = 40, ef_search: Int = 16):
         self._dimension = dimension
         var storage = IndexFlat(dimension, METRIC_L2)
         self._hnsw = IndexHNSW[IndexFlat](storage^, dimension, METRIC_L2, M=M)

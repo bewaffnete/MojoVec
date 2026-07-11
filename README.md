@@ -76,8 +76,8 @@ def main() raises:
         "my_docs", 
         dimension=128,
         M=32, 
-        ef_construction=200, 
-        ef_search=40
+        ef_construction=40, 
+        ef_search=16
     )
 ```
 
