@@ -1,0 +1,6 @@
+mojovec.so
+setup.py
+mojovec.egg-info/PKG-INFO
+mojovec.egg-info/SOURCES.txt
+mojovec.egg-info/dependency_links.txt
+mojovec.egg-info/top_level.txt

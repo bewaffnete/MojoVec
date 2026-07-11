@@ -4,9 +4,10 @@ from mojovec.core.types import METRIC_L2
 from std.memory import alloc
 from std.collections import List
 from std.memory.span import Span
+from std.python import PythonObject, Python
 from .results import QueryResults
 
-struct Collection(Movable):
+struct Collection(Movable, Writable):
     var _dimension: Int
     var _hnsw: IndexHNSW[IndexFlat]
     var _user_ids: List[Int]
@@ -23,6 +24,12 @@ struct Collection(Movable):
         self._dimension = take._dimension
         self._hnsw = take._hnsw^
         self._user_ids = take._user_ids^
+
+    def write_to[W: Writer](self, mut writer: W):
+        writer.write("Collection(dimension=", self._dimension, ", vectors=", len(self._user_ids), ")")
+        
+    def __str__(self) -> String:
+        return String.write(self)
 
     def save(self, path: String) raises:
         var f = open(path, "w")
@@ -117,3 +124,72 @@ struct Collection(Movable):
         labels_ptr.free()
 
         return QueryResults(all_ids^, all_distances^)
+
+    @staticmethod
+    def py_init(out self: Collection, args: PythonObject, kwargs: PythonObject) raises:
+        var d = Int(py=args[0])
+        var M = 32
+        var ef_c = 40
+        var ef_s = 16
+        if len(args) > 1: M = Int(py=args[1])
+        if len(args) > 2: ef_c = Int(py=args[2])
+        if len(args) > 3: ef_s = Int(py=args[3])
+        self = Self(d, M, ef_c, ef_s)
+
+    @staticmethod
+    def py_add(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        var py_ids = args[0]
+        var py_embeddings = args[1]
+        var mojo_ids = List[Int]()
+        for py_id in py_ids:
+            mojo_ids.append(Int(py=py_id))
+        var mojo_embeddings = List[Float32]()
+        for emb in py_embeddings:
+            mojo_embeddings.append(Float32(py=emb))
+        self_ptr[].add(mojo_ids, mojo_embeddings)
+        return Python.none()
+
+    @staticmethod
+    def py_query(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        var py_embeddings = args[0]
+        var n_results = Int(py=args[1])
+        var mojo_embeddings = List[Float32]()
+        for emb in py_embeddings:
+            mojo_embeddings.append(Float32(py=emb))
+        
+        var res = self_ptr[].query(mojo_embeddings, n_results)
+        
+        var out_ids = Python.list()
+        var out_dists = Python.list()
+        for i in range(len(res.ids)):
+            var row_ids = Python.list()
+            var row_dists = Python.list()
+            for j in range(len(res.ids[i])):
+                row_ids.append(res.ids[i][j])
+                row_dists.append(res.distances[i][j])
+            out_ids.append(row_ids)
+            out_dists.append(row_dists)
+            
+        var dict = Python.dict()
+        dict["ids"] = out_ids
+        dict["distances"] = out_dists
+        return dict
+
+    @staticmethod
+    def py_save(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        var path = String(py=args[0])
+        self_ptr[].save(path)
+        return Python.none()
+
+    @staticmethod
+    def py_load(args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        var path = String(py=args[0])
+        var col = Collection.load(path)
+        return PythonObject(alloc=col^)
+
+    @staticmethod
+    def py_set_ef_search(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        var ef = Int(py=args[0])
+        self_ptr[].set_ef_search(ef)
+        return Python.none()
+
