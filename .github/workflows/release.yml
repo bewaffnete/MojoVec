@@ -43,7 +43,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          mojo test -I . tests/
+          for f in tests/test_*.mojo; do mojo run -I . "$f"; done
           
       - name: Build Python Wheel
         working-directory: python
