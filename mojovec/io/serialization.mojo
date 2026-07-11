@@ -8,8 +8,10 @@ from ..index.index_ivf_flat import IndexIVFFlat
 from ..index.index_ivf_pq import IndexIVFPQ
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..quantization.pq import ProductQuantizer
-
+from ..index.index_hnsw import IndexHNSW
+from ..index.hnsw_graph import HNSWGraph
 comptime MAGIC_FLAT: Int = 0x4d4a4f46
+comptime MAGIC_HNSW: Int = 0x4d4a4f48
 comptime MAGIC_IVF_FLAT: Int = 0x4d4a4f49
 comptime MAGIC_IVF_PQ: Int = 0x4d4a4f50
 comptime MAGIC_INVLISTS: Int = 0x4d4a4f4c
@@ -111,6 +113,92 @@ def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
     index.codes = alloc[Float32](capacity * d)
     
     read_unsafe_pointer_float32(f, index.codes, capacity * d)
+    return index^
+
+# --- HNSWGraph and IndexHNSW ---
+
+def write_hnsw_graph(mut f: FileHandle, graph: HNSWGraph) raises:
+    write_int(f, graph.M)
+    write_int(f, graph.efConstruction)
+    write_int(f, graph.efSearch)
+    write_int(f, graph.max_level)
+    write_int(f, graph.entry_point)
+    write_int(f, graph.ntotal)
+    write_int(f, graph.capacity)
+    write_int(f, graph.neighbors_capacity)
+    
+    write_unsafe_pointer_int(f, graph.levels, graph.capacity)
+    write_unsafe_pointer_int(f, graph.offsets, graph.capacity + 1)
+    
+    if graph.neighbors_capacity > 0:
+        var span_neighbors = Span[UInt8, MutUntrackedOrigin](ptr=graph.neighbors.bitcast[UInt8](), length=graph.neighbors_capacity * 4)
+        f.write_bytes(span_neighbors)
+    
+    write_unsafe_pointer_int(f, graph.cum_nneighbor_per_level, 33)
+
+def read_hnsw_graph(mut f: FileHandle, mut graph: HNSWGraph) raises:
+    graph.M = read_int(f)
+    graph.efConstruction = read_int(f)
+    graph.efSearch = read_int(f)
+    graph.max_level = read_int(f)
+    graph.entry_point = read_int(f)
+    graph.ntotal = read_int(f)
+    
+    var capacity = read_int(f)
+    var neighbors_capacity = read_int(f)
+    
+    if capacity > graph.capacity:
+        graph.capacity = capacity
+        if Int(graph.levels) != 0: graph.levels.free()
+        if Int(graph.offsets) != 0: graph.offsets.free()
+        graph.levels = alloc[Int](capacity)
+        graph.offsets = alloc[Int](capacity + 1)
+        
+    if neighbors_capacity > graph.neighbors_capacity:
+        graph.neighbors_capacity = neighbors_capacity
+        if Int(graph.neighbors) != 0: graph.neighbors.free()
+        graph.neighbors = alloc[Int32](neighbors_capacity)
+        
+    read_unsafe_pointer_int(f, graph.levels, capacity)
+    read_unsafe_pointer_int(f, graph.offsets, capacity + 1)
+    
+    if neighbors_capacity > 0:
+        var read_data = f.read_bytes(neighbors_capacity * 4)
+        var src = read_data.unsafe_ptr().bitcast[Int32]()
+        for i in range(neighbors_capacity):
+            graph.neighbors[i] = src[i]
+        
+    read_unsafe_pointer_int(f, graph.cum_nneighbor_per_level, 33)
+
+def write_index_hnsw(mut f: FileHandle, index: IndexHNSW[IndexFlat]) raises:
+    write_int(f, MAGIC_HNSW)
+    write_int(f, index.d)
+    write_int(f, index.ntotal)
+    write_bool(f, index.is_trained)
+    var metric = 0
+    if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
+    write_int(f, metric)
+    
+    write_index_flat(f, index.storage)
+    write_hnsw_graph(f, index.hnsw)
+
+def read_index_hnsw(mut f: FileHandle) raises -> IndexHNSW[IndexFlat]:
+    var magic = read_int(f)
+    if magic != MAGIC_HNSW: raise Error("Invalid magic for IndexHNSW")
+    
+    var d = read_int(f)
+    var ntotal = read_int(f)
+    var is_trained = read_bool(f)
+    var metric_int = read_int(f)
+    
+    var metric = METRIC_L2
+    if metric_int == 1: metric = METRIC_INNER_PRODUCT
+        
+    var storage = read_index_flat(f)
+    var index = IndexHNSW[IndexFlat](storage^, d, metric, M=32)
+    index.ntotal = ntotal
+    index.is_trained = is_trained
+    read_hnsw_graph(f, index.hnsw)
     return index^
 
 # --- ArrayInvertedLists ---

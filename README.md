@@ -17,8 +17,9 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 | Component | Status |
 |---|---|
 | HNSW (build + search) | ✅ Implemented, benchmarked below |
-| SQ8 / F16 scalar quantization | ✅ Implemented — memory numbers not yet benchmarked (see below) |
-| IVF + PQ (`IndexIVFPQ`) | 🚧 In progress — no working example or benchmark yet |
+| High-Level API (`Client`, `Collection`) | ✅ Implemented, Chroma-like developer experience |
+| IVF + PQ (`IndexIVFPQ`) | ✅ Implemented, extreme compression with automatic training |
+| SQ8 / F16 scalar quantization | ✅ Implemented — memory numbers not yet benchmarked |
 | Python bindings (`pip install mojovec`) | 🚧 Planned, not published |
 
 ---
@@ -53,7 +54,7 @@ MojoVec's QPS sits between FAISS and a Python-wrapped hnswlib, using SIMD loops 
 ## Quantization (Memory Compression)
 
 - **`IndexScalarQuantizer`** — compresses `Float32` vectors to 8-bit (`SQ8`) or `Float16`, a 4x/2x reduction on paper.
-- **`IndexIVFPQ`** — IVF + PQ for larger compression ratios via Asymmetric Distance Computation. *(Status: in progress, no benchmark yet.)*
+- **`IndexIVFPQ`** — IVF + PQ for extreme compression ratios via Asymmetric Distance Computation. Integrated natively into the high-level API.
 
 *(Note: measured memory footprint before/after quantization, and recall delta vs full-precision benchmarks are coming soon.)*
 
@@ -61,65 +62,53 @@ MojoVec's QPS sits between FAISS and a Python-wrapped hnswlib, using SIMD loops 
 
 ## Quick Start
 
-### 1. Initialize the Index (Mojo)
+### 1. Initialize the Client
 
 ```mojo
-from mojovec import IndexHNSW, IndexFlat, METRIC_L2
+from mojovec.api import Client
+from std.collections import List
 
 def main() raises:
-    var d = 128
-
-    var storage = IndexFlat(d, METRIC_L2)
-    var hnsw = IndexHNSW[IndexFlat](storage^, d, METRIC_L2, M=32)
-    hnsw.hnsw.efConstruction = 200
-    hnsw.hnsw.efSearch = 40
+    var client = Client()
+    # Create an HNSW collection (or use create_ivfpq_collection for compression)
+    var collection = client.create_collection("my_docs", dimension=128)
 ```
 
-### 2. Ingest Vectors
+### 2. Add Vectors
 
 ```mojo
-from std.memory import alloc
-
-    var num_vectors = 1000
-    var xb = alloc[Float32](num_vectors * d)
-
-    # ... fill xb with data ...
-
-    hnsw.add(num_vectors, xb)
+    var ids = List[Int]()
+    var embeddings = List[Float32]()
+    
+    # ... fill ids and embeddings ...
+    
+    # No pointers, no alloc/free!
+    collection.add(ids, embeddings)
 ```
 
 ### 3. Search
 
 ```mojo
-    var num_queries = 10
-    var xq = alloc[Float32](num_queries * d)
-    var k = 10
-
-    # ... fill xq with query vectors ...
-
-    var distances = alloc[Float32](num_queries * k)
-    var labels = alloc[Int](num_queries * k)
-
-    hnsw.search(num_queries, xq, k, distances, labels)
-
-    for i in range(num_queries):
+    var query_embeddings = List[Float32]()
+    # ... fill query ...
+    
+    var results = collection.query(query_embeddings, n_results=5)
+    
+    for i in range(len(results.ids)):
         print("Query", i)
-        for j in range(k):
-            print("ID:", labels[i * k + j], "Dist:", distances[i * k + j])
+        for j in range(len(results.ids[i])):
+            print("ID:", results.ids[i][j], "Dist:", results.distances[i][j])
 ```
 
 ### 4. Disk Persistence
 
 ```mojo
-from mojovec import write_index_flat, read_index_flat
-
-    var f_w = open("my_index.bin", "w")
-    write_index_flat(f_w, index)
-    f_w.close()
-
-    var f_r = open("my_index.bin", "r")
-    var loaded_index = read_index_flat(f_r)
-    f_r.close()
+    # Save to disk
+    collection.save("my_database.bin")
+    
+    # Reload anywhere
+    from mojovec.api import Collection
+    var loaded = Collection.load("my_database.bin")
 ```
 
 ---

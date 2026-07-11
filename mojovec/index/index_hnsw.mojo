@@ -7,7 +7,7 @@ from .hnsw_visited import VisitedTable, VisitedTablePool
 from std.algorithm import parallelize
 
 
-struct IndexHNSW[StorageType: StorageTrait](Index):
+struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
     var d: Int
     var ntotal: Int
     var metric_type: MetricType
