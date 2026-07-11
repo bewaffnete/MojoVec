@@ -71,7 +71,14 @@ from std.collections import List
 def main() raises:
     var client = Client()
     # Create an HNSW collection (or use create_ivfpq_collection for compression)
-    var collection = client.create_collection("my_docs", dimension=128)
+    # You can optionally tune HNSW hyperparameters:
+    var collection = client.create_collection(
+        "my_docs", 
+        dimension=128,
+        M=32, 
+        ef_construction=200, 
+        ef_search=40
+    )
 ```
 
 ### 2. Add Vectors
@@ -92,6 +99,8 @@ def main() raises:
     var query_embeddings = List[Float32]()
     # ... fill query ...
     
+    # Optionally increase precision before search
+    collection.set_ef_search(100)
     var results = collection.query(query_embeddings, n_results=5)
     
     for i in range(len(results.ids)):
