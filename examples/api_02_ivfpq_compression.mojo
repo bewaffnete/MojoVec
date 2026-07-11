@@ -6,7 +6,7 @@ API to compress and search for vectors using Product Quantization.
 The API automatically handles training the index under the hood when `add()` is called.
 """
 
-from mojovec.api import Client
+from mojovec import Client
 from std.collections import List
 from std.random import rand
 

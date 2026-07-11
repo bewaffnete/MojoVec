@@ -6,7 +6,7 @@ API to quickly add and search for vectors without managing memory pointers,
 index types, or manual metric configuration.
 """
 
-from mojovec.api import Client
+from mojovec import Client
 from std.collections import List
 from std.random import rand
 

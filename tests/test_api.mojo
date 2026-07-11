@@ -1,4 +1,4 @@
-from mojovec.api import Client, Collection, CollectionIVFPQ, QueryResults
+from mojovec import Client, Collection, CollectionIVFPQ, QueryResults
 from std.collections import List
 
 def assert_true(cond: Bool, msg: String = "Assertion failed") raises:

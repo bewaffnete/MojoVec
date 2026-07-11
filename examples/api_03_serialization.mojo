@@ -6,7 +6,7 @@ and reload it. The `save()` and `load()` methods automatically serialize both
 the internal index structures (like HNSW graphs) and your custom IDs.
 """
 
-from mojovec.api import Client, Collection
+from mojovec import Client, Collection
 from std.collections import List
 
 def main() raises:

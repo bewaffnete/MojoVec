@@ -5,3 +5,4 @@ from mojovec.index.index_ivf_pq import IndexIVFPQ
 from mojovec.index.index_sq import IndexScalarQuantizer
 from mojovec.core.types import METRIC_L2, METRIC_INNER_PRODUCT
 from mojovec.io.serialization import write_index_flat, read_index_flat, write_index_ivf_pq, read_index_ivf_pq
+from mojovec.api import Client, Collection, CollectionIVFPQ, QueryResults

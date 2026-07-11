@@ -65,7 +65,7 @@ MojoVec's QPS sits between FAISS and a Python-wrapped hnswlib, using SIMD loops 
 ### 1. Initialize the Client
 
 ```mojo
-from mojovec.api import Client
+from mojovec import Client
 from std.collections import List
 
 def main() raises:
@@ -107,7 +107,7 @@ def main() raises:
     collection.save("my_database.bin")
     
     # Reload anywhere
-    from mojovec.api import Collection
+    from mojovec import Collection
     var loaded = Collection.load("my_database.bin")
 ```
 
