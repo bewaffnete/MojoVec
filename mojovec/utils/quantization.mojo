@@ -8,13 +8,13 @@ def encode_8bit_simd[simd_width: Int](
     vdiff: SIMD[DType.float32, simd_width]
 ) -> SIMD[DType.uint8, simd_width]:
     
-    # Avoid division by zero
-    var diff_safe = vdiff
-    var zero_mask = vdiff == 0.0
-    diff_safe = zero_mask.select(1.0, vdiff)
-    
-    var xi = (x - vmin) / diff_safe
-    xi = zero_mask.select(0.0, xi) # If diff was 0, mapped to 0
+    # Avoid division by zero and normalize
+    var xi = SIMD[DType.float32, simd_width]()
+    for i in range(simd_width):
+        if vdiff[i] == 0.0:
+            xi[i] = 0.0
+        else:
+            xi[i] = (x[i] - vmin[i]) / vdiff[i]
     
     # clamp
     xi = xi.clamp(0.0, 1.0)
