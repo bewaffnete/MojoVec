@@ -79,6 +79,12 @@ jobs:
       - name: Build Mojo Package
         run: |
           mojo package mojovec -o mojovec.mojoc
+      - name: Test Mojo Package
+        run: |
+          mkdir test_mojoc
+          cp mojovec.mojoc tests/smoke_mojoc.mojo test_mojoc/
+          cd test_mojoc
+          mojo run smoke_mojoc.mojo
       - name: Upload Mojo Package
         uses: actions/upload-artifact@v4
         with:
