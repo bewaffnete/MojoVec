@@ -7,6 +7,12 @@ from ..clustering.kmeans import KMeans
 from std.memory import alloc
 
 struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
+    """An Inverted File (IVF) index with exact flat storage for vectors.
+    
+    This index uses a coarse quantizer to partition the vector space into cells (inverted lists)
+    and stores the exact vectors in these lists. During search, it only compares the query
+    with vectors in the most promising cells.
+    """
     var d: Int
     var nlist: Int
     var nprobe: Int
@@ -18,6 +24,14 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
     var invlists: ArrayInvertedLists
     
     def __init__(out self, quantizer: UnsafePointer[Self.QuantizerType, MutUntrackedOrigin], d: Int, nlist: Int, metric: MetricType = METRIC_L2):
+        """Initializes an IVF-Flat index.
+        
+        Args:
+            quantizer: Pointer to the coarse quantizer used for assigning vectors to inverted lists.
+            d: Dimensionality of the vectors.
+            nlist: Number of inverted lists (cells/clusters).
+            metric: The distance metric to use (e.g., L2 or Inner Product).
+        """
         self.d = d
         self.nlist = nlist
         self.nprobe = 1
@@ -29,6 +43,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         self.invlists = ArrayInvertedLists(nlist, self.d * 4)
 
     def __init__(out self, *, deinit move: Self):
+        """Move constructor for the index."""
         self.d = move.d
         self.nlist = move.nlist
         self.nprobe = move.nprobe
@@ -39,6 +54,12 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         self.invlists = move.invlists^
         
     def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Trains the coarse quantizer using a set of training vectors.
+        
+        Args:
+            n: Number of training vectors.
+            x: Pointer to the contiguous array of training vectors.
+        """
         if self.is_trained: return
         
         var kmeans = KMeans(self.d, self.nlist, 15)
@@ -48,6 +69,12 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         self.is_trained = True
 
     def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Adds vectors to the index, automatically assigning sequential IDs.
+        
+        Args:
+            n: Number of vectors to add.
+            x: Pointer to the contiguous array of vectors.
+        """
         var ids = alloc[Int](n)
         for i in range(n):
             ids[i] = self.ntotal + i
@@ -55,6 +82,13 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         ids.free()
 
     def add_with_ids(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], ids: UnsafePointer[Int, MutUntrackedOrigin]):
+        """Adds vectors to the index with explicitly provided IDs.
+        
+        Args:
+            n: Number of vectors to add.
+            x: Pointer to the contiguous array of vectors.
+            ids: Pointer to the array of vector IDs.
+        """
         if not self.is_trained:
             # Cannot add without training
             return
@@ -83,6 +117,15 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         assign_labels.free()
 
     def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+        """Searches the index for the k nearest neighbors of the given query vectors.
+        
+        Args:
+            n: Number of query vectors.
+            x: Pointer to the contiguous array of query vectors.
+            k: The number of nearest neighbors to retrieve for each query.
+            distances: Pointer to the output array for storing the distances of the k nearest neighbors.
+            labels: Pointer to the output array for storing the IDs of the k nearest neighbors.
+        """
         if not self.is_trained or self.ntotal == 0:
             for i in range(n * k):
                 distances[i] = 1e38

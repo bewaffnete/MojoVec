@@ -1,6 +1,11 @@
-# heap.mojo
+"""
+Provides min-heap and max-heap data structures for maintaining nearest neighbor search results.
+"""
 
 struct HeapResult(TrivialRegisterPassable):
+    """
+    Represents a single element extracted from the heap, containing a distance and an integer label.
+    """
     var dist: Float32
     var label: Int
     def __init__(out self, dist: Float32, label: Int):
@@ -11,8 +16,14 @@ struct HeapResult(TrivialRegisterPassable):
 @always_inline
 def max_heap_replace_top[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], k: Int, dist: Float32, label: Int):
     """
-    Replaces the top element (max) of the max-heap with a new element and sifts down.
-    Assumes the heap has size k and the top is at index 0.
+    Replaces the top element of a max-heap with a new element and sifts down to maintain the heap property.
+    
+    Args:
+        heap_distances: Pointer to the array of distances representing the heap.
+        heap_labels: Pointer to the array of corresponding labels.
+        k: The maximum size of the heap.
+        dist: The new distance to insert.
+        label: The new label to insert.
     """
     heap_distances[0] = dist
     heap_labels[0] = label
@@ -29,7 +40,6 @@ def max_heap_replace_top[origin1: MutOrigin, origin2: MutOrigin](heap_distances:
             largest = right
             
         if largest != i:
-            # Swap
             var tmp_dist = heap_distances[i]
             heap_distances[i] = heap_distances[largest]
             heap_distances[largest] = tmp_dist
@@ -45,7 +55,14 @@ def max_heap_replace_top[origin1: MutOrigin, origin2: MutOrigin](heap_distances:
 @always_inline
 def max_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int, dist: Float32, label: Int):
     """
-    Pushes a new element into the max-heap and sifts up.
+    Pushes a new element into the max-heap and sifts up to maintain the heap property.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap before pushing.
+        dist: The new distance to insert.
+        label: The new label to insert.
     """
     var i = current_size
     heap_distances[i] = dist
@@ -54,7 +71,6 @@ def max_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Unsafe
     while i > 0:
         var parent = (i - 1) // 2
         if heap_distances[parent] < heap_distances[i]:
-            # Swap
             var tmp_dist = heap_distances[i]
             heap_distances[i] = heap_distances[parent]
             heap_distances[parent] = tmp_dist
@@ -69,6 +85,16 @@ def max_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Unsafe
 
 @always_inline
 def min_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int, dist: Float32, label: Int):
+    """
+    Pushes a new element into the min-heap and sifts up to maintain the heap property.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap before pushing.
+        dist: The new distance to insert.
+        label: The new label to insert.
+    """
     var i = current_size
     heap_distances[i] = dist
     heap_labels[i] = label
@@ -90,6 +116,17 @@ def min_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Unsafe
 
 @always_inline
 def min_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int) -> HeapResult:
+    """
+    Pops and returns the minimum element from the min-heap.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap.
+        
+    Returns:
+        The extracted `HeapResult`.
+    """
     var popped_dist = heap_distances[0]
     var popped_label = heap_labels[0]
     
@@ -128,6 +165,17 @@ def min_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafeP
 
 @always_inline
 def max_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int, origin2], current_size: Int) -> HeapResult:
+    """
+    Pops and returns the maximum element from the max-heap.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap.
+        
+    Returns:
+        The extracted `HeapResult`.
+    """
     var popped_dist = heap_distances[0]
     var popped_label = heap_labels[0]
     
@@ -164,9 +212,10 @@ def max_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafeP
             
     return HeapResult(popped_dist, popped_label)
 
-# heap.mojo
-
 struct HeapResult32(TrivialRegisterPassable):
+    """
+    Represents a single element extracted from the heap, containing a distance and an Int32 label.
+    """
     var dist: Float32
     var label: Int32
     def __init__(out self, dist: Float32, label: Int32):
@@ -178,7 +227,13 @@ struct HeapResult32(TrivialRegisterPassable):
 def max_heap_replace_top[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int32, origin2], k: Int, dist: Float32, label: Int32):
     """
     Replaces the top element (max) of the max-heap with a new element and sifts down.
-    Assumes the heap has size k and the top is at index 0.
+    
+    Args:
+        heap_distances: Pointer to the array of distances representing the heap.
+        heap_labels: Pointer to the array of corresponding labels.
+        k: The maximum size of the heap.
+        dist: The new distance to insert.
+        label: The new label to insert.
     """
     heap_distances[0] = dist
     heap_labels[0] = label
@@ -195,7 +250,6 @@ def max_heap_replace_top[origin1: MutOrigin, origin2: MutOrigin](heap_distances:
             largest = right
             
         if largest != i:
-            # Swap
             var tmp_dist = heap_distances[i]
             heap_distances[i] = heap_distances[largest]
             heap_distances[largest] = tmp_dist
@@ -212,6 +266,13 @@ def max_heap_replace_top[origin1: MutOrigin, origin2: MutOrigin](heap_distances:
 def max_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int32, origin2], current_size: Int, dist: Float32, label: Int32):
     """
     Pushes a new element into the max-heap and sifts up.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap before pushing.
+        dist: The new distance to insert.
+        label: The new label to insert.
     """
     var i = current_size
     heap_distances[i] = dist
@@ -220,7 +281,6 @@ def max_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Unsafe
     while i > 0:
         var parent = (i - 1) // 2
         if heap_distances[parent] < heap_distances[i]:
-            # Swap
             var tmp_dist = heap_distances[i]
             heap_distances[i] = heap_distances[parent]
             heap_distances[parent] = tmp_dist
@@ -235,6 +295,16 @@ def max_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Unsafe
 
 @always_inline
 def min_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int32, origin2], current_size: Int, dist: Float32, label: Int32):
+    """
+    Pushes a new element into the min-heap and sifts up.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap before pushing.
+        dist: The new distance to insert.
+        label: The new label to insert.
+    """
     var i = current_size
     heap_distances[i] = dist
     heap_labels[i] = label
@@ -256,6 +326,17 @@ def min_heap_push[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Unsafe
 
 @always_inline
 def min_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int32, origin2], current_size: Int) -> HeapResult32:
+    """
+    Pops and returns the minimum element from the min-heap.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap.
+        
+    Returns:
+        The extracted `HeapResult32`.
+    """
     var popped_dist = heap_distances[0]
     var popped_label = heap_labels[0]
     
@@ -294,6 +375,17 @@ def min_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafeP
 
 @always_inline
 def max_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: UnsafePointer[Float32, origin1], heap_labels: UnsafePointer[Int32, origin2], current_size: Int) -> HeapResult32:
+    """
+    Pops and returns the maximum element from the max-heap.
+    
+    Args:
+        heap_distances: Pointer to the heap distances array.
+        heap_labels: Pointer to the heap labels array.
+        current_size: The current number of elements in the heap.
+        
+    Returns:
+        The extracted `HeapResult32`.
+    """
     var popped_dist = heap_distances[0]
     var popped_label = heap_labels[0]
     

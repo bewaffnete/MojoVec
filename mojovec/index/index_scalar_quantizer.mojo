@@ -7,6 +7,7 @@ from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from std.sys.intrinsics import prefetch, PrefetchOptions
 
 struct SQDistanceComputer(DistanceComputerTrait):
+    """Computes distances between a query vector and scalar quantized database vectors."""
     var d: Int
     var code_size: Int
     var metric_type: MetricType
@@ -18,6 +19,16 @@ struct SQDistanceComputer(DistanceComputerTrait):
     var scratch_y: UnsafePointer[Float32, MutUntrackedOrigin]
 
     def __init__(out self, d: Int, code_size: Int, metric_type: MetricType, sq: ScalarQuantizer, codes: UnsafePointer[UInt8, MutUntrackedOrigin], query: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Initializes the distance computer.
+        
+        Args:
+            d: The dimensionality of the vectors.
+            code_size: The byte size of a quantized code.
+            metric_type: The metric type used for distance computation.
+            sq: The scalar quantizer instance used for decoding.
+            codes: A pointer to the quantized database codes.
+            query: A pointer to the uncompressed query vector.
+        """
         self.d = d
         self.code_size = code_size
         self.metric_type = metric_type
@@ -28,6 +39,11 @@ struct SQDistanceComputer(DistanceComputerTrait):
         self.scratch_y = alloc[Float32](self.d)
 
     def __init__(out self, *, deinit move: Self):
+        """Moves the distance computer from another instance.
+        
+        Args:
+            move: The instance to move from.
+        """
         self.d = move.d
         self.code_size = move.code_size
         self.metric_type = move.metric_type
@@ -38,6 +54,7 @@ struct SQDistanceComputer(DistanceComputerTrait):
         self.scratch_y = move.scratch_y
 
     def __del__(deinit self):
+        """Frees the allocated memory for the scratch buffers."""
         # In Mojo, we can't check pointer truthiness, so we just free if address is not 0
         if Int(self.scratch_x) != 0:
             self.scratch_x.free()
@@ -46,6 +63,15 @@ struct SQDistanceComputer(DistanceComputerTrait):
         
     @always_inline
     def distance(self, id: Int, threshold: Float32 = Float32.MAX) -> Float32:
+        """Computes the distance between the query and a specified database vector.
+        
+        Args:
+            id: The index of the database vector.
+            threshold: An optional threshold for early termination.
+            
+        Returns:
+            The computed approximate distance.
+        """
         var db_ptr = self.codes + (id * self.code_size)
         self.sq.decode(db_ptr, self.scratch_x)
         if self.metric_type == METRIC_L2:
@@ -55,6 +81,15 @@ struct SQDistanceComputer(DistanceComputerTrait):
 
     @always_inline
     def symmetric_distance(self, i: Int, j: Int) -> Float32:
+        """Computes the distance between two database vectors.
+        
+        Args:
+            i: The index of the first database vector.
+            j: The index of the second database vector.
+            
+        Returns:
+            The computed symmetric distance.
+        """
         # Decode both codes into separate scratch buffers — scratch_x holds i,
         # scratch_y holds j. Sharing one buffer would overwrite i before the
         # distance is computed. Mirrors FlatDistanceComputer's metric handling.
@@ -71,6 +106,9 @@ struct SQDistanceComputer(DistanceComputerTrait):
         
         For SQ, prefetching the encoded bytes ahead of decode+distance
         hides memory latency during HNSW neighbor traversal.
+        
+        Args:
+            id: The index of the vector to prefetch.
         """
         var ptr = self.codes + (id * self.code_size)
         comptime opts = PrefetchOptions().for_read().medium_locality().to_data_cache()
@@ -78,9 +116,15 @@ struct SQDistanceComputer(DistanceComputerTrait):
 
     @always_inline
     def is_exact(self) -> Bool:
+        """Indicates whether this computer provides exact distances.
+        
+        Returns:
+            False, since scalar quantization provides approximate distances.
+        """
         return False
 
 struct IndexScalarQuantizer(Index, StorageTrait):
+    """An index that uses a scalar quantizer to compress vectors and accelerate search."""
     comptime ComputerType = SQDistanceComputer
     var d: Int
     var ntotal: Int
@@ -99,6 +143,13 @@ struct IndexScalarQuantizer(Index, StorageTrait):
     var scratch_x: UnsafePointer[Float32, MutUntrackedOrigin]
 
     def __init__(out self, d: Int, qtype: QuantizerType, metric: MetricType = METRIC_L2):
+        """Initializes the scalar quantizer index.
+        
+        Args:
+            d: The dimensionality of the vectors.
+            qtype: The type of scalar quantizer (e.g., QT_8bit or QT_fp16).
+            metric: The metric type used for distance computation.
+        """
         self.d = d
         self.ntotal = 0
         self.metric_type = metric
@@ -112,15 +163,28 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         self.scratch_x = alloc[Float32](self.d)
 
     def __del__(deinit self):
+        """Frees the allocated memory for the index."""
         self.scratch_x.free()
         if Int(self.codes) != 0:
             self.codes.free()
         
     def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Trains the scalar quantizer on a representative dataset.
+        
+        Args:
+            n: The number of training vectors.
+            x: A pointer to the training vectors.
+        """
         self.sq.train(n, x)
         self.is_trained = self.sq.is_trained
 
     def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Quantizes and adds new vectors to the index.
+        
+        Args:
+            n: The number of vectors to add.
+            x: A pointer to the uncompressed vectors to add.
+        """
         if not self.is_trained:
             return # Should raise error
             
@@ -145,10 +209,27 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         self.ntotal = new_ntotal
         
     def get_vector(self, id: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:
+        """Decodes and retrieves a specific vector in the index.
+        
+        Args:
+            id: The index of the vector to retrieve.
+            
+        Returns:
+            A pointer to the decoded, uncompressed vector.
+        """
         self.sq.decode(self.codes + (id * self.code_size), self.scratch_x)
         return self.scratch_x
 
     def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+        """Searches for the k-nearest neighbors of the given query vectors.
+        
+        Args:
+            n: The number of query vectors.
+            x: A pointer to the uncompressed query vectors.
+            k: The number of nearest neighbors to retrieve.
+            distances: A pointer to the output distances array.
+            labels: A pointer to the output labels array.
+        """
         var scratch_x = alloc[Float32](self.d)
         
         for i in range(n):
@@ -188,4 +269,12 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         scratch_x.free()
         
     def get_distance_computer(self, query: UnsafePointer[Float32, MutUntrackedOrigin]) -> Self.ComputerType:
+        """Creates a distance computer for the given query vector.
+        
+        Args:
+            query: A pointer to the query vector.
+            
+        Returns:
+            An instance of the associated distance computer.
+        """
         return SQDistanceComputer(self.d, self.code_size, self.metric_type, self.sq.copy(), self.codes, query)

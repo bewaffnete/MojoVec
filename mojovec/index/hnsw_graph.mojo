@@ -14,17 +14,20 @@ from .hnsw_visited import VisitedTable
 
 
 struct NeighborsInfo:
+    """Contains information about a node's neighbors in the HNSW graph."""
     var ptr: UnsafePointer[Int32, MutUntrackedOrigin]
     var max_links: Int
 
     def __init__(
         out self, ptr: UnsafePointer[Int32, MutUntrackedOrigin], max_links: Int
     ):
+        """Initializes neighbor information with a pointer to the links and the maximum allowed links."""
         self.ptr = ptr
         self.max_links = max_links
 
 
 struct HNSWGraph(Movable):
+    """Represents the Hierarchical Navigable Small World (HNSW) graph structure."""
     var M: Int
     var efConstruction: Int
     var efSearch: Int
@@ -48,9 +51,16 @@ struct HNSWGraph(Movable):
     def __init__(
         out self, M: Int = 32, efConstruction: Int = 40, efSearch: Int = 16
     ):
+        """Initializes the HNSW graph with the given hyperparameters."""
         self.M = M
+        if self.M > 1000:
+            self.M = 1000
         self.efConstruction = efConstruction
+        if self.efConstruction > 2048:
+            self.efConstruction = 2048
         self.efSearch = efSearch
+        if self.efSearch > 2048:
+            self.efSearch = 2048
         self.max_level = -1
         self.entry_point = -1
         self.ntotal = 0
@@ -83,6 +93,7 @@ struct HNSWGraph(Movable):
             self.now_serving[i] = 0
 
     def __del__(deinit self):
+        """Frees the underlying memory of the HNSW graph."""
         if Int(self.levels) != 0:
             self.levels.free()
         if Int(self.offsets) != 0:
@@ -97,6 +108,7 @@ struct HNSWGraph(Movable):
             self.now_serving.free()
 
     def __init__(out self, *, deinit move: Self):
+        """Moves the HNSW graph."""
         self.M = move.M
         self.efConstruction = move.efConstruction
         self.efSearch = move.efSearch
@@ -114,6 +126,7 @@ struct HNSWGraph(Movable):
         self.num_locks = move.num_locks
 
     def random_level(self) -> Int:
+        """Generates a random level for a new node based on the graph's M parameter."""
         var ptr = alloc[Float64](1)
         rand(ptr, 1)
         var f = ptr[0]
@@ -128,6 +141,7 @@ struct HNSWGraph(Movable):
 
     @always_inline
     def get_neighbors(self, node: Int, level: Int) -> NeighborsInfo:
+        """Retrieves the neighbor information for a given node at a specific level."""
         var base_offset = self.offsets[node]
         var level_offset = self.cum_nneighbor_per_level[level]
         var max_size = self.cum_nneighbor_per_level[level + 1] - level_offset
@@ -137,6 +151,7 @@ struct HNSWGraph(Movable):
 
     @always_inline
     def set_neighbors_len(self, node: Int, level: Int, new_len: Int):
+        """Sets the effective length of a node's neighbor list at a given level by appending a sentinel."""
         var info = self.get_neighbors(node, level)
         # We store the sentinel -1 to mark the end of the neighbor list
         if new_len < info.max_links:
@@ -144,6 +159,7 @@ struct HNSWGraph(Movable):
 
     @always_inline
     def lock_node(self, node: Int):
+        """Acquires a ticket lock for a specific node to allow thread-safe updates."""
         var lock_idx = node % self.num_locks
         var ticket = Atomic.fetch_add(self.next_tickets + lock_idx, 1)
         while Atomic.load(self.now_serving + lock_idx) != ticket:
@@ -151,10 +167,12 @@ struct HNSWGraph(Movable):
 
     @always_inline
     def unlock_node(self, node: Int):
+        """Releases the ticket lock for a specific node."""
         var lock_idx = node % self.num_locks
         _ = Atomic.fetch_add(self.now_serving + lock_idx, 1)
 
     def _grow(mut self):
+        """Doubles the capacity of the node level and offset arrays."""
         var new_capacity = self.capacity * 2
 
         var new_levels = alloc[Int](new_capacity)
@@ -172,6 +190,7 @@ struct HNSWGraph(Movable):
         self.capacity = new_capacity
 
     def grow_neighbors(mut self, required_capacity: Int, current_offset: Int):
+        """Grows the neighbor links array to accommodate more links."""
         var new_capacity = max(self.neighbors_capacity * 2, required_capacity)
         var new_neighbors = alloc[Int32](new_capacity)
         for i in range(new_capacity):
@@ -203,6 +222,11 @@ struct HNSWGraph(Movable):
         mut res_dist: UnsafePointer[Float32, origin1],
         mut res_labels: UnsafePointer[Int32, origin2],
     ) -> Int:
+        """Performs a greedy beam search on a specific layer of the HNSW graph."""
+        var safe_ef = ef
+        if safe_ef > 2048:
+            safe_ef = 2048
+        
         var c_dist_array = InlineArray[Float32, 2048](uninitialized=True)
         var c_labels_array = InlineArray[Int32, 2048](uninitialized=True)
         var C_dist = c_dist_array.unsafe_ptr()
@@ -230,7 +254,7 @@ struct HNSWGraph(Movable):
             C_size -= 1
 
             var worst_w_dist = W_dist[0]
-            if W_size == ef and c_dist > worst_w_dist:
+            if W_size == safe_ef and c_dist > worst_w_dist:
                 break
 
             # Prefetch the next node's neighbor list if there are still candidates left
@@ -270,11 +294,11 @@ struct HNSWGraph(Movable):
 
                     var threshold: Float32 = Float32.MAX
                     worst_w_dist = W_dist[0]
-                    if W_size >= ef:
+                    if W_size >= safe_ef:
                         threshold = worst_w_dist
                         
                     var e_dist = comp.distance(Int(e), threshold)
-                    if W_size < ef or e_dist < worst_w_dist:
+                    if W_size < safe_ef or e_dist < worst_w_dist:
                         # Skip if C heap exceeds pre-allocated capacity (very rare)
                         if C_size >= C_cap:
                             pass
@@ -282,12 +306,12 @@ struct HNSWGraph(Movable):
                             min_heap_push(C_dist, C_labels, C_size, e_dist, e)
                             C_size += 1
 
-                        if W_size < ef:
+                        if W_size < safe_ef:
                             max_heap_push(W_dist, W_labels, W_size, e_dist, e)
                             W_size += 1
                         else:
                             max_heap_replace_top(
-                                W_dist, W_labels, ef, e_dist, e
+                                W_dist, W_labels, safe_ef, e_dist, e
                             )
 
         return W_size
@@ -295,6 +319,7 @@ struct HNSWGraph(Movable):
     def shrink_neighbor_list[
         ComputerType: DistanceComputerTrait
     ](self, mut comp: ComputerType, node: Int, level: Int, max_links: Int):
+        """Shrinks a node's neighbor list by keeping only the closest max_links neighbors."""
         var info = self.get_neighbors(node, level)
         var neighbors = info.ptr
 
@@ -349,6 +374,7 @@ struct HNSWGraph(Movable):
         level: Int,
         vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
     ):
+        """Adds a bidirectional link between two nodes, applying heuristics to maintain graph quality."""
         self.lock_node(src)
         var info = self.get_neighbors(src, level)
         var neighbors = info.ptr
@@ -367,6 +393,8 @@ struct HNSWGraph(Movable):
             self.unlock_node(src)
         else:
             var C_size = info.max_links + 1
+            if C_size > 2048:
+                C_size = 2048
             var c_nodes_array = InlineArray[Int32, 2048](uninitialized=True)
             var c_dists_array = InlineArray[Float32, 2048](uninitialized=True)
             var C_nodes = c_nodes_array.unsafe_ptr()

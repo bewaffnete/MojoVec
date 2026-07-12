@@ -8,11 +8,17 @@ from std.python import PythonObject, Python
 from .results import QueryResults
 
 struct Collection(Movable, Writable):
+    """
+    A vector collection that uses HNSW with SQ8 quantization for efficient nearest neighbor search.
+    """
     var _dimension: Int
     var _hnsw: IndexHNSW[IndexFlatSQ8]
     var _user_ids: List[Int]
 
     def __init__(out self, dimension: Int, M: Int = 32, ef_construction: Int = 40, ef_search: Int = 16):
+        """
+        Initializes a new collection with the given parameters.
+        """
         self._dimension = dimension
         var storage = IndexFlatSQ8(dimension, METRIC_L2)
         self._hnsw = IndexHNSW[IndexFlatSQ8](storage^, dimension, METRIC_L2, M=M)
@@ -21,17 +27,29 @@ struct Collection(Movable, Writable):
         self._user_ids = List[Int]()
         
     def __init__(out self, *, deinit take: Self):
+        """
+        Takes ownership of an existing collection.
+        """
         self._dimension = take._dimension
         self._hnsw = take._hnsw^
         self._user_ids = take._user_ids^
 
     def write_to[W: Writer](self, mut writer: W):
+        """
+        Writes a string representation of the collection to the given writer.
+        """
         writer.write("Collection(dimension=", self._dimension, ", vectors=", len(self._user_ids), ")")
         
     def __str__(self) -> String:
+        """
+        Returns a string representation of the collection.
+        """
         return String.write(self)
 
     def save(self, path: String) raises:
+        """
+        Saves the collection to the specified file path.
+        """
         var f = open(path, "w")
         # Save signature: 'COLL' (1129270348)
         from mojovec.io.serialization import write_int, write_index_hnsw_sq8
@@ -50,6 +68,9 @@ struct Collection(Movable, Writable):
 
     @staticmethod
     def load(path: String) raises -> Collection:
+        """
+        Loads a collection from the specified file path.
+        """
         var f = open(path, "r")
         from mojovec.io.serialization import read_int, read_index_hnsw_sq8
         var magic = read_int(f)
@@ -73,6 +94,9 @@ struct Collection(Movable, Writable):
         return col^
 
     def add(mut self, ids: List[Int], embeddings: List[Float32]) raises:
+        """
+        Adds multiple vectors with associated IDs to the collection.
+        """
         var num_vectors = len(ids)
         if len(embeddings) != num_vectors * self._dimension:
             raise Error("Embeddings list length must be equal to len(ids) * dimension.")
@@ -87,9 +111,15 @@ struct Collection(Movable, Writable):
         self._hnsw.add(num_vectors, ptr)
 
     def set_ef_search(mut self, ef: Int):
+        """
+        Updates the efSearch parameter for the HNSW index.
+        """
         self._hnsw.hnsw.efSearch = ef
 
     def query(self, query_embeddings: List[Float32], n_results: Int = 10) raises -> QueryResults:
+        """
+        Queries the collection to find the nearest neighbors for the given embeddings.
+        """
         var num_queries = len(query_embeddings) // self._dimension
         if len(query_embeddings) != num_queries * self._dimension:
             raise Error("Query embeddings length must be a multiple of dimension.")
@@ -128,6 +158,9 @@ struct Collection(Movable, Writable):
 
     @staticmethod
     def py_init(out self: Collection, args: PythonObject, kwargs: PythonObject) raises:
+        """
+        Initializes a Collection instance from Python arguments.
+        """
         var d = Int(py=args[0])
         var M = 32
         var ef_c = 40
@@ -139,6 +172,9 @@ struct Collection(Movable, Writable):
 
     @staticmethod
     def py_add(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        """
+        Adds vectors to the collection using arguments provided from Python.
+        """
         var py_ids = args[0]
         var py_embeddings = args[1]
         var mojo_ids = List[Int]()
@@ -152,6 +188,9 @@ struct Collection(Movable, Writable):
 
     @staticmethod
     def py_query(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        """
+        Queries the collection using arguments provided from Python.
+        """
         var py_embeddings = args[0]
         var n_results = Int(py=args[1])
         var mojo_embeddings = List[Float32]()
@@ -178,18 +217,27 @@ struct Collection(Movable, Writable):
 
     @staticmethod
     def py_save(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        """
+        Saves the collection using arguments provided from Python.
+        """
         var path = String(py=args[0])
         self_ptr[].save(path)
         return Python.none()
 
     @staticmethod
     def py_load(args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        """
+        Loads a collection using arguments provided from Python.
+        """
         var path = String(py=args[0])
         var col = Collection.load(path)
         return PythonObject(alloc=col^)
 
     @staticmethod
     def py_set_ef_search(self_ptr: UnsafePointer[Self, MutAnyOrigin], args: PythonObject, kwargs: PythonObject) raises -> PythonObject:
+        """
+        Updates the efSearch parameter using arguments provided from Python.
+        """
         var ef = Int(py=args[0])
         self_ptr[].set_ef_search(ef)
         return Python.none()

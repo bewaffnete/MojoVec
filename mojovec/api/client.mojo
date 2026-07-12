@@ -2,7 +2,14 @@ from .collection import Collection
 from .collection_ivfpq import CollectionIVFPQ
 
 struct Client:
+    """
+    Client for managing vector collections.
+    """
+
     def __init__(out self):
+        """
+        Initializes a new vector client.
+        """
         pass
 
     def create_collection(self, name: String, dimension: Int, M: Int = 32, ef_construction: Int = 40, ef_search: Int = 16) -> Collection:

@@ -5,6 +5,11 @@ from ..utils.distances import l2_distance_simd
 from std.math import min
 
 struct KMeans:
+    """K-Means clustering algorithm for vector quantization.
+    
+    Partitions a set of vectors into k clusters, finding the centroids
+    that minimize the distance between points and their assigned centroids.
+    """
     var d: Int
     var k: Int
     var niter: Int
@@ -13,6 +18,13 @@ struct KMeans:
     var counts: UnsafePointer[Int, MutUntrackedOrigin]
     
     def __init__(out self, d: Int, k: Int, niter: Int = 15):
+        """Initializes the K-Means clustering algorithm.
+        
+        Args:
+            d: Dimensionality of the vectors.
+            k: Number of clusters (centroids).
+            niter: Number of iterations to perform during training.
+        """
         self.d = d
         self.k = k
         self.niter = niter
@@ -21,11 +33,18 @@ struct KMeans:
         self.counts = alloc[Int](k)
         
     def __del__(deinit self):
+        """Deallocates memory used for centroids and assignments."""
         if Int(self.centroids) != 0: self.centroids.free()
         if Int(self.assignments) != 0: self.assignments.free()
         if Int(self.counts) != 0: self.counts.free()
             
     def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Trains the K-Means model to find cluster centroids.
+        
+        Args:
+            n: Number of training vectors.
+            x: Pointer to the contiguous array of training vectors.
+        """
         if n == 0: return
             
         if Int(self.assignments) != 0: self.assignments.free()

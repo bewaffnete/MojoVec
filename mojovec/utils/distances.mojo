@@ -1,10 +1,20 @@
-# distances.mojo
+"""
+Provides optimized SIMD implementations for computing various vector distances.
+"""
 
 from std.math import fma
 @always_inline
 def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrigin], y: UnsafePointer[Float32, MutUntrackedOrigin], d: Int) -> Float32:
     """
-    Computes the squared L2 distance between two vectors of dimension d using SIMD.
+    Computes the squared L2 distance between two vectors of dimension `d` using SIMD instructions.
+    
+    Args:
+        x: Pointer to the first vector.
+        y: Pointer to the second vector.
+        d: The dimensionality of the vectors.
+        
+    Returns:
+        The squared L2 distance.
     """
     var dist0 = SIMD[DType.float32, simd_width]()
     var dist1 = SIMD[DType.float32, simd_width]()
@@ -59,7 +69,15 @@ def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrig
 @always_inline
 def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrigin], y: UnsafePointer[Float32, MutUntrackedOrigin], d: Int) -> Float32:
     """
-    Computes the inner product between two vectors of dimension d using SIMD.
+    Computes the inner product between two vectors of dimension `d` using SIMD instructions.
+    
+    Args:
+        x: Pointer to the first vector.
+        y: Pointer to the second vector.
+        d: The dimensionality of the vectors.
+        
+    Returns:
+        The computed inner product.
     """
     var prod0 = SIMD[DType.float32, simd_width]()
     var prod1 = SIMD[DType.float32, simd_width]()
@@ -114,7 +132,15 @@ def sq8_dot_product_simd(
 ) -> UInt32:
     """
     Computes the dot product between two UInt8 vectors using explicit UDOT intrinsics.
-    Requires Apple Silicon / ARMv8.2-a +dotprod.
+    Note: Requires Apple Silicon / ARMv8.2-a +dotprod.
+    
+    Args:
+        x: Pointer to the first vector.
+        y: Pointer to the second vector.
+        d: The dimensionality of the vectors.
+        
+    Returns:
+        The computed dot product.
     """
     var acc0 = SIMD[DType.uint32, 4]()
     var acc1 = SIMD[DType.uint32, 4]()
@@ -163,8 +189,16 @@ def sq8_dot_product_simd(
 @always_inline
 def sq8_l2_from_dot(norm_a: UInt32, norm_b: UInt32, dot: UInt32) -> UInt32:
     """
-    Computes ||a - b||^2 from precomputed norms and their dot product:
-    ||a - b||^2 = ||a||^2 + ||b||^2 - 2(a dot b)
+    Computes the squared L2 distance from precomputed norms and their dot product.
+    Formula: `||a - b||^2 = ||a||^2 + ||b||^2 - 2(a dot b)`
+    
+    Args:
+        norm_a: The squared norm of the first vector.
+        norm_b: The squared norm of the second vector.
+        dot: The dot product of the two vectors.
+        
+    Returns:
+        The derived squared L2 distance.
     """
     var d = Int64(norm_a) + Int64(norm_b) - 2 * Int64(dot)
     return UInt32(math.max(d, 0))

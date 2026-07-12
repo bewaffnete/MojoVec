@@ -1,27 +1,38 @@
+"""
+Defines data structures and traits for managing inverted lists in vector storage.
+"""
+
 from std.memory import alloc
 from std.math import max
 from std.atomic import Atomic
 
 trait InvertedListsTrait(Movable, ImplicitlyDeletable):
+    """
+    Abstract interface for an inverted lists storage container.
+    """
     def list_size(self, list_no: Int) -> Int: ...
     def get_codes(self, list_no: Int) -> UnsafePointer[UInt8, MutUntrackedOrigin]: ...
     def get_ids(self, list_no: Int) -> UnsafePointer[Int, MutUntrackedOrigin]: ...
     def add_entries(mut self, list_no: Int, n_entry: Int, ids: UnsafePointer[Int, MutUntrackedOrigin], codes: UnsafePointer[UInt8, MutUntrackedOrigin]): ...
     def resize(mut self, list_no: Int, new_size: Int): ...
 
-# Plain data struct — no ownership, no __del__. Purely a record for metadata.
-# This avoids all shallow-copy / double-free issues that arose when InvertedListBucket
-# owned UnsafePointer fields and was ImplicitlyCopyable.
 @fieldwise_init
 struct InvertedListBucket(Movable, Copyable, ImplicitlyCopyable):
+    """
+    Represents a single bucket within an inverted list.
+    Designed as a plain data structure without ownership or automatic memory management 
+    to avoid shallow-copy or double-free issues.
+    """
     var size: Int
     var capacity: Int
     var ids: UnsafePointer[Int, MutUntrackedOrigin]
     var codes: UnsafePointer[UInt8, MutUntrackedOrigin]
 
-# Helpers — direct field access on the flat array avoids any bucket copies.
-# Using 'var' avoids conflicting with the 'ref' convention keyword.
 struct ArrayInvertedLists(Movable, InvertedListsTrait):
+    """
+    An array-based implementation of inverted lists.
+    Direct field access on the flat array is used to avoid unnecessary bucket copies.
+    """
     var nlist: Int
     var code_size: Int
     var lists: UnsafePointer[InvertedListBucket, MutUntrackedOrigin]
@@ -29,6 +40,13 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
     var now_serving: UnsafePointer[UInt32, MutUntrackedOrigin]
 
     def __init__(out self, nlist: Int, code_size: Int):
+        """
+        Initializes the array inverted lists structure.
+        
+        Args:
+            nlist: The total number of inverted lists (buckets).
+            code_size: The byte size of each stored code.
+        """
         self.nlist = nlist
         self.code_size = code_size
         self.lists = alloc[InvertedListBucket](nlist)
@@ -67,17 +85,29 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
 
     @always_inline
     def list_size(self, list_no: Int) -> Int:
+        """
+        Returns the number of elements currently stored in the specified list.
+        """
         return self.lists[list_no].size
 
     @always_inline
     def get_codes(self, list_no: Int) -> UnsafePointer[UInt8, MutUntrackedOrigin]:
+        """
+        Returns a pointer to the codes array for the specified list.
+        """
         return self.lists[list_no].codes
 
     @always_inline
     def get_ids(self, list_no: Int) -> UnsafePointer[Int, MutUntrackedOrigin]:
+        """
+        Returns a pointer to the IDs array for the specified list.
+        """
         return self.lists[list_no].ids
 
     def resize(mut self, list_no: Int, new_size: Int):
+        """
+        Resizes the capacity of the specified list to accommodate new elements.
+        """
         if new_size <= self.lists[list_no].capacity:
             self.lists[list_no].size = new_size
             return
@@ -111,15 +141,18 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
     def lock_list(self, list_no: Int):
         var ticket = Atomic.fetch_add(self.next_tickets + list_no, 1)
         while Atomic.load(self.now_serving + list_no) != ticket:
-            pass  # spin
+            pass  # spin lock implementation
 
     @always_inline
     def unlock_list(self, list_no: Int):
         _ = Atomic.fetch_add(self.now_serving + list_no, 1)
 
     def add_entries(mut self, list_no: Int, n_entry: Int, ids: UnsafePointer[Int, MutUntrackedOrigin], codes: UnsafePointer[UInt8, MutUntrackedOrigin]):
+        """
+        Adds multiple entries (codes and their corresponding IDs) to a specific list.
+        """
         self.lock_list(list_no)
-        _ = Int(self.lists)  # WORKAROUND: Force memory materialization to avoid MLIR/LLVM alias analysis bug in Mojo 2.4+
+        _ = Int(self.lists)  # WORKAROUND: Force memory materialization to avoid MLIR/LLVM alias analysis bug
         var old_size = self.lists[list_no].size
         self.resize(list_no, old_size + n_entry)
 

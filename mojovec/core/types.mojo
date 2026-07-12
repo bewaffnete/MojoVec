@@ -1,3 +1,7 @@
+"""
+Defines fundamental types and compile-time constants for metrics and quantizers.
+"""
+
 comptime MetricType = Int
 comptime METRIC_L2 = 0
 comptime METRIC_INNER_PRODUCT = 1

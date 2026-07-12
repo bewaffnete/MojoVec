@@ -7,6 +7,12 @@ from ..quantization.pq import ProductQuantizer
 from std.memory import alloc
 
 struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
+    """An Inverted File (IVF) index with Product Quantization (PQ) compression.
+    
+    This index uses a coarse quantizer to partition vectors into cells and a Product
+    Quantizer to compress the vectors (or their residuals) within each cell, enabling
+    highly memory-efficient approximate nearest neighbor search.
+    """
     var d: Int
     var nlist: Int
     var M: Int
@@ -21,6 +27,15 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
     var by_residual: Bool
     
     def __init__(out self, quantizer: UnsafePointer[Self.QuantizerType, MutUntrackedOrigin], d: Int, nlist: Int, M: Int, metric: MetricType = METRIC_L2):
+        """Initializes an IVF-PQ index.
+        
+        Args:
+            quantizer: Pointer to the coarse quantizer used for assigning vectors to lists.
+            d: Dimensionality of the original vectors.
+            nlist: Number of inverted lists (cells/clusters).
+            M: Number of sub-vector spaces for product quantization.
+            metric: The distance metric to use.
+        """
         self.d = d
         self.nlist = nlist
         self.M = M
@@ -35,6 +50,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         self.by_residual = True
 
     def __init__(out self, *, deinit move: Self):
+        """Move constructor for the index."""
         self.d = move.d
         self.nlist = move.nlist
         self.M = move.M
@@ -48,6 +64,12 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         self.by_residual = move.by_residual
         
     def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Trains the coarse quantizer and the product quantizer.
+        
+        Args:
+            n: Number of training vectors.
+            x: Pointer to the contiguous array of training vectors.
+        """
         if self.is_trained: return
         
         # 1. Train Coarse Quantizer (K-Means)
@@ -64,8 +86,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
             self.quantizer[0].search(n, x, 1, assign_distances, assign_labels)
             
 
-            # Wait, quantizer is IndexFlat, we can use its .codes directly!
-            # But wait, IndexFlat has `get_vector(id)`
+            # Use IndexFlat's get_vector method to compute residuals against coarse centroids.
             for i in range(n):
                 var list_no = assign_labels[i]
                 if list_no < 0 or list_no >= self.nlist:
@@ -85,6 +106,12 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         self.is_trained = True
 
     def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Adds vectors to the index, automatically assigning sequential IDs.
+        
+        Args:
+            n: Number of vectors to add.
+            x: Pointer to the contiguous array of vectors.
+        """
         var ids = alloc[Int](n)
         for i in range(n):
             ids[i] = self.ntotal + i
@@ -92,6 +119,13 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         ids.free()
 
     def add_with_ids(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], ids: UnsafePointer[Int, MutUntrackedOrigin]):
+        """Compresses and adds vectors to the index with explicitly provided IDs.
+        
+        Args:
+            n: Number of vectors to add.
+            x: Pointer to the contiguous array of vectors.
+            ids: Pointer to the array of vector IDs.
+        """
         if not self.is_trained: return
             
         var assign_distances = alloc[Float32](n)
@@ -129,6 +163,15 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         pq_codes.free()
 
     def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+        """Searches the index for the k nearest neighbors using asymmetric distance computation (ADC).
+        
+        Args:
+            n: Number of query vectors.
+            x: Pointer to the contiguous array of query vectors.
+            k: The number of nearest neighbors to retrieve for each query.
+            distances: Pointer to the output array for storing distances.
+            labels: Pointer to the output array for storing the IDs.
+        """
         if not self.is_trained or self.ntotal == 0:
             for i in range(n * k):
                 distances[i] = 1e38

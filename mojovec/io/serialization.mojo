@@ -22,6 +22,12 @@ comptime MAGIC_HNSW_SQ8: Int = 0x4d4a4f53
 
 # --- Primitive I/O ---
 
+@always_inline
+def check_size_limit(size: Int, max_allowed: Int) raises:
+    if size < 0 or size > max_allowed:
+        raise Error("Security Error: Deserialized size is out of valid range or exceeds safety limits")
+
+
 def write_int(mut f: FileHandle, val: Int) raises:
     var ptr = alloc[Int](1)
     ptr[0] = val
@@ -120,8 +126,11 @@ def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
     if magic != MAGIC_FLAT: raise Error("Invalid magic for IndexFlat")
     
     var d = read_int(f)
+    check_size_limit(d, 65536)
     var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
     var capacity = read_int(f)
+    check_size_limit(capacity, 1_000_000_000)
     var metric_int = read_int(f)
     
     var metric = METRIC_L2
@@ -169,8 +178,11 @@ def read_index_flat_sq8(mut f: FileHandle) raises -> IndexFlatSQ8:
     if magic != MAGIC_FLAT_SQ8: raise Error("Invalid magic for IndexFlatSQ8")
     
     var d = read_int(f)
+    check_size_limit(d, 65536)
     var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
     var capacity = read_int(f)
+    check_size_limit(capacity, 1_000_000_000)
     var metric_int = read_int(f)
     
     var metric = METRIC_L2
@@ -225,14 +237,22 @@ def write_hnsw_graph(mut f: FileHandle, graph: HNSWGraph) raises:
 
 def read_hnsw_graph(mut f: FileHandle, mut graph: HNSWGraph) raises:
     graph.M = read_int(f)
+    check_size_limit(graph.M, 1024)
     graph.efConstruction = read_int(f)
+    check_size_limit(graph.efConstruction, 2048)
     graph.efSearch = read_int(f)
+    check_size_limit(graph.efSearch, 2048)
     graph.max_level = read_int(f)
+    check_size_limit(graph.max_level, 32)
     graph.entry_point = read_int(f)
+    check_size_limit(graph.entry_point, 1_000_000_000)
     graph.ntotal = read_int(f)
+    check_size_limit(graph.ntotal, 1_000_000_000)
     
     var capacity = read_int(f)
+    check_size_limit(capacity, 1_000_000_000)
     var neighbors_capacity = read_int(f)
+    check_size_limit(neighbors_capacity, 2_000_000_000)
     
     if capacity > graph.capacity:
         graph.capacity = capacity
@@ -275,7 +295,9 @@ def read_index_hnsw(mut f: FileHandle) raises -> IndexHNSW[IndexFlat]:
     if magic != MAGIC_HNSW: raise Error("Invalid magic for IndexHNSW")
     
     var d = read_int(f)
+    check_size_limit(d, 65536)
     var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
     
@@ -306,7 +328,9 @@ def read_index_hnsw_sq8(mut f: FileHandle) raises -> IndexHNSW[IndexFlatSQ8]:
     if magic != MAGIC_HNSW_SQ8: raise Error("Invalid magic for IndexHNSW SQ8")
     
     var d = read_int(f)
+    check_size_limit(d, 65536)
     var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
     
@@ -340,7 +364,9 @@ def read_invlists(mut f: FileHandle, mut invlists: ArrayInvertedLists) raises:
     if magic != MAGIC_INVLISTS: raise Error("Invalid magic for ArrayInvertedLists")
     
     var nlist = read_int(f)
+    check_size_limit(nlist, 1_000_000)
     var code_size = read_int(f)
+    check_size_limit(code_size, 65536)
     
     # We assume invlists is already initialized. Just update it.
     # Need to free old lists if any? Wait, we can just let it resize.
@@ -350,6 +376,9 @@ def read_invlists(mut f: FileHandle, mut invlists: ArrayInvertedLists) raises:
     for i in range(nlist):
         var size = read_int(f)
         var capacity = read_int(f)
+        check_size_limit(capacity, 1_000_000_000)
+        check_size_limit(size, capacity)
+
         
         invlists.resize(i, capacity)
         _ = Int(invlists.lists)
@@ -376,8 +405,11 @@ def read_pq(mut f: FileHandle, mut pq: ProductQuantizer) raises:
     if magic != MAGIC_PQ: raise Error("Invalid magic for ProductQuantizer")
     
     pq.d = read_int(f)
+    check_size_limit(pq.d, 65536)
     pq.M = read_int(f)
+    check_size_limit(pq.M, 65536)
     pq.ksub = read_int(f)
+    check_size_limit(pq.ksub, 65536)
     pq.dsub = pq.d // pq.M
     pq.is_trained = read_bool(f)
     
@@ -407,9 +439,13 @@ def read_index_ivf_flat(mut f: FileHandle) raises -> IndexIVFFlat[IndexFlat]:
     if magic != MAGIC_IVF_FLAT: raise Error("Invalid magic for IndexIVFFlat")
     
     var d = read_int(f)
+    check_size_limit(d, 65536)
     var nlist = read_int(f)
+    check_size_limit(nlist, 1_000_000)
     var nprobe = read_int(f)
+    check_size_limit(nprobe, 1_000_000)
     var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
     
@@ -451,10 +487,15 @@ def read_index_ivf_pq(mut f: FileHandle) raises -> IndexIVFPQ[IndexFlat]:
     if magic != MAGIC_IVF_PQ: raise Error("Invalid magic for IndexIVFPQ")
     
     var d = read_int(f)
+    check_size_limit(d, 65536)
     var nlist = read_int(f)
+    check_size_limit(nlist, 1_000_000)
     var M = read_int(f)
+    check_size_limit(M, 65536)
     var nprobe = read_int(f)
+    check_size_limit(nprobe, 1_000_000)
     var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
     

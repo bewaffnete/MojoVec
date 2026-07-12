@@ -9,6 +9,7 @@ from std.algorithm import parallelize
 
 
 struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
+    """An index structure that uses the HNSW graph for fast approximate nearest neighbor search."""
     var d: Int
     var ntotal: Int
     var metric_type: MetricType
@@ -23,6 +24,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         metric_type: MetricType,
         M: Int = 32,
     ):
+        """Initializes the HNSW index with the provided storage, dimension, metric type, and M parameter."""
         self.d = d
         self.ntotal = 0
         self.metric_type = metric_type
@@ -31,6 +33,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         self.hnsw = HNSWGraph(M=M)
 
     def __init__(out self, *, deinit move: Self):
+        """Moves the HNSW index."""
         self.d = move.d
         self.ntotal = move.ntotal
         self.metric_type = move.metric_type
@@ -39,6 +42,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         self.hnsw = move.hnsw^
 
     def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+        """Adds n vectors to the HNSW index from the given pointer x."""
         if n == 0:
             return
 
@@ -216,6 +220,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         distances: UnsafePointer[Float32, MutUntrackedOrigin],
         labels: UnsafePointer[Int, MutUntrackedOrigin],
     ):
+        """Searches the HNSW index for the k nearest neighbors for each of the n query vectors in x."""
         if n == 0 or self.ntotal == 0:
             for i in range(n * k):
                 labels[i] = -1
