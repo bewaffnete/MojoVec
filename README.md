@@ -37,7 +37,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 
 **Methodology:** Apple Silicon M-series (ARM64). FAISS uses OpenMP with 10 threads; MojoVec uses `std.algorithm.parallelize` across logical cores. Recall computed by exact intersection against SIFT1M's provided ground truth (`sift_groundtruth.ivecs`).
 
-MojoVec achieves **over 2.5x the QPS of FAISS** and builds the index **twice as fast** on Apple Silicon, remaining 100% pure Mojo without dropping into C/C++ or assembly. This highlights the power of Mojo's native SIMD vectorization and zero-overhead memory access compared to generic C++ wheels compiled for ARM.
+MojoVec achieves **over 2.5x the QPS of FAISS** and builds the index **twice as fast** on Apple Silicon, remaining 100% pure Mojo without dropping into C/C++ or assembly.
 
 ---
 
