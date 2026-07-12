@@ -50,7 +50,7 @@ def read_ivecs(file_path, max_n=None):
 gt = read_ivecs("benchmarks/suite/sift1m/sift_groundtruth.ivecs", max_n=nq)
 
 print("Searching Chroma...")
-loops = 1  # Chroma Python API overhead is high, 1 loop is enough
+loops = 100  # Chroma Python API overhead is high, but testing with 100 loops
 queries_list = queries.tolist()
 
 t0 = time.perf_counter()

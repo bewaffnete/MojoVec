@@ -61,14 +61,16 @@ def main() raises:
         collection.set_ef_search(ef)
         
         # warmup
-        _ = collection.query(queries_list, n_results=10)
-        
-        var t_s_0 = perf_counter_ns()
         var results = collection.query(queries_list, n_results=10)
+        
+        var loops = 100
+        var t_s_0 = perf_counter_ns()
+        for _ in range(loops):
+            results = collection.query(queries_list, n_results=10)
         var t_s_1 = perf_counter_ns()
         var search_time = Float64(t_s_1 - t_s_0) / 1e9
         
-        var qps = Float64(q) / search_time
+        var qps = Float64(q * loops) / search_time
         
         # Calculate recall
         var recall_sum: Float64 = 0.0
