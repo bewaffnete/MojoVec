@@ -28,7 +28,7 @@ __pycache__/
 *.bin
 bench_mojovec
 mojovec_bench
-mojovec_bench.dSYM/
+*.dSYM/
 profile.txt
 .agents/
 *.so

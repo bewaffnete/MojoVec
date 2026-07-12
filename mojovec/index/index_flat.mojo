@@ -24,7 +24,7 @@ struct FlatDistanceComputer(DistanceComputerTrait):
         self.query = query
         
     @always_inline
-    def distance(self, id: Int) -> Float32:
+    def distance(self, id: Int, threshold: Float32 = Float32.MAX) -> Float32:
         var db_ptr = self.codes + (id * self.d)
         if self.metric_type == METRIC_L2:
             return l2_distance_simd[SIMD_WIDTH](self.query, db_ptr, self.d)
@@ -51,6 +51,10 @@ struct FlatDistanceComputer(DistanceComputerTrait):
         var ptr = self.codes + (id * self.d)
         comptime opts = PrefetchOptions().for_read().low_locality().to_data_cache()
         prefetch[opts](ptr)
+
+    @always_inline
+    def is_exact(self) -> Bool:
+        return True
 
 struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
     comptime ComputerType = FlatDistanceComputer
@@ -105,9 +109,15 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         return self.codes + (id * self.d)
 
     def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
-        # Iterate over all queries
-        for i in range(n):
-            var query_offset = i * self.d
+        var self_codes = self.codes
+        var self_d = self.d
+        var self_ntotal = self.ntotal
+        var self_metric_type = self.metric_type
+        
+        from std.algorithm import parallelize
+        
+        def process_query(i: Int) {self_d, self_codes, self_ntotal, self_metric_type, x, k, distances, labels}:
+            var query_offset = i * self_d
             var query_ptr = x + query_offset
             
             var res_dist_ptr = distances + (i * k)
@@ -115,15 +125,15 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
             var heap_size = 0
             
             # Iterate over all database vectors
-            for j in range(self.ntotal):
-                var db_ptr = self.codes + (j * self.d)
+            for j in range(self_ntotal):
+                var db_ptr = self_codes + (j * self_d)
                 var dist: Float32
                 
                 # Compute distance based on metric
-                if self.metric_type == METRIC_L2:
-                    dist = l2_distance_simd[4](query_ptr, db_ptr, self.d)
+                if self_metric_type == METRIC_L2:
+                    dist = l2_distance_simd[SIMD_WIDTH](query_ptr, db_ptr, self_d)
                 else:
-                    dist = -inner_product_simd[4](query_ptr, db_ptr, self.d)
+                    dist = -inner_product_simd[SIMD_WIDTH](query_ptr, db_ptr, self_d)
                     
                 # Add to heap
                 if heap_size < k:
@@ -131,7 +141,6 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
                     heap_size += 1
                 elif dist < res_dist_ptr[0]:
                     max_heap_replace_top(res_dist_ptr, res_labels_ptr, k, dist, j)
-            
             
             var current_k = heap_size
             for j in range(current_k):
@@ -142,9 +151,11 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
                 res_labels_ptr[idx] = popped.label
             
             # Un-negate inner product distances
-            if self.metric_type == METRIC_INNER_PRODUCT:
+            if self_metric_type == METRIC_INNER_PRODUCT:
                 for j in range(k):
                     res_dist_ptr[j] = -res_dist_ptr[j]
+                    
+        parallelize(process_query, n, n)
                     
     def get_distance_computer(self, query: UnsafePointer[Float32, MutUntrackedOrigin]) -> Self.ComputerType:
         return FlatDistanceComputer(self.d, self.metric_type, self.codes, query)

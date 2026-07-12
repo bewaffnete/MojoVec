@@ -45,7 +45,7 @@ struct SQDistanceComputer(DistanceComputerTrait):
             self.scratch_y.free()
         
     @always_inline
-    def distance(self, id: Int) -> Float32:
+    def distance(self, id: Int, threshold: Float32 = Float32.MAX) -> Float32:
         var db_ptr = self.codes + (id * self.code_size)
         self.sq.decode(db_ptr, self.scratch_x)
         if self.metric_type == METRIC_L2:
@@ -75,6 +75,10 @@ struct SQDistanceComputer(DistanceComputerTrait):
         var ptr = self.codes + (id * self.code_size)
         comptime opts = PrefetchOptions().for_read().medium_locality().to_data_cache()
         prefetch[opts](ptr)
+
+    @always_inline
+    def is_exact(self) -> Bool:
+        return False
 
 struct IndexScalarQuantizer(Index, StorageTrait):
     comptime ComputerType = SQDistanceComputer

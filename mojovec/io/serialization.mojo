@@ -6,6 +6,7 @@ from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..index.index_flat import IndexFlat
 from ..index.index_ivf_flat import IndexIVFFlat
 from ..index.index_ivf_pq import IndexIVFPQ
+from ..index.index_flat_sq8 import IndexFlatSQ8
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..quantization.pq import ProductQuantizer
 from ..index.index_hnsw import IndexHNSW
@@ -16,6 +17,8 @@ comptime MAGIC_IVF_FLAT: Int = 0x4d4a4f49
 comptime MAGIC_IVF_PQ: Int = 0x4d4a4f50
 comptime MAGIC_INVLISTS: Int = 0x4d4a4f4c
 comptime MAGIC_PQ: Int = 0x4d4a4f51
+comptime MAGIC_FLAT_SQ8: Int = 0x4d4a4f52
+comptime MAGIC_HNSW_SQ8: Int = 0x4d4a4f53
 
 # --- Primitive I/O ---
 
@@ -73,6 +76,19 @@ def read_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUn
         ptr[i] = src[i]
     _ = len(read_data)
 
+def write_unsafe_pointer_uint32(mut f: FileHandle, ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
+    if count == 0: return
+    var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr.bitcast[UInt8](), length=count * 4)
+    f.write_bytes(span)
+
+def read_unsafe_pointer_uint32(mut f: FileHandle, ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
+    if count == 0: return
+    var read_data = f.read_bytes(count * 4)
+    var src = read_data.unsafe_ptr().bitcast[UInt32]()
+    for i in range(count):
+        ptr[i] = src[i]
+    _ = len(read_data)
+
 def write_unsafe_pointer_int(mut f: FileHandle, ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr.bitcast[UInt8](), length=count * 8)
@@ -117,9 +133,73 @@ def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
     
     # We allocated d * 1024 inside init, so we must reallocate if capacity is larger
     if Int(index.codes) != 0: index.codes.free()
-    index.codes = alloc[Float32](capacity * d)
+    index.capacity = capacity
     
-    read_unsafe_pointer_float32(f, index.codes, capacity * d)
+    if capacity > 0:
+        index.codes = alloc[Float32](capacity * d)
+        read_unsafe_pointer_float32(f, index.codes, capacity * d)
+        
+    return index^
+
+def write_index_flat_sq8(mut f: FileHandle, index: IndexFlatSQ8) raises:
+    write_int(f, MAGIC_FLAT_SQ8)
+    write_int(f, index.d)
+    write_int(f, index.ntotal)
+    write_int(f, index.capacity)
+    var metric = 0
+    if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
+    write_int(f, metric)
+    
+    # Write SQ8 params
+    var float32_params = alloc[Float32](3)
+    float32_params[0] = index.global_min
+    float32_params[1] = index.global_max
+    float32_params[2] = index.scale
+    write_unsafe_pointer_float32(f, float32_params, 3)
+    float32_params.free()
+    
+    # Write data
+    if index.capacity > 0:
+        write_unsafe_pointer_float32(f, index.codes_f32, index.capacity * index.d)
+        write_unsafe_pointer_uint8(f, index.codes_u8, index.capacity * index.d)
+        write_unsafe_pointer_uint32(f, index.norms_u32, index.capacity)
+
+def read_index_flat_sq8(mut f: FileHandle) raises -> IndexFlatSQ8:
+    var magic = read_int(f)
+    if magic != MAGIC_FLAT_SQ8: raise Error("Invalid magic for IndexFlatSQ8")
+    
+    var d = read_int(f)
+    var ntotal = read_int(f)
+    var capacity = read_int(f)
+    var metric_int = read_int(f)
+    
+    var metric = METRIC_L2
+    if metric_int == 1: metric = METRIC_INNER_PRODUCT
+        
+    var index = IndexFlatSQ8(d, metric)
+    index.ntotal = ntotal
+    index.capacity = capacity
+    
+    var float32_params = alloc[Float32](3)
+    read_unsafe_pointer_float32(f, float32_params, 3)
+    index.global_min = float32_params[0]
+    index.global_max = float32_params[1]
+    index.scale = float32_params[2]
+    float32_params.free()
+    
+    if Int(index.codes_f32) != 0: index.codes_f32.free()
+    if Int(index.codes_u8) != 0: index.codes_u8.free()
+    if Int(index.norms_u32) != 0: index.norms_u32.free()
+    
+    index.codes_f32 = alloc[Float32](capacity * d)
+    index.codes_u8 = alloc[UInt8](capacity * d)
+    index.norms_u32 = alloc[UInt32](capacity)
+    
+    if capacity > 0:
+        read_unsafe_pointer_float32(f, index.codes_f32, capacity * d)
+        read_unsafe_pointer_uint8(f, index.codes_u8, capacity * d)
+        read_unsafe_pointer_uint32(f, index.norms_u32, capacity)
+        
     return index^
 
 # --- HNSWGraph and IndexHNSW ---
@@ -204,6 +284,37 @@ def read_index_hnsw(mut f: FileHandle) raises -> IndexHNSW[IndexFlat]:
         
     var storage = read_index_flat(f)
     var index = IndexHNSW[IndexFlat](storage^, d, metric, M=32)
+    index.ntotal = ntotal
+    index.is_trained = is_trained
+    read_hnsw_graph(f, index.hnsw)
+    return index^
+
+def write_index_hnsw_sq8(mut f: FileHandle, index: IndexHNSW[IndexFlatSQ8]) raises:
+    write_int(f, MAGIC_HNSW_SQ8)
+    write_int(f, index.d)
+    write_int(f, index.ntotal)
+    write_bool(f, index.is_trained)
+    var metric = 0
+    if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
+    write_int(f, metric)
+    
+    write_index_flat_sq8(f, index.storage)
+    write_hnsw_graph(f, index.hnsw)
+
+def read_index_hnsw_sq8(mut f: FileHandle) raises -> IndexHNSW[IndexFlatSQ8]:
+    var magic = read_int(f)
+    if magic != MAGIC_HNSW_SQ8: raise Error("Invalid magic for IndexHNSW SQ8")
+    
+    var d = read_int(f)
+    var ntotal = read_int(f)
+    var is_trained = read_bool(f)
+    var metric_int = read_int(f)
+    
+    var metric = METRIC_L2
+    if metric_int == 1: metric = METRIC_INNER_PRODUCT
+        
+    var storage = read_index_flat_sq8(f)
+    var index = IndexHNSW[IndexFlatSQ8](storage^, d, metric, M=32)
     index.ntotal = ntotal
     index.is_trained = is_trained
     read_hnsw_graph(f, index.hnsw)

@@ -1,5 +1,5 @@
 from mojovec.index.index_hnsw import IndexHNSW
-from mojovec.index.index_flat import IndexFlat
+from mojovec.index.index_flat_sq8 import IndexFlatSQ8
 from mojovec.core.types import METRIC_L2
 from std.memory import alloc
 from std.collections import List
@@ -9,13 +9,13 @@ from .results import QueryResults
 
 struct Collection(Movable, Writable):
     var _dimension: Int
-    var _hnsw: IndexHNSW[IndexFlat]
+    var _hnsw: IndexHNSW[IndexFlatSQ8]
     var _user_ids: List[Int]
 
     def __init__(out self, dimension: Int, M: Int = 32, ef_construction: Int = 40, ef_search: Int = 16):
         self._dimension = dimension
-        var storage = IndexFlat(dimension, METRIC_L2)
-        self._hnsw = IndexHNSW[IndexFlat](storage^, dimension, METRIC_L2, M=M)
+        var storage = IndexFlatSQ8(dimension, METRIC_L2)
+        self._hnsw = IndexHNSW[IndexFlatSQ8](storage^, dimension, METRIC_L2, M=M)
         self._hnsw.hnsw.efConstruction = ef_construction
         self._hnsw.hnsw.efSearch = ef_search
         self._user_ids = List[Int]()
@@ -34,7 +34,7 @@ struct Collection(Movable, Writable):
     def save(self, path: String) raises:
         var f = open(path, "w")
         # Save signature: 'COLL' (1129270348)
-        from mojovec.io.serialization import write_int, write_index_hnsw
+        from mojovec.io.serialization import write_int, write_index_hnsw_sq8
         write_int(f, 1129270348)
         write_int(f, self._dimension)
         
@@ -45,13 +45,13 @@ struct Collection(Movable, Writable):
             var cast_ptr = rebind[UnsafePointer[UInt8, MutUntrackedOrigin]](ids_ptr)
             f.write_bytes(Span[UInt8, MutUntrackedOrigin](ptr=cast_ptr, length=num_ids * 8))
             
-        write_index_hnsw(f, self._hnsw)
+        write_index_hnsw_sq8(f, self._hnsw)
         f.close()
 
     @staticmethod
     def load(path: String) raises -> Collection:
         var f = open(path, "r")
-        from mojovec.io.serialization import read_int, read_index_hnsw
+        from mojovec.io.serialization import read_int, read_index_hnsw_sq8
         var magic = read_int(f)
         if magic != 1129270348:
             raise Error("Invalid magic for Collection")
@@ -67,7 +67,7 @@ struct Collection(Movable, Writable):
                 col._user_ids.append(src[i])
             _ = len(read_data)
                 
-        var loaded_hnsw = read_index_hnsw(f)
+        var loaded_hnsw = read_index_hnsw_sq8(f)
         col._hnsw = loaded_hnsw^
         f.close()
         return col^

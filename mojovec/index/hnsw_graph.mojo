@@ -268,9 +268,12 @@ struct HNSWGraph(Movable):
                             comp.prefetch_vector(Int(next_e))
                             break
 
-                    var e_dist = comp.distance(Int(e))
-
+                    var threshold: Float32 = Float32.MAX
                     worst_w_dist = W_dist[0]
+                    if W_size >= ef:
+                        threshold = worst_w_dist
+                        
+                    var e_dist = comp.distance(Int(e), threshold)
                     if W_size < ef or e_dist < worst_w_dist:
                         # Skip if C heap exceeds pre-allocated capacity (very rare)
                         if C_size >= C_cap:

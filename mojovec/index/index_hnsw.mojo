@@ -2,6 +2,7 @@ from ..core.index import Index
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
+from ..utils.distances import l2_distance_simd, inner_product_simd
 from .hnsw_graph import HNSWGraph
 from .hnsw_visited import VisitedTable, VisitedTablePool
 from std.algorithm import parallelize
@@ -290,6 +291,30 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             for j in range(result_count, k):
                 res_dist_ptr[j] = 0.0
                 res_labels_ptr[j] = -1
+
+            if not comp.is_exact():
+                for j in range(result_count):
+                    var l = res_labels_ptr[j]
+                    if l >= 0:
+                        var db_f32 = self.storage.get_vector(l)
+                        var exact_dist: Float32 = 0.0
+                        if self.metric_type == METRIC_L2:
+                            exact_dist = l2_distance_simd[64](q_ptr, db_f32, self.d)
+                        else:
+                            exact_dist = -inner_product_simd[64](q_ptr, db_f32, self.d)
+                        res_dist_ptr[j] = exact_dist
+                        
+                # Insertion sort to re-sort the top-K array
+                for j in range(1, result_count):
+                    var key_dist = res_dist_ptr[j]
+                    var key_label = res_labels_ptr[j]
+                    var m = j - 1
+                    while m >= 0 and res_dist_ptr[m] > key_dist:
+                        res_dist_ptr[m + 1] = res_dist_ptr[m]
+                        res_labels_ptr[m + 1] = res_labels_ptr[m]
+                        m -= 1
+                    res_dist_ptr[m + 1] = key_dist
+                    res_labels_ptr[m + 1] = key_label
 
             if self.metric_type == METRIC_INNER_PRODUCT:
                 for j in range(k):

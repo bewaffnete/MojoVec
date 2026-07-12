@@ -126,8 +126,6 @@ def main() raises:
         var recall = compute_recall(gt_labels, pred_labels, nq, k)
         print("  nprobe=", ivf_pq.nprobe, " | QPS:", Int(qps), "| Recall@10:", recall)
     print("--------------------------------------------------")
-    
-    # 4. IndexHNSW
     var M_hnsw = 32
     print("[4] IndexHNSW (M =", M_hnsw, ")")
     var hnsw = IndexHNSW[IndexFlat](IndexFlat(d), d, METRIC_L2, M_hnsw)
@@ -138,16 +136,48 @@ def main() raises:
     var add_hnsw = Float64(perf_counter_ns() - t0) / 1e9
     print("Build time:", add_hnsw, "s")
     
-    var efs = [10, 50, 100, 200]
+    var efs = [10, 40, 50, 100, 200]
     for i in range(len(efs)):
-        var ef = efs[i]
-        hnsw.hnsw.efSearch = ef
+        hnsw.hnsw.efSearch = efs[i]
         t0 = perf_counter_ns()
         hnsw.search(nq, queries, k, pred_dists, pred_labels)
         var search_t = Float64(perf_counter_ns() - t0) / 1e9
         var qps = Float64(nq) / search_t
         var recall = compute_recall(gt_labels, pred_labels, nq, k)
-        print("  efSearch=", ef, " | QPS:", Int(qps), "| Recall@10:", recall)
+        print("  efSearch=", hnsw.hnsw.efSearch, " | QPS:", Int(qps), "| Recall@10:", recall)
+        
+    print("--------------------------------------------------")
+    print("[5] IndexHNSW + SQ8 Filter (M =", M_hnsw, ")")
+    from mojovec.index.index_flat_sq8 import IndexFlatSQ8
+    var hnsw_sq8 = IndexHNSW[IndexFlatSQ8](IndexFlatSQ8(d), d, METRIC_L2, M_hnsw)
+    hnsw_sq8.hnsw.efConstruction = 200
+    
+    t0 = perf_counter_ns()
+    hnsw_sq8.add(n, data)
+    var add_hnsw_sq8 = Float64(perf_counter_ns() - t0) / 1e9
+    print("Build time:", add_hnsw_sq8, "s")
+    
+    for i in range(len(efs)):
+        var current_ef = efs[i]
+        hnsw_sq8.hnsw.efSearch = current_ef
+        
+        var min_recall: Float32 = 1.0
+        var max_recall: Float32 = 0.0
+        var total_qps: Float64 = 0.0
+        
+        var runs = 3
+        for r in range(runs):
+            t0 = perf_counter_ns()
+            hnsw_sq8.search(nq, queries, k, pred_dists, pred_labels)
+            var search_t = Float64(perf_counter_ns() - t0) / 1e9
+            var qps = Float64(nq) / search_t
+            var recall = compute_recall(gt_labels, pred_labels, nq, k)
+            
+            total_qps += qps
+            if recall < min_recall: min_recall = recall
+            if recall > max_recall: max_recall = recall
+            
+        print("  efSearch=", current_ef, " | Avg QPS:", Int(total_qps / runs), "| Recall@10 range: [", min_recall, "-", max_recall, "]")
     print("--------------------------------------------------")
     
     data.free()
