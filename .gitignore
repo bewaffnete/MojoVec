@@ -34,3 +34,4 @@ profile.txt
 *.so
 dist/
 *.egg-info/
+sift1m/

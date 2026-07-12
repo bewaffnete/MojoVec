@@ -9,7 +9,7 @@ def load_bin_data(path: String) raises -> List[UInt8]:
     return data^
 
 def main() raises:
-    var n = 100_000
+    var n = 1_000_000
     var q = 10_000
     var d = 128
     var k = 10
@@ -17,9 +17,9 @@ def main() raises:
     var efConstruction = 200
     
     print("Loading data...")
-    var db_data = load_bin_data("benchmarks/suite/db.bin")
-    var queries_data = load_bin_data("benchmarks/suite/queries.bin")
-    var gt_data = load_bin_data("benchmarks/suite/groundtruth.bin")
+    var db_data = load_bin_data("benchmarks/suite/sift1m/sift_base.fvecs")
+    var queries_data = load_bin_data("benchmarks/suite/sift1m/sift_query.fvecs")
+    var gt_data = load_bin_data("benchmarks/suite/sift1m/sift_groundtruth.ivecs")
     
     var db_ptr = db_data.unsafe_ptr().bitcast[Float32]()
     var queries_ptr = queries_data.unsafe_ptr().bitcast[Float32]()
@@ -30,12 +30,15 @@ def main() raises:
     var ids_list = List[Int](capacity=n)
     for i in range(n):
         ids_list.append(i)
+        var offset = i * (d + 1) + 1
         for j in range(d):
-            db_list.append(db_ptr[i * d + j])
+            db_list.append(db_ptr[offset + j])
             
     var queries_list = List[Float32](capacity=q * d)
-    for i in range(q * d):
-        queries_list.append(queries_ptr[i])
+    for i in range(q):
+        var offset = i * (d + 1) + 1
+        for j in range(d):
+            queries_list.append(queries_ptr[offset + j])
     
     print("--------------------------------------------------")
     print("[MojoVec] Collection API (HNSW, M=" + String(M) + ", efConstruction=" + String(efConstruction) + ")")
@@ -50,11 +53,7 @@ def main() raises:
     print("Build time: " + String(build_time) + " s")
     
     var ef_list = List[Int]()
-    ef_list.append(10)
     ef_list.append(40)
-    ef_list.append(50)
-    ef_list.append(100)
-    ef_list.append(200)
     
     print("Search:")
     for i in range(len(ef_list)):
@@ -78,7 +77,7 @@ def main() raises:
             for j in range(k):
                 var res_id = results.ids[qi][j]
                 for g in range(k):
-                    if res_id == Int(gt[qi * k + g]):
+                    if res_id == Int(gt[qi * 101 + 1 + g]):
                         hits += 1
                         break
             recall_sum += Float64(hits) / Float64(k)
