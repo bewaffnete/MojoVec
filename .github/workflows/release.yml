@@ -11,7 +11,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [macos-latest]
+        os: [ubuntu-latest, macos-latest]
         python-version: ['3.12', '3.13', '3.14']
       fail-fast: false
 
@@ -64,7 +64,7 @@ jobs:
 
   build-mojo:
     name: Build pure Mojo package
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Setup Pixi
