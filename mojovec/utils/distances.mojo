@@ -131,8 +131,8 @@ def sq8_dot_product_simd(
     d: Int,
 ) -> UInt32:
     """
-    Computes the dot product between two UInt8 vectors using explicit UDOT intrinsics.
-    Note: Requires Apple Silicon / ARMv8.2-a +dotprod.
+    Computes the dot product between two UInt8 vectors using SIMD.
+    Works on all architectures (Apple Silicon, x86_64, Linux, etc).
     
     Args:
         x: Pointer to the first vector.
@@ -142,29 +142,29 @@ def sq8_dot_product_simd(
     Returns:
         The computed dot product.
     """
-    var acc0 = SIMD[DType.uint32, 4]()
-    var acc1 = SIMD[DType.uint32, 4]()
-    var acc2 = SIMD[DType.uint32, 4]()
-    var acc3 = SIMD[DType.uint32, 4]()
+    var acc0 = SIMD[DType.uint32, 16]()
+    var acc1 = SIMD[DType.uint32, 16]()
+    var acc2 = SIMD[DType.uint32, 16]()
+    var acc3 = SIMD[DType.uint32, 16]()
     
     var i = 0
     # Unroll 4x (4 * 16 bytes = 64 bytes per iteration)
     while i <= d - 64:
-        var vx0 = x.load[width=16](i)
-        var vy0 = y.load[width=16](i)
-        acc0 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc0, vx0, vy0)
+        var vx0 = x.load[width=16](i).cast[DType.uint32]()
+        var vy0 = y.load[width=16](i).cast[DType.uint32]()
+        acc0 += vx0 * vy0
         
-        var vx1 = x.load[width=16](i + 16)
-        var vy1 = y.load[width=16](i + 16)
-        acc1 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc1, vx1, vy1)
+        var vx1 = x.load[width=16](i + 16).cast[DType.uint32]()
+        var vy1 = y.load[width=16](i + 16).cast[DType.uint32]()
+        acc1 += vx1 * vy1
         
-        var vx2 = x.load[width=16](i + 32)
-        var vy2 = y.load[width=16](i + 32)
-        acc2 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc2, vx2, vy2)
+        var vx2 = x.load[width=16](i + 32).cast[DType.uint32]()
+        var vy2 = y.load[width=16](i + 32).cast[DType.uint32]()
+        acc2 += vx2 * vy2
         
-        var vx3 = x.load[width=16](i + 48)
-        var vy3 = y.load[width=16](i + 48)
-        acc3 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc3, vx3, vy3)
+        var vx3 = x.load[width=16](i + 48).cast[DType.uint32]()
+        var vy3 = y.load[width=16](i + 48).cast[DType.uint32]()
+        acc3 += vx3 * vy3
         
         i += 64
         
@@ -172,9 +172,9 @@ def sq8_dot_product_simd(
     
     # 1x for remaining 16-byte chunks
     while i <= d - 16:
-        var vx = x.load[width=16](i)
-        var vy = y.load[width=16](i)
-        acc = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc, vx, vy)
+        var vx = x.load[width=16](i).cast[DType.uint32]()
+        var vy = y.load[width=16](i).cast[DType.uint32]()
+        acc += vx * vy
         i += 16
         
     var res = acc.reduce_add()
