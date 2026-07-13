@@ -114,6 +114,14 @@ struct VisitedTablePool(Movable):
         var ptr = self.locks + id
         Atomic.store(ptr, 0)
         
+    def grow(mut self, new_capacity: Int):
+        """Grows all tables in the pool to the specified capacity."""
+        if new_capacity <= self.capacity:
+            return
+        for i in range(self.num_tables):
+            self.tables[i].grow(new_capacity)
+        self.capacity = new_capacity
+
     def get(self, id: Int) -> UnsafePointer[VisitedTable, MutUntrackedOrigin]:
         """Retrieves a pointer to the visited table by its ID."""
         return self.tables + id

@@ -16,6 +16,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
     var is_trained: Bool
     var storage: Self.StorageType
     var hnsw: HNSWGraph
+    var vt_pool: VisitedTablePool
 
     def __init__(
         out self,
@@ -31,6 +32,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         self.is_trained = True
         self.storage = storage^
         self.hnsw = HNSWGraph(M=M)
+        self.vt_pool = VisitedTablePool(self.hnsw.capacity)
 
     def __init__(out self, *, deinit move: Self):
         """Moves the HNSW index."""
@@ -40,6 +42,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         self.is_trained = move.is_trained
         self.storage = move.storage^
         self.hnsw = move.hnsw^
+        self.vt_pool = move.vt_pool^
 
     def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
         """Adds n vectors to the HNSW index from the given pointer x."""
@@ -59,6 +62,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
 
             while pt_id >= self.hnsw.capacity:
                 self.hnsw._grow()
+                self.vt_pool.grow(self.hnsw.capacity)
 
             self.hnsw.levels[pt_id] = pt_level
 
@@ -93,8 +97,6 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             for l in range(pt_levels[i] + 1):
                 self.hnsw.set_neighbors_len(pt_id, l, 0)
 
-        var vt_pool = VisitedTablePool(self.hnsw.capacity)
-
         @parameter
         def add_point(i: Int):
             var actual_i = i + start_idx
@@ -124,8 +126,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                             ep_id = Int(neigh)
                             changed = True
 
-            var vt_id = vt_pool.acquire()
-            var vt = vt_pool.get(vt_id)
+            var vt_id = self.vt_pool.acquire()
+            var vt = self.vt_pool.get(vt_id)
             var w_dist_array = InlineArray[Float32, 2048](uninitialized=True)
             var w_labels_array = InlineArray[Int32, 2048](uninitialized=True)
             var W_dist = w_dist_array.unsafe_ptr()
@@ -199,7 +201,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     ep_id = Int(W_sorted_labels[0])
                     ep_dist = W_sorted_dist[0]
 
-            vt_pool.release(vt_id)
+            self.vt_pool.release(vt_id)
 
         parallelize[add_point](n - start_idx)
 
@@ -231,12 +233,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         if ef < k:
             ef = k
 
-        var vt_pool = VisitedTablePool(self.hnsw.capacity)
-
         @parameter
         def search_point(i: Int):
-            var vt_id = vt_pool.acquire()
-            var vt = vt_pool.get(vt_id)
+            var vt_id = self.vt_pool.acquire()
+            var vt = self.vt_pool.get(vt_id)
 
             var w_dist_array = InlineArray[Float32, 2048](uninitialized=True)
             var w_labels_array = InlineArray[Int32, 2048](uninitialized=True)
@@ -326,6 +326,6 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     if res_labels_ptr[j] != -1:
                         res_dist_ptr[j] = -res_dist_ptr[j]
 
-            vt_pool.release(vt_id)
+            self.vt_pool.release(vt_id)
 
         parallelize[search_point](n)

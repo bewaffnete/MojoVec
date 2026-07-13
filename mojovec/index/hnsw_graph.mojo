@@ -9,7 +9,7 @@ from mojovec.utils.heap import (
     min_heap_push,
     min_heap_pop,
 )
-from mojovec.utils.distance_computer import DistanceComputerTrait
+from ..utils.distance_computer import DistanceComputerTrait
 from .hnsw_visited import VisitedTable
 
 
@@ -127,10 +127,10 @@ struct HNSWGraph(Movable):
 
     def random_level(self) -> Int:
         """Generates a random level for a new node based on the graph's M parameter."""
-        var ptr = alloc[Float64](1)
+        var arr = InlineArray[Float64, 1](uninitialized=True)
+        var ptr = arr.unsafe_ptr()
         rand(ptr, 1)
         var f = ptr[0]
-        ptr.free()
         if f < 1e-10:
             f = 1e-10
         var mult = 1.0 / log(Float64(self.M))
@@ -267,30 +267,31 @@ struct HNSWGraph(Movable):
             var neighbors_info = self.get_neighbors(Int(c_id), level)
             var neighbors = neighbors_info.ptr
             var max_links = neighbors_info.max_links
+            
+            # Prime the prefetch pipeline: prefetch the first 4 neighbors unconditionally
+            for i in range(4):
+                if i >= max_links:
+                    break
+                var e = neighbors[i]
+                if e >= 0:
+                    vt[].prefetch(Int(e))
+                    comp.prefetch_vector(Int(e))
+
             for i in range(max_links):
                 var e = neighbors[i]
                 if e < 0:
                     break
 
-                # Prefetch the visited table flag for the next neighbor
-                if i + 1 < max_links:
-                    var next_e = neighbors[i + 1]
-                    if next_e >= 0:
-                        vt[].prefetch(Int(next_e))
+                # Pipeline: prefetch the neighbor 4 steps ahead unconditionally.
+                # This avoids O(N^2) loops and branch mispredictions.
+                if i + 4 < max_links:
+                    var future_e = neighbors[i + 4]
+                    if future_e >= 0:
+                        vt[].prefetch(Int(future_e))
+                        comp.prefetch_vector(Int(future_e))
 
                 if not vt[].is_visited(Int(e)):
                     vt[].set_visited(Int(e))
-
-                    # Prefetch next unvisited neighbor's vector while computing distance for current one.
-                    # This hides memory latency: while CPU does SIMD math for vector `e`,
-                    # the hardware prefetcher loads the next neighbor's data into L1 cache.
-                    for look_ahead in range(i + 1, max_links):
-                        var next_e = neighbors[look_ahead]
-                        if next_e < 0:
-                            break
-                        if not vt[].is_visited(Int(next_e)):
-                            comp.prefetch_vector(Int(next_e))
-                            break
 
                     var threshold: Float32 = Float32.MAX
                     worst_w_dist = W_dist[0]
@@ -333,8 +334,10 @@ struct HNSWGraph(Movable):
 
         # Simple heuristic: keep the closest max_links neighbors
         # Sort by distance
-        var dists = alloc[Float32](current_links)
-        var labels = alloc[Int32](current_links)
+        var dists_array = InlineArray[Float32, 2048](uninitialized=True)
+        var labels_array = InlineArray[Int32, 2048](uninitialized=True)
+        var dists = dists_array.unsafe_ptr()
+        var labels = labels_array.unsafe_ptr()
 
         for i in range(current_links):
             labels[i] = neighbors[i]
@@ -360,9 +363,6 @@ struct HNSWGraph(Movable):
         for i in range(max_links):
             neighbors[i] = labels[i]
         self.set_neighbors_len(node, level, max_links)
-
-        dists.free()
-        labels.free()
 
     def add_link[
         ComputerType: DistanceComputerTrait

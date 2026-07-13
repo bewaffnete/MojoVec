@@ -17,9 +17,9 @@ def main() raises:
     var efConstruction = 200
     
     print("Loading data...")
-    var db_data = load_bin_data("benchmarks/suite/sift1m/sift_base.fvecs")
-    var queries_data = load_bin_data("benchmarks/suite/sift1m/sift_query.fvecs")
-    var gt_data = load_bin_data("benchmarks/suite/sift1m/sift_groundtruth.ivecs")
+    var db_data = load_bin_data("benchmarks/sift1m/sift_base.fvecs")
+    var queries_data = load_bin_data("benchmarks/sift1m/sift_query.fvecs")
+    var gt_data = load_bin_data("benchmarks/sift1m/sift_groundtruth.ivecs")
     
     var db_ptr = db_data.unsafe_ptr().bitcast[Float32]()
     var queries_ptr = queries_data.unsafe_ptr().bitcast[Float32]()

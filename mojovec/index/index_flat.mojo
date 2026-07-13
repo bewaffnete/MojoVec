@@ -1,5 +1,6 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
+from std.memory import memcpy
 
 # Hardware-optimized for Apple Silicon (ARM NEON)
 # While NEON physical width is 4 (128-bit), we unroll by a larger multiple 
@@ -151,15 +152,13 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
             var new_capacity = max(self.capacity * 2, new_ntotal)
             var new_codes = alloc[Float32](new_capacity * self.d)
             if self.ntotal > 0:
-                for i in range(self.ntotal * self.d):
-                    new_codes[i] = self.codes[i]
+                memcpy(dest=new_codes, src=self.codes, count=self.ntotal * self.d)
             self.codes.free()
             self.codes = new_codes
             self.capacity = new_capacity
             
         var offset = self.ntotal * self.d
-        for i in range(n * self.d):
-            self.codes[offset + i] = x[i]
+        memcpy(dest=self.codes + offset, src=x, count=n * self.d)
         self.ntotal = new_ntotal
         
     def get_vector(self, id: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:

@@ -58,6 +58,33 @@ def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrig
     
     var res = dist.reduce_add()
     
+    comptime if simd_width >= 32:
+        while i <= d - 16:
+            var vx = x.load[width=16](i)
+            var vy = y.load[width=16](i)
+            var diff = vx - vy
+            var r = diff * diff
+            res += r.reduce_add()
+            i += 16
+            
+    comptime if simd_width >= 16:
+        while i <= d - 8:
+            var vx = x.load[width=8](i)
+            var vy = y.load[width=8](i)
+            var diff = vx - vy
+            var r = diff * diff
+            res += r.reduce_add()
+            i += 8
+            
+    comptime if simd_width >= 8:
+        while i <= d - 4:
+            var vx = x.load[width=4](i)
+            var vy = y.load[width=4](i)
+            var diff = vx - vy
+            var r = diff * diff
+            res += r.reduce_add()
+            i += 4
+    
     # Handle remainder
     while i < d:
         var diff = x[i] - y[i]
@@ -113,6 +140,30 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOr
         i += simd_width
         
     var res = prod.reduce_add()
+    
+    comptime if simd_width >= 32:
+        while i <= d - 16:
+            var vx = x.load[width=16](i)
+            var vy = y.load[width=16](i)
+            var r = fma(vx, vy, SIMD[DType.float32, 16]())
+            res += r.reduce_add()
+            i += 16
+            
+    comptime if simd_width >= 16:
+        while i <= d - 8:
+            var vx = x.load[width=8](i)
+            var vy = y.load[width=8](i)
+            var r = fma(vx, vy, SIMD[DType.float32, 8]())
+            res += r.reduce_add()
+            i += 8
+            
+    comptime if simd_width >= 8:
+        while i <= d - 4:
+            var vx = x.load[width=4](i)
+            var vy = y.load[width=4](i)
+            var r = fma(vx, vy, SIMD[DType.float32, 4]())
+            res += r.reduce_add()
+            i += 4
     
     # Handle remainder
     while i < d:
@@ -179,6 +230,20 @@ def sq8_dot_product_simd(
         i += 16
         
     var res = acc.reduce_add()
+    
+    while i <= d - 8:
+        var vx = x.load[width=8](i).cast[DType.uint16]()
+        var vy = y.load[width=8](i).cast[DType.uint16]()
+        var r = (vx * vy).cast[DType.uint32]()
+        res += r.reduce_add()
+        i += 8
+        
+    while i <= d - 4:
+        var vx = x.load[width=4](i).cast[DType.uint16]()
+        var vy = y.load[width=4](i).cast[DType.uint16]()
+        var r = (vx * vy).cast[DType.uint32]()
+        res += r.reduce_add()
+        i += 4
     
     # Handle remainder (scalar)
     while i < d:
