@@ -175,6 +175,8 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOr
 from std.sys.intrinsics import llvm_intrinsic
 import std.math as math
 
+from std.sys.info import is_apple_gpu
+
 @always_inline
 def sq8_dot_product_simd(
     x: UnsafePointer[UInt8, MutUntrackedOrigin],
@@ -182,75 +184,105 @@ def sq8_dot_product_simd(
     d: Int,
 ) -> UInt32:
     """
-    Computes the dot product between two UInt8 vectors using SIMD.
-    Works universally across architectures (ARM, x86) while maintaining
-    a fast intermediate 16-bit multiplication to assist LLVM idiom recognition.
-    
-    Args:
-        x: Pointer to the first vector.
-        y: Pointer to the second vector.
-        d: The dimensionality of the vectors.
-        
-    Returns:
-        The computed dot product.
+    Computes the dot product between two UInt8 vectors using explicit UDOT intrinsics
+    when available, and falls back to generic SIMD multiplication otherwise.
     """
-    var acc0 = SIMD[DType.uint32, 16]()
-    var acc1 = SIMD[DType.uint32, 16]()
-    var acc2 = SIMD[DType.uint32, 16]()
-    var acc3 = SIMD[DType.uint32, 16]()
-    
-    var i = 0
-    # Unroll 4x (4 * 16 bytes = 64 bytes per iteration)
-    while i <= d - 64:
-        var vx0 = x.load[width=16](i).cast[DType.uint16]()
-        var vy0 = y.load[width=16](i).cast[DType.uint16]()
-        acc0 += (vx0 * vy0).cast[DType.uint32]()
+    comptime if is_apple_gpu():
+        var acc0 = SIMD[DType.uint32, 4]()
+        var acc1 = SIMD[DType.uint32, 4]()
+        var acc2 = SIMD[DType.uint32, 4]()
+        var acc3 = SIMD[DType.uint32, 4]()
         
-        var vx1 = x.load[width=16](i + 16).cast[DType.uint16]()
-        var vy1 = y.load[width=16](i + 16).cast[DType.uint16]()
-        acc1 += (vx1 * vy1).cast[DType.uint32]()
+        var i = 0
+        while i <= d - 64:
+            var vx0 = x.load[width=16](i)
+            var vy0 = y.load[width=16](i)
+            acc0 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc0, vx0, vy0)
+            
+            var vx1 = x.load[width=16](i + 16)
+            var vy1 = y.load[width=16](i + 16)
+            acc1 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc1, vx1, vy1)
+            
+            var vx2 = x.load[width=16](i + 32)
+            var vy2 = y.load[width=16](i + 32)
+            acc2 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc2, vx2, vy2)
+            
+            var vx3 = x.load[width=16](i + 48)
+            var vy3 = y.load[width=16](i + 48)
+            acc3 = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc3, vx3, vy3)
+            
+            i += 64
+            
+        var acc = acc0 + acc1 + acc2 + acc3
         
-        var vx2 = x.load[width=16](i + 32).cast[DType.uint16]()
-        var vy2 = y.load[width=16](i + 32).cast[DType.uint16]()
-        acc2 += (vx2 * vy2).cast[DType.uint32]()
+        while i <= d - 16:
+            var vx = x.load[width=16](i)
+            var vy = y.load[width=16](i)
+            acc = llvm_intrinsic["llvm.aarch64.neon.udot.v4i32.v16i8", SIMD[DType.uint32, 4]](acc, vx, vy)
+            i += 16
+            
+        var res = acc.reduce_add()
         
-        var vx3 = x.load[width=16](i + 48).cast[DType.uint16]()
-        var vy3 = y.load[width=16](i + 48).cast[DType.uint16]()
-        acc3 += (vx3 * vy3).cast[DType.uint32]()
+        while i < d:
+            res += UInt32(x[i]) * UInt32(y[i])
+            i += 1
+            
+        return res
+    else:
+        var acc0 = SIMD[DType.uint32, 16]()
+        var acc1 = SIMD[DType.uint32, 16]()
+        var acc2 = SIMD[DType.uint32, 16]()
+        var acc3 = SIMD[DType.uint32, 16]()
         
-        i += 64
+        var i = 0
+        while i <= d - 64:
+            var vx0 = x.load[width=16](i).cast[DType.uint16]()
+            var vy0 = y.load[width=16](i).cast[DType.uint16]()
+            acc0 += (vx0 * vy0).cast[DType.uint32]()
+            
+            var vx1 = x.load[width=16](i + 16).cast[DType.uint16]()
+            var vy1 = y.load[width=16](i + 16).cast[DType.uint16]()
+            acc1 += (vx1 * vy1).cast[DType.uint32]()
+            
+            var vx2 = x.load[width=16](i + 32).cast[DType.uint16]()
+            var vy2 = y.load[width=16](i + 32).cast[DType.uint16]()
+            acc2 += (vx2 * vy2).cast[DType.uint32]()
+            
+            var vx3 = x.load[width=16](i + 48).cast[DType.uint16]()
+            var vy3 = y.load[width=16](i + 48).cast[DType.uint16]()
+            acc3 += (vx3 * vy3).cast[DType.uint32]()
+            
+            i += 64
+            
+        var acc = acc0 + acc1 + acc2 + acc3
         
-    var acc = acc0 + acc1 + acc2 + acc3
-    
-    # 1x for remaining 16-byte chunks
-    while i <= d - 16:
-        var vx = x.load[width=16](i).cast[DType.uint16]()
-        var vy = y.load[width=16](i).cast[DType.uint16]()
-        acc += (vx * vy).cast[DType.uint32]()
-        i += 16
+        while i <= d - 16:
+            var vx = x.load[width=16](i).cast[DType.uint16]()
+            var vy = y.load[width=16](i).cast[DType.uint16]()
+            acc += (vx * vy).cast[DType.uint32]()
+            i += 16
+            
+        var res = acc.reduce_add()
         
-    var res = acc.reduce_add()
-    
-    while i <= d - 8:
-        var vx = x.load[width=8](i).cast[DType.uint16]()
-        var vy = y.load[width=8](i).cast[DType.uint16]()
-        var r = (vx * vy).cast[DType.uint32]()
-        res += r.reduce_add()
-        i += 8
+        while i <= d - 8:
+            var vx = x.load[width=8](i).cast[DType.uint16]()
+            var vy = y.load[width=8](i).cast[DType.uint16]()
+            var r = (vx * vy).cast[DType.uint32]()
+            res += r.reduce_add()
+            i += 8
+            
+        while i <= d - 4:
+            var vx = x.load[width=4](i).cast[DType.uint16]()
+            var vy = y.load[width=4](i).cast[DType.uint16]()
+            var r = (vx * vy).cast[DType.uint32]()
+            res += r.reduce_add()
+            i += 4
         
-    while i <= d - 4:
-        var vx = x.load[width=4](i).cast[DType.uint16]()
-        var vy = y.load[width=4](i).cast[DType.uint16]()
-        var r = (vx * vy).cast[DType.uint32]()
-        res += r.reduce_add()
-        i += 4
-    
-    # Handle remainder (scalar)
-    while i < d:
-        res += UInt32(x[i]) * UInt32(y[i])
-        i += 1
-        
-    return res
+        while i < d:
+            res += UInt32(x[i]) * UInt32(y[i])
+            i += 1
+            
+        return res
 
 @always_inline
 def sq8_l2_from_dot(norm_a: UInt32, norm_b: UInt32, dot: UInt32) -> UInt32:

@@ -120,6 +120,13 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                         var neigh = neighbors[j]
                         if neigh < 0:
                             break
+                            
+                        # Pipeline prefetch the next neighbor's vector
+                        if j + 1 < max_links:
+                            var next_neigh = neighbors[j + 1]
+                            if next_neigh >= 0:
+                                comp.prefetch_vector(Int(next_neigh))
+                                
                         var d = comp.distance(Int(neigh))
                         if d < ep_dist:
                             ep_dist = d
@@ -265,6 +272,13 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                         var neigh = neighbors[j]
                         if neigh < 0:
                             break
+                            
+                        # Pipeline prefetch the next neighbor's vector
+                        if j + 1 < max_links:
+                            var next_neigh = neighbors[j + 1]
+                            if next_neigh >= 0:
+                                comp.prefetch_vector(Int(next_neigh))
+                                
                         var d = comp.distance(Int(neigh))
                         if d < ep_dist:
                             ep_dist = d
