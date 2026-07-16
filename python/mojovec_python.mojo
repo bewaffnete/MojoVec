@@ -77,11 +77,36 @@ struct PyCollection(Movable, Writable):
         
     @staticmethod
     def py_upsert_batch_numpy(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
-        return Self.py_upsert_batch(self_ptr, py_ids, py_embeddings)
+        var num_vectors = Int(py=py_ids.__len__())
+        var ids_ptr_int = Int(py=py_ids.__array_interface__["data"][0])
+        var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
+        
+        var ids_ptr = UnsafePointer[Int, MutAnyOrigin](unsafe_from_address=ids_ptr_int)
+        var emb_ptr = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address=emb_ptr_int)
+        
+        self_ptr[].ptr[].add_from_pointers(num_vectors, ids_ptr, emb_ptr)
+        return Python.none()
 
     @staticmethod
     def py_query_batch_numpy(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_embeddings: PythonObject, n_results: PythonObject) raises -> PythonObject:
-        return Self.py_query_batch(self_ptr, py_embeddings, n_results)
+        var num_queries = Int(py=py_embeddings.shape[0])
+        var k = Int(py=n_results)
+        var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
+        var emb_ptr = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address=emb_ptr_int)
+        
+        var np = Python.import_module("numpy")
+        var out_ids = np.empty(Python.tuple(num_queries, k), dtype=np.int64)
+        var out_dists = np.empty(Python.tuple(num_queries, k), dtype=np.float32)
+        
+        var out_ids_int = Int(py=out_ids.__array_interface__["data"][0])
+        var out_dists_int = Int(py=out_dists.__array_interface__["data"][0])
+        
+        var out_ids_ptr = UnsafePointer[Int, MutAnyOrigin](unsafe_from_address=out_ids_int)
+        var out_dists_ptr = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address=out_dists_int)
+        
+        self_ptr[].ptr[].query_from_pointers(num_queries, emb_ptr, k, out_ids_ptr, out_dists_ptr)
+        
+        return Python.tuple(out_ids, out_dists)
         
     @staticmethod
     def py_compact(self_ptr: UnsafePointer[Self, MutAnyOrigin]) raises -> PythonObject:

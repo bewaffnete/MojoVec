@@ -43,9 +43,7 @@ def test_ivf_flat() raises:
     
     ivf.search(nq, queries, k, dists, labels)
     
-    for i in range(nq):
-        pass  # print("Query", i, "top-1 ID:", labels[i * k], "dist:", dists[i * k])
-        
+
     print("All IndexIVFFlat tests passed!")
     
     # Keep ivf alive

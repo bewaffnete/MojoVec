@@ -110,6 +110,19 @@ struct Collection(Movable, Writable):
         var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](embeddings.unsafe_ptr())
         self._hnsw.add(num_vectors, ptr)
 
+    def add_from_pointers(mut self, num_vectors: Int, ids_ptr: UnsafePointer[Int, MutAnyOrigin], embeddings_ptr: UnsafePointer[Float32, MutAnyOrigin]) raises:
+        """
+        Adds multiple vectors directly from memory pointers (Zero-Copy Buffer Protocol).
+        """
+        if num_vectors == 0:
+            return
+            
+        for i in range(num_vectors):
+            self._user_ids.append(ids_ptr[i])
+            
+        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](embeddings_ptr)
+        self._hnsw.add(num_vectors, ptr)
+
     def set_ef_search(mut self, ef: Int):
         """
         Updates the efSearch parameter for the HNSW index.
@@ -155,6 +168,27 @@ struct Collection(Movable, Writable):
         labels_ptr.free()
 
         return QueryResults(all_ids^, all_distances^)
+
+    def query_from_pointers(self, num_queries: Int, query_ptr: UnsafePointer[Float32, MutAnyOrigin], n_results: Int, out_ids_ptr: UnsafePointer[Int, MutAnyOrigin], out_dists_ptr: UnsafePointer[Float32, MutAnyOrigin]) raises:
+        """
+        Queries directly from memory pointers and writes results directly to output pointers (Zero-Copy).
+        """
+        if num_queries == 0:
+            return
+
+        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query_ptr)
+        var dists_ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](out_dists_ptr)
+        var ids_ptr = rebind[UnsafePointer[Int, MutUntrackedOrigin]](out_ids_ptr)
+        self._hnsw.search(num_queries, ptr, n_results, dists_ptr, ids_ptr)
+
+        # Map internal labels to user IDs in place!
+        for i in range(num_queries):
+            for j in range(n_results):
+                var internal_label = out_ids_ptr[i * n_results + j]
+                if internal_label >= 0 and internal_label < len(self._user_ids):
+                    out_ids_ptr[i * n_results + j] = self._user_ids[internal_label]
+                else:
+                    out_ids_ptr[i * n_results + j] = -1
 
     @staticmethod
     def py_init(out self: Collection, args: PythonObject, kwargs: PythonObject) raises:

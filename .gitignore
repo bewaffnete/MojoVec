@@ -36,3 +36,4 @@ dist/
 *.egg-info/
 sift1m/
 benchmarks/scratch_benches/
+test_mojoc/

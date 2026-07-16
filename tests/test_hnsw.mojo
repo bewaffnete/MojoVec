@@ -40,16 +40,7 @@ def test_hnsw_recall() raises:
     hnsw.search(nq, xq, k, hnsw_dist, hnsw_labels)
     
     # 4. Compare recall
-    for i in range(5):
-        pass  # print("Query", i)
-        pass  # print("GT  : ", end="")
-        for j in range(k):
-            pass  # print(gt_labels[i * k + j], end=" ")
-        pass  # print("\nHNSW: ", end="")
-        for j in range(k):
-            pass  # print(hnsw_labels[i * k + j], end=" ")
-        pass  # print("\n")
-        
+
     var matches = 0
     for i in range(nq):
         for j in range(k):

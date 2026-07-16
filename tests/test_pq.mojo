@@ -51,9 +51,8 @@ def test_pq() raises:
         approx_dist += dis_table[m * ksub + k]
         
     print("ADC distance to self (should be exactly equal to reconstruction error of vector 0):", approx_dist)
-    var dec_0 = decoded + 0
-    var exact_recon_dist = l2_distance_simd[4](query, dec_0, d)
-    pass  # print("Exact distance to decoded self:", exact_recon_dist)
+
+
     
     print("All PQ tests passed!")
     

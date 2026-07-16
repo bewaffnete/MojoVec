@@ -18,8 +18,8 @@ def read_fvecs(file_path, max_n=None):
         a = a[:max_n]
     return a[:, 1:].copy().view('float32')
 
-db = read_fvecs("benchmarks/suite/sift1m/sift_base.fvecs", max_n=n)
-queries = read_fvecs("benchmarks/suite/sift1m/sift_query.fvecs", max_n=nq)
+db = read_fvecs("benchmarks/sift1m/sift_base.fvecs", max_n=n)
+queries = read_fvecs("benchmarks/sift1m/sift_query.fvecs", max_n=nq)
 
 if db.shape[0] > n: db = db[:n]
 if queries.shape[0] > nq: queries = queries[:nq]
@@ -40,7 +40,7 @@ def read_ivecs(file_path, max_n=None):
         a = a[:max_n]
     return a[:, 1:].copy()
 
-gt = read_ivecs("benchmarks/suite/sift1m/sift_groundtruth.ivecs", max_n=nq)
+gt = read_ivecs("benchmarks/sift1m/sift_groundtruth.ivecs", max_n=nq)
 
 index.hnsw.efSearch = 40
 print("Searching FAISS...")

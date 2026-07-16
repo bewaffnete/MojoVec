@@ -46,9 +46,7 @@ def test_ivf_pq() raises:
     
     ivf.search(nq, queries, k, dists, labels)
     
-    for i in range(nq):
-        pass  # print("Query", i, "top-1 ID:", labels[i * k], "dist:", dists[i * k])
-        
+
     print("All IndexIVFPQ tests passed!")
     
     # Keep ivf alive

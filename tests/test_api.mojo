@@ -107,7 +107,7 @@ def test_dimension_mismatch() raises:
     ids.append(1)
     
     var bad_embeddings = List[Float32]()
-    for i in range(15):  # one float short
+    for _ in range(15):  # one float short
         bad_embeddings.append(0.0)
         
     var add_failed = False
