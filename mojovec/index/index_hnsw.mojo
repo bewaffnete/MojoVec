@@ -44,6 +44,35 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         self.hnsw = move.hnsw^
         self.vt_pool = move.vt_pool^
 
+    @always_inline
+    def _dispatch_search_layer[
+        ComputerType: DistanceComputerTrait,
+        origin1: MutOrigin,
+        origin2: MutOrigin,
+    ](
+        self,
+        mut comp: ComputerType,
+        ep_id: Int,
+        ep_dist: Float32,
+        ef: Int,
+        level: Int,
+        vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
+        mut res_dist: UnsafePointer[Float32, origin1],
+        mut res_labels: UnsafePointer[Int32, origin2],
+    ) -> Int:
+        var max_links = self.hnsw.M * 2 if level == 0 else self.hnsw.M
+        
+        if max_links == 64:
+            return self.hnsw.search_layer[MAX_LINKS=64](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+        elif max_links == 32:
+            return self.hnsw.search_layer[MAX_LINKS=32](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+        elif max_links == 128:
+            return self.hnsw.search_layer[MAX_LINKS=128](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+        elif max_links == 16:
+            return self.hnsw.search_layer[MAX_LINKS=16](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+        else:
+            return self.hnsw.search_layer[MAX_LINKS=0](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+
     def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
         """Adds n vectors to the HNSW index from the given pointer x."""
         if n == 0:
@@ -141,7 +170,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             var W_labels = w_labels_array.unsafe_ptr()
 
             for level in range(min(pt_level, self.hnsw.max_level), -1, -1):
-                var W_size = self.hnsw.search_layer(
+                var W_size = self._dispatch_search_layer(
                     comp,
                     ep_id,
                     ep_dist,
@@ -286,7 +315,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                             changed = True
 
             # Beam search on level 0
-            var W_size = self.hnsw.search_layer(
+            var W_size = self._dispatch_search_layer(
                 comp, ep_id, ep_dist, ef, 0, vt, W_dist, W_labels
             )
 

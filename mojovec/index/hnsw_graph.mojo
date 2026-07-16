@@ -211,6 +211,7 @@ struct HNSWGraph(Movable):
         ComputerType: DistanceComputerTrait,
         origin1: MutOrigin,
         origin2: MutOrigin,
+        MAX_LINKS: Int = 0
     ](
         self,
         mut comp: ComputerType,
@@ -267,50 +268,91 @@ struct HNSWGraph(Movable):
             var neighbors_info = self.get_neighbors(Int(c_id), level)
             var neighbors = neighbors_info.ptr
             var max_links = neighbors_info.max_links
-            for i in range(max_links):
-                var e = neighbors[i]
-                if e < 0:
-                    break
+            
+            comptime if MAX_LINKS > 0:
+                for i in range(MAX_LINKS):
+                    var e = neighbors[i]
+                    if e < 0:
+                        break
 
-                # Prefetch the visited table flag for the next neighbor
-                if i + 1 < max_links:
-                    var next_e = neighbors[i + 1]
-                    if next_e >= 0:
-                        vt[].prefetch(Int(next_e))
+                    # Prefetch the visited table flag for the next neighbor
+                    if i + 1 < MAX_LINKS:
+                        var next_e = neighbors[i + 1]
+                        if next_e >= 0:
+                            vt[].prefetch(Int(next_e))
 
-                if not vt[].is_visited(Int(e)):
-                    vt[].set_visited(Int(e))
+                    if not vt[].is_visited(Int(e)):
+                        vt[].set_visited(Int(e))
 
-                    # Prefetch next unvisited neighbor's vector while computing distance for current one.
-                    for look_ahead in range(i + 1, max_links):
-                        var next_e = neighbors[look_ahead]
-                        if next_e < 0:
-                            break
-                        if not vt[].is_visited(Int(next_e)):
-                            comp.prefetch_vector(Int(next_e))
-                            break
+                        # Prefetch next unvisited neighbor's vector while computing distance for current one.
+                        for look_ahead in range(i + 1, MAX_LINKS):
+                            var next_e = neighbors[look_ahead]
+                            if next_e < 0:
+                                break
+                            if not vt[].is_visited(Int(next_e)):
+                                comp.prefetch_vector(Int(next_e))
+                                break
 
-                    var threshold: Float32 = Float32.MAX
-                    worst_w_dist = W_dist[0]
-                    if W_size >= safe_ef:
-                        threshold = worst_w_dist
-                        
-                    var e_dist = comp.distance(Int(e), threshold)
-                    if W_size < safe_ef or e_dist < worst_w_dist:
-                        # Skip if C heap exceeds pre-allocated capacity (very rare)
-                        if C_size >= C_cap:
-                            pass
-                        else:
-                            min_heap_push(C_dist, C_labels, C_size, e_dist, e)
-                            C_size += 1
+                        var threshold: Float32 = Float32.MAX
+                        var worst_w_dist = W_dist[0]
+                        if W_size >= safe_ef:
+                            threshold = worst_w_dist
+                            
+                        var e_dist = comp.distance(Int(e), threshold)
+                        if W_size < safe_ef or e_dist < worst_w_dist:
+                            if C_size >= C_cap:
+                                pass
+                            else:
+                                min_heap_push(C_dist, C_labels, C_size, e_dist, e)
+                                C_size += 1
 
-                        if W_size < safe_ef:
-                            max_heap_push(W_dist, W_labels, W_size, e_dist, e)
-                            W_size += 1
-                        else:
-                            max_heap_replace_top(
-                                W_dist, W_labels, safe_ef, e_dist, e
-                            )
+                            if W_size < safe_ef:
+                                max_heap_push(W_dist, W_labels, W_size, e_dist, e)
+                                W_size += 1
+                            else:
+                                max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e)
+            else:
+                for i in range(max_links):
+                    var e = neighbors[i]
+                    if e < 0:
+                        break
+
+                    # Prefetch the visited table flag for the next neighbor
+                    if i + 1 < max_links:
+                        var next_e = neighbors[i + 1]
+                        if next_e >= 0:
+                            vt[].prefetch(Int(next_e))
+
+                    if not vt[].is_visited(Int(e)):
+                        vt[].set_visited(Int(e))
+
+                        # Prefetch next unvisited neighbor's vector while computing distance for current one.
+                        for look_ahead in range(i + 1, max_links):
+                            var next_e = neighbors[look_ahead]
+                            if next_e < 0:
+                                break
+                            if not vt[].is_visited(Int(next_e)):
+                                comp.prefetch_vector(Int(next_e))
+                                break
+
+                        var threshold: Float32 = Float32.MAX
+                        var worst_w_dist = W_dist[0]
+                        if W_size >= safe_ef:
+                            threshold = worst_w_dist
+                            
+                        var e_dist = comp.distance(Int(e), threshold)
+                        if W_size < safe_ef or e_dist < worst_w_dist:
+                            if C_size >= C_cap:
+                                pass
+                            else:
+                                min_heap_push(C_dist, C_labels, C_size, e_dist, e)
+                                C_size += 1
+
+                            if W_size < safe_ef:
+                                max_heap_push(W_dist, W_labels, W_size, e_dist, e)
+                                W_size += 1
+                            else:
+                                max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e)
 
         return W_size
 
