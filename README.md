@@ -2,7 +2,7 @@
 
 **A Vector Database (HNSW) written entirely in Mojo.**
 
-MojoVec is an Approximate Nearest Neighbor (ANN) search library built from scratch in pure Mojo — no C++ dependencies. HNSW is implemented and benchmarked below. IVF and Product Quantization are in progress (see Status).
+MojoVec is an Approximate Nearest Neighbor (ANN) search library built from scratch in pure Mojo — no C++ dependencies. HNSW, IVF, and Product Quantization (PQ) are implemented.
 
 ---
 
