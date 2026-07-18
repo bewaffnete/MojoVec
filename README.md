@@ -36,8 +36,6 @@ MojoVec achieves **over 2.5x the QPS of FAISS** and builds the index **twice as 
 
 ## Installation
 
-You can download the pre-compiled Mojo package (`.mojoc`) from the latest GitHub release. Using the `latest` URL ensures you don't have to lock the version manually:
-
 ```bash
 # Download the latest mojovec.mojoc
 curl -LO https://github.com/bewaffnete/MojoVec/releases/latest/download/mojovec.mojoc
