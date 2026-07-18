@@ -34,6 +34,19 @@ MojoVec achieves **over 2.5x the QPS of FAISS** and builds the index **twice as 
 
 ---
 
+## Installation
+
+You can download the pre-compiled Mojo package (`.mojoc`) from the latest GitHub release. Using the `latest` URL ensures you don't have to lock the version manually:
+
+```bash
+# Download the latest mojovec.mojoc
+curl -LO https://github.com/bewaffnete/MojoVec/releases/latest/download/mojovec.mojoc
+```
+
+Place the `mojovec.mojoc` file in your project directory. You can now import it directly in your code. (If you place it elsewhere, pass the include path to the compiler: `mojo run -I /path/to/dir your_script.mojo`).
+
+---
+
 ## Quick Start
 
 ### 1. Initialize the Client
