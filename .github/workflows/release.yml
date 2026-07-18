@@ -50,7 +50,11 @@ jobs:
       - name: Build Python Wheel
         working-directory: python
         run: |
-          python setup.py bdist_wheel
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            python setup.py bdist_wheel --plat-name manylinux2014_x86_64
+          else
+            python setup.py bdist_wheel
+          fi
           
       - name: Run Python Tests
         run: |

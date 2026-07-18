@@ -12,7 +12,7 @@ class BinaryDistribution(Distribution):
 
 setup(
     name="mojovec",
-    version="0.4.0",
+    version="0.4.1",
     description="Python bindings for MojoVec",
     packages=[],
     data_files=[(".", ["mojovec.so"])],
