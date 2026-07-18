@@ -16,8 +16,8 @@ def read_fvecs(file_path, max_n=None):
         a = a[:max_n]
     return a[:, 1:].copy().view('float32')
 
-db = read_fvecs("benchmarks/suite/sift1m/sift_base.fvecs", max_n=n)
-queries = read_fvecs("benchmarks/suite/sift1m/sift_query.fvecs", max_n=nq)
+db = read_fvecs("benchmarks/sift1m/sift_base.fvecs", max_n=n)
+queries = read_fvecs("benchmarks/sift1m/sift_query.fvecs", max_n=nq)
 
 if db.shape[0] > n: db = db[:n]
 if queries.shape[0] > nq: queries = queries[:nq]
@@ -27,13 +27,12 @@ print("Building Chroma DB (HNSW)...")
 collection = client.create_collection(name="sift_test", metadata={"hnsw:space": "l2", "hnsw:construction_ef": 200, "hnsw:M": 32})
 
 ids = [str(i) for i in range(len(db))]
-db_list = db.tolist()
 
 batch_size = 5000
 t0 = time.perf_counter()
 for i in range(0, len(db), batch_size):
     collection.add(
-        embeddings=db_list[i:i+batch_size],
+        embeddings=db[i:i+batch_size].tolist(),
         ids=ids[i:i+batch_size]
     )
 t_add = time.perf_counter() - t0
@@ -47,7 +46,7 @@ def read_ivecs(file_path, max_n=None):
         a = a[:max_n]
     return a[:, 1:].copy()
 
-gt = read_ivecs("benchmarks/suite/sift1m/sift_groundtruth.ivecs", max_n=nq)
+gt = read_ivecs("benchmarks/sift1m/sift_groundtruth.ivecs", max_n=nq)
 
 print("Searching Chroma...")
 loops = 100  # Chroma Python API overhead is high, but testing with 100 loops
