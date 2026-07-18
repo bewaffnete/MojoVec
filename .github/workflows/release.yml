@@ -113,3 +113,14 @@ jobs:
             dist/*.whl
             dist/mojovec.mojoc
           generate_release_notes: true
+
+      - name: Prepare PyPI artifacts
+        run: |
+          mkdir -p pypi_dist
+          cp dist/*.whl pypi_dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          packages-dir: pypi_dist/
