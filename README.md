@@ -18,7 +18,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 
 **Dataset:** SIFT1M (1,000,000 base vectors, 10,000 query vectors, 128 dimensions).
 **Parameters:** `M=32`, `efConstruction=200`, `efSearch=40`, `k=10`. L2 Distance.
-**Hardware:** Apple Silicon (ARM64).
+### Apple Silicon (ARM64)
 
 | Index | Build Time | QPS | Recall@10 |
 |---|---|---|---|
@@ -26,7 +26,15 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 | FAISS (HNSW, C++ via Python) | ~100.8 s | ~25,400 | 95.83% |
 | ChromaDB (hnswlib, Python) | ~105.6 s | ~1,990 | 99.22% |
 
-**Methodology:** Apple Silicon M-series (ARM64). FAISS uses OpenMP with 10 threads; MojoVec uses `std.algorithm.parallelize` across logical cores. Recall computed by exact intersection against SIFT1M's provided ground truth (`sift_groundtruth.ivecs`).
+### x86_64 (4 Cores VM)
+
+| Index | Build Time | QPS | Recall@10 |
+|---|---|---|---|
+| MojoVec (Pure Mojo) | **~367.1 s** | **~8,912** | 94.64% |
+| FAISS (HNSW, C++ via Python) | ~693.2 s | ~4,773 | 95.88% |
+| ChromaDB (hnswlib, Python) | ~658.3 s | ~1,610 | 99.20% |
+
+**Methodology:** FAISS uses OpenMP threads; MojoVec uses `std.algorithm.parallelize` across logical cores. Recall computed by exact intersection against SIFT1M's provided ground truth (`sift_groundtruth.ivecs`).
 
 MojoVec achieves **over 2.5x the QPS of FAISS** and builds the index **twice as fast** on Apple Silicon, remaining 100% pure Mojo without dropping into C/C++ or assembly.
 
