@@ -109,7 +109,11 @@ def main() raises:
 
 ## Python API
 
-MojoVec now includes high-performance native Python bindings. You can install the pre-compiled `.whl` from the GitHub Releases page.
+MojoVec now includes high-performance native Python bindings. You can install the package directly from PyPI (Linux x86_64 and macOS Apple Silicon are supported):
+
+```bash
+pip install mojovec
+```
 
 ```python
 import mojovec
