@@ -1,6 +1,6 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
-from std.memory import memcpy
+from std.memory import memcpy, alloc
 from std.memory.span import Span
 
 # Hardware-optimized for Apple Silicon (ARM NEON)
@@ -176,17 +176,38 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         return self.codes + (id * self.d)
 
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
-        """Searches for the k-nearest neighbors of the given query vectors.
-        
-        Args:
-            x: A safe Span pointing to the flattened query vectors.
-            k: The number of nearest neighbors to retrieve.
-            distances: An output Span to store the resulting distances.
-            labels: An output Span to store the resulting labels.
-        """
+        """Searches for the k-nearest neighbors of the given query vectors."""
         var n = len(x) // self.d
         if n == 0:
+            var labels_ptr = labels.unsafe_ptr()
+            var distances_ptr = distances.unsafe_ptr()
+            for i in range(n * k):
+                labels_ptr[i] = -1
+                distances_ptr[i] = 0.0
             return
+            
+        # Empty filter case
+        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        self._search_impl[False](x, k, distances, labels, empty_filter)
+
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
+        """Searches for the k-nearest neighbors of the given query vectors with a filter mask."""
+        var n = len(x) // self.d
+        if n == 0:
+            var labels_ptr = labels.unsafe_ptr()
+            var distances_ptr = distances.unsafe_ptr()
+            for i in range(n * k):
+                labels_ptr[i] = -1
+                distances_ptr[i] = 0.0
+            return
+
+        if len(filter) > 0:
+            self._search_impl[True](x, k, distances, labels, filter)
+        else:
+            self._search_impl[False](x, k, distances, labels, filter)
+            
+    def _search_impl[HAS_FILTER: Bool](self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
+        var n = len(x) // self.d
             
         var self_codes = self.codes
         var self_d = self.d
@@ -196,10 +217,12 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         var x_ptr = x.unsafe_ptr()
         var dist_ptr = distances.unsafe_ptr()
         var labels_ptr = labels.unsafe_ptr()
+        var filter_ptr = filter.unsafe_ptr()
         
         from std.algorithm import parallelize
         
-        def process_query(i: Int) {self_d, self_codes, self_ntotal, self_metric_type, x_ptr, k, dist_ptr, labels_ptr}:
+        @parameter
+        def process_query(i: Int):
             var query_offset = i * self_d
             var query_ptr = x_ptr + query_offset
             
@@ -209,6 +232,9 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
             
             # Iterate over all database vectors
             for j in range(self_ntotal):
+                comptime if HAS_FILTER:
+                    if filter_ptr[j] > 0:
+                        continue
                 var db_ptr = self_codes + (j * self_d)
                 var dist: Float32
                 
@@ -238,7 +264,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
                 for j in range(k):
                     res_dist_ptr[j] = -res_dist_ptr[j]
                     
-        parallelize(process_query, n, n)
+        parallelize[process_query](n, n)
                     
     def get_distance_computer(self, query: UnsafePointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector.

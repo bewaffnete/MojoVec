@@ -16,6 +16,9 @@ trait Index:
         ...
         
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
+        ...
+
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
         """
         Searches for the `k` nearest neighbors for the query vectors.
         
@@ -24,6 +27,7 @@ trait Index:
             k: The number of nearest neighbors to retrieve per query.
             distances: An output Span to store the resulting distances.
             labels: An output Span to store the resulting vector IDs.
+            filter: An optional byte mask (1 = deleted, 0 = valid). If empty, no filtering is applied.
         """
         ...
 
@@ -41,6 +45,9 @@ trait QuantizerTrait(Movable, ImplicitlyDeletable):
         ...
         
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
+        ...
+
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
         """
         Searches for the `k` nearest neighbors within the quantized vectors.
         
@@ -49,6 +56,7 @@ trait QuantizerTrait(Movable, ImplicitlyDeletable):
             k: The number of nearest neighbors to retrieve.
             distances: An output Span to store the resulting distances.
             labels: An output Span to store the resulting vector IDs.
+            filter: An optional byte mask (1 = deleted, 0 = valid). If empty, no filtering is applied.
         """
         ...
         

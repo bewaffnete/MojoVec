@@ -121,7 +121,24 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         assign_distances.free()
         assign_labels.free()
 
-    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
+    def search(
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+    ):
+        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        self.search(x, k, distances, labels, empty_filter)
+
+    def search(
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+        filter: Span[UInt8, _],
+    ):
         """Searches the index for the k nearest neighbors of the given query vectors.
         
         Args:
@@ -129,6 +146,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
             k: The number of nearest neighbors to retrieve for each query.
             distances: An output Span for storing the distances of the k nearest neighbors.
             labels: An output Span for storing the IDs of the k nearest neighbors.
+            filter: An optional bitmask (as Span) to filter candidates by ID.
         """
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()

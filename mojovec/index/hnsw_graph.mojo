@@ -211,7 +211,8 @@ struct HNSWGraph(Movable):
         ComputerType: DistanceComputerTrait,
         origin1: MutOrigin,
         origin2: MutOrigin,
-        MAX_LINKS: Int = 0
+        MAX_LINKS: Int = 0,
+        HAS_FILTER: Bool = False
     ](
         self,
         mut comp: ComputerType,
@@ -222,6 +223,7 @@ struct HNSWGraph(Movable):
         vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
         mut res_dist: UnsafePointer[Float32, origin1],
         mut res_labels: UnsafePointer[Int32, origin2],
+        filter: UnsafePointer[UInt8, _],
     ) -> Int:
         """Performs a greedy beam search on a specific layer of the HNSW graph."""
         var safe_ef = ef
@@ -245,8 +247,13 @@ struct HNSWGraph(Movable):
         min_heap_push(C_dist, C_labels, C_size, ep_dist, Int32(ep_id))
         C_size += 1
 
-        max_heap_push(W_dist, W_labels, W_size, ep_dist, Int32(ep_id))
-        W_size += 1
+        comptime if HAS_FILTER:
+            if filter[ep_id] == 0:
+                max_heap_push(W_dist, W_labels, W_size, ep_dist, Int32(ep_id))
+                W_size += 1
+        else:
+            max_heap_push(W_dist, W_labels, W_size, ep_dist, Int32(ep_id))
+            W_size += 1
 
         while C_size > 0:
             var popped = min_heap_pop(C_dist, C_labels, C_size)
@@ -307,9 +314,15 @@ struct HNSWGraph(Movable):
                                 C_size += 1
 
                             if W_size < safe_ef:
+                                comptime if HAS_FILTER:
+                                    if filter[Int(e)] > 0:
+                                        continue
                                 max_heap_push(W_dist, W_labels, W_size, e_dist, e)
                                 W_size += 1
                             else:
+                                comptime if HAS_FILTER:
+                                    if filter[Int(e)] > 0:
+                                        continue
                                 max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e)
             else:
                 for i in range(max_links):
@@ -349,9 +362,15 @@ struct HNSWGraph(Movable):
                                 C_size += 1
 
                             if W_size < safe_ef:
+                                comptime if HAS_FILTER:
+                                    if filter[Int(e)] > 0:
+                                        continue
                                 max_heap_push(W_dist, W_labels, W_size, e_dist, e)
                                 W_size += 1
                             else:
+                                comptime if HAS_FILTER:
+                                    if filter[Int(e)] > 0:
+                                        continue
                                 max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e)
 
         return W_size

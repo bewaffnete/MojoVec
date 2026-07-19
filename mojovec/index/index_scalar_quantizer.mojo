@@ -222,7 +222,24 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         self.sq.decode(self.codes + (id * self.code_size), self.scratch_x)
         return self.scratch_x
 
-    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
+    def search(
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+    ):
+        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        self.search(x, k, distances, labels, empty_filter)
+
+    def search(
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+        filter: Span[UInt8, _],
+    ):
         """Searches for the k-nearest neighbors of the given query vectors.
         
         Args:
@@ -230,6 +247,7 @@ struct IndexScalarQuantizer(Index, StorageTrait):
             k: The number of nearest neighbors to retrieve.
             distances: An output Span for distances.
             labels: An output Span for labels.
+            filter: A bitset indicating allowed vectors.
         """
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()

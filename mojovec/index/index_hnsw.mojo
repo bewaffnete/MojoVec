@@ -7,6 +7,7 @@ from .hnsw_graph import HNSWGraph
 from .hnsw_visited import VisitedTable, VisitedTablePool
 from std.algorithm import parallelize
 from std.memory.span import Span
+from std.memory import alloc
 
 
 struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
@@ -50,6 +51,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         ComputerType: DistanceComputerTrait,
         origin1: MutOrigin,
         origin2: MutOrigin,
+        HAS_FILTER: Bool = False
     ](
         self,
         mut comp: ComputerType,
@@ -60,19 +62,20 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
         mut res_dist: UnsafePointer[Float32, origin1],
         mut res_labels: UnsafePointer[Int32, origin2],
+        filter: UnsafePointer[UInt8, _],
     ) -> Int:
         var max_links = self.hnsw.M * 2 if level == 0 else self.hnsw.M
         
         if max_links == 64:
-            return self.hnsw.search_layer[MAX_LINKS=64](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+            return self.hnsw.search_layer[MAX_LINKS=64, HAS_FILTER=HAS_FILTER](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels, filter)
         elif max_links == 32:
-            return self.hnsw.search_layer[MAX_LINKS=32](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+            return self.hnsw.search_layer[MAX_LINKS=32, HAS_FILTER=HAS_FILTER](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels, filter)
         elif max_links == 128:
-            return self.hnsw.search_layer[MAX_LINKS=128](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+            return self.hnsw.search_layer[MAX_LINKS=128, HAS_FILTER=HAS_FILTER](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels, filter)
         elif max_links == 16:
-            return self.hnsw.search_layer[MAX_LINKS=16](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+            return self.hnsw.search_layer[MAX_LINKS=16, HAS_FILTER=HAS_FILTER](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels, filter)
         else:
-            return self.hnsw.search_layer[MAX_LINKS=0](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
+            return self.hnsw.search_layer[MAX_LINKS=0, HAS_FILTER=HAS_FILTER](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels, filter)
 
     def add(mut self, x: Span[Float32, _]):
         """Adds vectors to the HNSW index from the given Span x."""
@@ -173,7 +176,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             var W_labels = w_labels_array.unsafe_ptr()
 
             for level in range(min(pt_level, self.hnsw.max_level), -1, -1):
-                var W_size = self._dispatch_search_layer(
+                var W_size = self._dispatch_search_layer[HAS_FILTER=False](
                     comp,
                     ep_id,
                     ep_dist,
@@ -182,6 +185,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     vt,
                     W_dist,
                     W_labels,
+                    alloc[UInt8](0)
                 )
 
                 var w_sorted_dist_array = InlineArray[Float32, 2048](
@@ -262,15 +266,53 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
     ):
         """Searches the HNSW index for the k nearest neighbors for each query vector in x."""
         var n = len(x) // self.d
-        var x_ptr = x.unsafe_ptr()
-        var distances_ptr = distances.unsafe_ptr()
-        var labels_ptr = labels.unsafe_ptr()
-        
         if n == 0 or self.ntotal == 0:
+            var labels_ptr = labels.unsafe_ptr()
+            var distances_ptr = distances.unsafe_ptr()
             for i in range(n * k):
                 labels_ptr[i] = -1
                 distances_ptr[i] = 0.0
             return
+
+        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        self._search_impl[False](x, k, distances, labels, empty_filter)
+
+    def search(
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+        filter: Span[UInt8, _],
+    ):
+        """Searches the HNSW index for the k nearest neighbors for each query vector in x."""
+        var n = len(x) // self.d
+        if n == 0 or self.ntotal == 0:
+            var labels_ptr = labels.unsafe_ptr()
+            var distances_ptr = distances.unsafe_ptr()
+            for i in range(n * k):
+                labels_ptr[i] = -1
+                distances_ptr[i] = 0.0
+            return
+
+        if len(filter) > 0:
+            self._search_impl[True](x, k, distances, labels, filter)
+        else:
+            self._search_impl[False](x, k, distances, labels, filter)
+
+    def _search_impl[HAS_FILTER: Bool](
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+        filter: Span[UInt8, _],
+    ):
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
+        var distances_ptr = distances.unsafe_ptr()
+        var labels_ptr = labels.unsafe_ptr()
+        var filter_ptr = filter.unsafe_ptr()
 
         var ef = self.hnsw.efSearch
         if ef < k:
@@ -322,8 +364,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                             changed = True
 
             # Beam search on level 0
-            var W_size = self._dispatch_search_layer(
-                comp, ep_id, ep_dist, ef, 0, vt, W_dist, W_labels
+            var W_size = self._dispatch_search_layer[HAS_FILTER=HAS_FILTER](
+                comp, ep_id, ep_dist, ef, 0, vt, W_dist, W_labels, filter_ptr
             )
 
             # W is a max-heap of nearest neighbors. We need to pop them and reverse to get sorted order.

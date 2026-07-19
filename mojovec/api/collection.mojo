@@ -14,6 +14,7 @@ struct Collection(Movable, Writable):
     var _dimension: Int
     var _hnsw: IndexHNSW[IndexFlatSQ8]
     var _user_ids: List[Int]
+    var _is_deleted: List[UInt8]
 
     def __init__(out self, dimension: Int, M: Int = 32, ef_construction: Int = 40, ef_search: Int = 16):
         """
@@ -25,6 +26,7 @@ struct Collection(Movable, Writable):
         self._hnsw.hnsw.efConstruction = ef_construction
         self._hnsw.hnsw.efSearch = ef_search
         self._user_ids = List[Int]()
+        self._is_deleted = List[UInt8]()
         
     def __init__(out self, *, deinit take: Self):
         """
@@ -33,6 +35,7 @@ struct Collection(Movable, Writable):
         self._dimension = take._dimension
         self._hnsw = take._hnsw^
         self._user_ids = take._user_ids^
+        self._is_deleted = take._is_deleted^
 
     def write_to[W: Writer](self, mut writer: W):
         """
@@ -63,6 +66,9 @@ struct Collection(Movable, Writable):
             var cast_ptr = rebind[UnsafePointer[UInt8, MutUntrackedOrigin]](ids_ptr)
             f.write_bytes(Span[UInt8](ptr=cast_ptr, length=num_ids * 8))
             
+            var deleted_ptr = self._is_deleted.unsafe_ptr()
+            f.write_bytes(Span[UInt8](ptr=deleted_ptr, length=num_ids))
+            
         write_index_hnsw_sq8(f, self._hnsw)
         f.close()
 
@@ -87,6 +93,12 @@ struct Collection(Movable, Writable):
             for i in range(num_ids):
                 col._user_ids.append(src[i])
             _ = len(read_data)
+            
+            var read_deleted = f.read_bytes(num_ids)
+            var del_src = read_deleted.unsafe_ptr()
+            for i in range(num_ids):
+                col._is_deleted.append(del_src[i])
+            _ = len(read_deleted)
                 
         var loaded_hnsw = read_index_hnsw_sq8(f)
         col._hnsw = loaded_hnsw^
@@ -106,6 +118,7 @@ struct Collection(Movable, Writable):
 
         for id in ids:
             self._user_ids.append(id)
+            self._is_deleted.append(0)
             
         var span = Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings))
         self._hnsw.add(span)
@@ -119,6 +132,7 @@ struct Collection(Movable, Writable):
             
         for i in range(num_vectors):
             self._user_ids.append(ids_ptr[i])
+            self._is_deleted.append(0)
             
         var span = Span[Float32](ptr=embeddings_ptr, length=num_vectors * self._dimension)
         self._hnsw.add(span)
@@ -128,6 +142,26 @@ struct Collection(Movable, Writable):
         Updates the efSearch parameter for the HNSW index.
         """
         self._hnsw.hnsw.efSearch = ef
+
+    def delete(mut self, ids: List[Int]) raises:
+        """
+        Soft-deletes vectors by their user IDs.
+        """
+        # TODO: Optimize with a Dictionary mapping user_id -> internal_id
+        for target_id in ids:
+            for i in range(len(self._user_ids)):
+                if self._user_ids[i] == target_id:
+                    self._is_deleted[i] = 1
+
+    def count_deleted(self) -> Int:
+        """
+        Returns the number of deleted vectors. Useful to monitor degradation.
+        """
+        var count = 0
+        for i in range(len(self._is_deleted)):
+            if self._is_deleted[i] > 0:
+                count += 1
+        return count
 
     def query(self, query_embeddings: List[Float32], n_results: Int = 10) raises -> QueryResults:
         """
@@ -146,8 +180,9 @@ struct Collection(Movable, Writable):
         var q_span = Span[Float32](ptr=query_embeddings.unsafe_ptr(), length=len(query_embeddings))
         var d_span = Span[mut=True, Float32, _](ptr=distances_ptr, length=num_queries * n_results)
         var l_span = Span[mut=True, Int, _](ptr=labels_ptr, length=num_queries * n_results)
+        var f_span = Span[UInt8](ptr=self._is_deleted.unsafe_ptr(), length=len(self._is_deleted))
 
-        self._hnsw.search(q_span, n_results, d_span, l_span)
+        self._hnsw.search(q_span, n_results, d_span, l_span, f_span)
 
         var all_ids = List[List[Int]](capacity=num_queries)
         var all_distances = List[List[Float32]](capacity=num_queries)
@@ -182,7 +217,8 @@ struct Collection(Movable, Writable):
         var q_span = Span[Float32](ptr=query_ptr, length=num_queries * self._dimension)
         var d_span = Span[mut=True, Float32, _](ptr=out_dists_ptr, length=num_queries * n_results)
         var l_span = Span[mut=True, Int, _](ptr=out_ids_ptr, length=num_queries * n_results)
-        self._hnsw.search(q_span, n_results, d_span, l_span)
+        var f_span = Span[UInt8](ptr=self._is_deleted.unsafe_ptr(), length=len(self._is_deleted))
+        self._hnsw.search(q_span, n_results, d_span, l_span, f_span)
 
         # Map internal labels to user IDs in place!
         for i in range(num_queries):

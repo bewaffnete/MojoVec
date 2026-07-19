@@ -4,6 +4,7 @@ from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..clustering.kmeans import KMeans
 from ..quantization.pq import ProductQuantizer
+from std.math import max, min, log2
 from std.memory import alloc
 from std.memory.span import Span
 
@@ -171,7 +172,24 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         assign_labels.free()
         pq_codes.free()
 
-    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
+    def search(
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+    ):
+        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        self.search(x, k, distances, labels, empty_filter)
+
+    def search(
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+        filter: Span[UInt8, _],
+    ):
         """Searches the index for the k nearest neighbors using asymmetric distance computation (ADC).
         
         Args:
@@ -179,6 +197,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
             k: The number of nearest neighbors to retrieve for each query.
             distances: An output Span for storing distances.
             labels: An output Span for storing the IDs.
+            filter: A bitset/mask (optional) for filtering candidates.
         """
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()

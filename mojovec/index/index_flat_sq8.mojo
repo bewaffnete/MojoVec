@@ -1,5 +1,6 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
+from std.memory import alloc
 
 comptime SIMD_WIDTH = 64
 
@@ -270,18 +271,40 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         self.ntotal += n
 
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
-        """Searches for the k-nearest neighbors of the given query vectors using SQ8 acceleration.
-        
-        Args:
-            x: A safe Span pointing to the uncompressed query vectors.
-            k: The number of nearest neighbors to retrieve.
-            distances: An output Span for distances.
-            labels: An output Span for labels.
-        """
+        """Searches for the k-nearest neighbors using SQ8 acceleration."""
+        var n = len(x) // self.d
+        if n == 0:
+            var labels_ptr = labels.unsafe_ptr()
+            var distances_ptr = distances.unsafe_ptr()
+            for i in range(n * k):
+                labels_ptr[i] = -1
+                distances_ptr[i] = 0.0
+            return
+        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        self._search_impl[False](x, k, distances, labels, empty_filter)
+
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
+        """Searches for the k-nearest neighbors using SQ8 acceleration with a filter mask."""
+        var n = len(x) // self.d
+        if n == 0:
+            var labels_ptr = labels.unsafe_ptr()
+            var distances_ptr = distances.unsafe_ptr()
+            for i in range(n * k):
+                labels_ptr[i] = -1
+                distances_ptr[i] = 0.0
+            return
+
+        if len(filter) > 0:
+            self._search_impl[True](x, k, distances, labels, filter)
+        else:
+            self._search_impl[False](x, k, distances, labels, filter)
+            
+    def _search_impl[HAS_FILTER: Bool](self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()
         var distances_ptr = distances.unsafe_ptr()
         var labels_ptr = labels.unsafe_ptr()
+        var filter_ptr = filter.unsafe_ptr()
         
         var self_d = self.d
         var self_ntotal = self.ntotal
@@ -294,7 +317,8 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         
         from std.algorithm import parallelize
         
-        def process_query(i: Int) {self_d, self_codes_f32, self_codes_u8, self_norms_u32, self_global_min, self_scale, self_ntotal, self_metric_type, x_ptr, k, distances_ptr, labels_ptr}:
+        @parameter
+        def process_query(i: Int):
             var query_ptr = x_ptr + (i * self_d)
             var res_dist_ptr = distances_ptr + (i * k)
             var res_labels_ptr = labels_ptr + (i * k)
@@ -312,6 +336,9 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
             var scale_sq = self_scale * self_scale
             
             for j in range(self_ntotal):
+                comptime if HAS_FILTER:
+                    if filter_ptr[j] > 0:
+                        continue
                 var dist: Float32
                 if self_metric_type == METRIC_L2:
                     var db_u8_ptr = self_codes_u8 + (j * self_d)
@@ -326,25 +353,30 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
                 if heap_size < k:
                     max_heap_push(res_dist_ptr, res_labels_ptr, heap_size, dist, j)
                     heap_size += 1
-                elif dist < res_dist_ptr[0]:
-                    max_heap_replace_top(res_dist_ptr, res_labels_ptr, k, dist, j)
+                else:
+                    max_heap_replace_top(res_dist_ptr, res_labels_ptr, heap_size, dist, j)
                     
-            var current_k = heap_size
-            for j in range(current_k):
+            var sorted_dist_ptr = distances_ptr + (i * k)
+            var sorted_labels_ptr = labels_ptr + (i * k)
+            
+            while heap_size > 0:
                 var popped = max_heap_pop(res_dist_ptr, res_labels_ptr, heap_size)
                 heap_size -= 1
-                var idx = current_k - 1 - j
-                res_dist_ptr[idx] = popped.dist
-                res_labels_ptr[idx] = popped.label
+                var idx = heap_size
+                sorted_dist_ptr[idx] = popped.dist
+                sorted_labels_ptr[idx] = Int(popped.label)
+                
+            for j in range(heap_size, k):
+                sorted_dist_ptr[j] = 0.0
+                sorted_labels_ptr[j] = -1
                 
             if self_metric_type == METRIC_INNER_PRODUCT:
                 for j in range(k):
-                    res_dist_ptr[j] = -res_dist_ptr[j]
+                    if res_labels_ptr[j] >= 0:
+                        res_dist_ptr[j] = -res_dist_ptr[j]
                     
             query_u8.free()
-            
-        parallelize(process_query, n, n)
-
+        parallelize[process_query](n, n)
     def get_distance_computer(self, query: UnsafePointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector.
         
