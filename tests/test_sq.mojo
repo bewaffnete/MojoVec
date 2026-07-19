@@ -77,16 +77,16 @@ def test_index_scalar_quantizer_sq8_negative_bounds() raises:
     data[2] = 0.0; data[3] = 0.0
     data[4] = 100.0; data[5] = 100.0
     index.train(3, data)
-    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=3 * 4))
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=3 * 2))
     
     var query = alloc[Float32](2)
     query[0] = -10.0; query[1] = -10.0
     
     var distances = alloc[Float32](1)
     var labels = alloc[Int](1)
-    var span_dist_3 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1 * 1)
-    var span_labels_3 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 1)
-    index.search(Span[Float32, MutUntrackedOrigin](ptr=query, length=1 * 4), 1, span_dist_3, span_labels_3)
+    var span_dist_3 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1)
+    var span_labels_3 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=query, length=2), 1, span_dist_3, span_labels_3)
     
     assert_equal(labels[0], 1)
     assert_true(abs(distances[0] - 200.0) < 25.0, "Distance should be approx 200")
