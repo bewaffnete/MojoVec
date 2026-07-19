@@ -5,6 +5,7 @@ from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..clustering.kmeans import KMeans
 from std.memory import alloc
+from std.memory.span import Span
 
 struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
     """An Inverted File (IVF) index with exact flat storage for vectors.
@@ -65,42 +66,46 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var kmeans = KMeans(self.d, self.nlist, 15)
         kmeans.train(n, x)
         
-        self.quantizer[0].add(self.nlist, kmeans.centroids)
+        self.quantizer[0].add(Span[Float32, MutUntrackedOrigin](ptr=kmeans.centroids, length=self.nlist * self.d))
         self.is_trained = True
 
-    def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def add(mut self, x: Span[Float32, _]):
         """Adds vectors to the index, automatically assigning sequential IDs.
         
         Args:
-            n: Number of vectors to add.
-            x: Pointer to the contiguous array of vectors.
+            x: A safe Span pointing to the contiguous array of vectors.
         """
+        var n = len(x) // self.d
         var ids = alloc[Int](n)
         for i in range(n):
             ids[i] = self.ntotal + i
-        self.add_with_ids(n, x, ids)
+        self.add_with_ids(x, ids)
         ids.free()
 
-    def add_with_ids(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], ids: UnsafePointer[Int, MutUntrackedOrigin]):
+    def add_with_ids(mut self, x: Span[Float32, _], ids: UnsafePointer[Int, MutUntrackedOrigin]):
         """Adds vectors to the index with explicitly provided IDs.
         
         Args:
-            n: Number of vectors to add.
-            x: Pointer to the contiguous array of vectors.
+            x: A safe Span pointing to the contiguous array of vectors.
             ids: Pointer to the array of vector IDs.
         """
         if not self.is_trained:
             # Cannot add without training
             return
             
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
+            
         var assign_distances = alloc[Float32](n)
         var assign_labels = alloc[Int](n)
         
-        self.quantizer[0].search(n, x, 1, assign_distances, assign_labels)
+        var d_span = Span[mut=True, Float32, _](ptr=assign_distances, length=n)
+        var l_span = Span[mut=True, Int, _](ptr=assign_labels, length=n)
+        self.quantizer[0].search(x, 1, d_span, l_span)
         
         # In a real scenario we could group vectors by list_no to minimize resize calls.
         # But ArrayInvertedLists already has O(1) amortized add via capacity doubling.
-        var code_ptr = x.bitcast[UInt8]()
+        var code_ptr = x_ptr.bitcast[UInt8]()
         var code_size = self.d * 4
         
         for i in range(n):
@@ -116,20 +121,24 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         assign_distances.free()
         assign_labels.free()
 
-    def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
         """Searches the index for the k nearest neighbors of the given query vectors.
         
         Args:
-            n: Number of query vectors.
-            x: Pointer to the contiguous array of query vectors.
+            x: A safe Span pointing to the contiguous array of query vectors.
             k: The number of nearest neighbors to retrieve for each query.
-            distances: Pointer to the output array for storing the distances of the k nearest neighbors.
-            labels: Pointer to the output array for storing the IDs of the k nearest neighbors.
+            distances: An output Span for storing the distances of the k nearest neighbors.
+            labels: An output Span for storing the IDs of the k nearest neighbors.
         """
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
+        var distances_ptr = distances.unsafe_ptr()
+        var labels_ptr = labels.unsafe_ptr()
+        
         if not self.is_trained or self.ntotal == 0:
             for i in range(n * k):
-                distances[i] = 1e38
-                labels[i] = -1
+                distances_ptr[i] = 1e38
+                labels_ptr[i] = -1
             return
             
         var nprobe = self.nprobe
@@ -138,12 +147,15 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var q_distances = alloc[Float32](n * nprobe)
         var q_labels = alloc[Int](n * nprobe)
         
-        self.quantizer[0].search(n, x, nprobe, q_distances, q_labels)
+        var qd_span = Span[mut=True, Float32, _](ptr=q_distances, length=n * nprobe)
+        var ql_span = Span[mut=True, Int, _](ptr=q_labels, length=n * nprobe)
+        
+        self.quantizer[0].search(x, nprobe, qd_span, ql_span)
         
         for i in range(n):
-            var q_ptr = x + i * self.d
-            var res_dist_ptr = distances + i * k
-            var res_labels_ptr = labels + i * k
+            var q_ptr = x_ptr + i * self.d
+            var res_dist_ptr = distances_ptr + i * k
+            var res_labels_ptr = labels_ptr + i * k
             var heap_size = 0
             
             for p in range(nprobe):

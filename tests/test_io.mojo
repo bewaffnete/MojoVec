@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from std.memory import alloc
 from std.random import random_float64
 from mojovec.index.index_flat import IndexFlat
@@ -21,12 +22,14 @@ def test_flat() raises:
     for i in range(k * d): queries[i] = Float32(random_float64(-1.0, 1.0))
     
     var index = IndexFlat(d)
-    index.add(n, data)
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d))
     
     # Search before
     var dists1 = alloc[Float32](k * k)
     var labels1 = alloc[Int](k * k)
-    index.search(k, queries, k, dists1, labels1)
+    var span_dist_1 = Span[Float32, MutUntrackedOrigin](ptr=dists1, length=k * k)
+    var span_labels_1 = Span[Int, MutUntrackedOrigin](ptr=labels1, length=k * k)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=queries, length=k * d), k, span_dist_1, span_labels_1)
     
     var f_w = open("test_flat.bin", "w")
     write_index_flat(f_w, index)
@@ -39,7 +42,9 @@ def test_flat() raises:
     # Search after
     var dists2 = alloc[Float32](k * k)
     var labels2 = alloc[Int](k * k)
-    index2.search(k, queries, k, dists2, labels2)
+    var span_dist_2 = Span[Float32, MutUntrackedOrigin](ptr=dists2, length=k * k)
+    var span_labels_2 = Span[Int, MutUntrackedOrigin](ptr=labels2, length=k * k)
+    index2.search(Span[Float32, MutUntrackedOrigin](ptr=queries, length=k * d), k, span_dist_2, span_labels_2)
     
     for i in range(k * k):
         assert_true(labels1[i] == labels2[i], "Labels mismatch Flat")
@@ -70,14 +75,16 @@ def test_ivf_pq() raises:
     index.train(n, data)
     var ids = alloc[Int](n)
     for i in range(n): ids[i] = i
-    index.add_with_ids(n, data, ids)
+    index.add_with_ids(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d), ids)
     index.nprobe = 3
     
     pass  # print("Searching before save")
     # Search before
     var dists1 = alloc[Float32](k * k)
     var labels1 = alloc[Int](k * k)
-    index.search(k, queries, k, dists1, labels1)
+    var span_dist_3 = Span[Float32, MutUntrackedOrigin](ptr=dists1, length=k * k)
+    var span_labels_3 = Span[Int, MutUntrackedOrigin](ptr=labels1, length=k * k)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=queries, length=k * d), k, span_dist_3, span_labels_3)
     
     pass  # print("Writing index")
     var f_w = open("test_ivfpq.bin", "w")
@@ -94,7 +101,9 @@ def test_ivf_pq() raises:
     # Search after
     var dists2 = alloc[Float32](k * k)
     var labels2 = alloc[Int](k * k)
-    index2.search(k, queries, k, dists2, labels2)
+    var span_dist_4 = Span[Float32, MutUntrackedOrigin](ptr=dists2, length=k * k)
+    var span_labels_4 = Span[Int, MutUntrackedOrigin](ptr=labels2, length=k * k)
+    index2.search(Span[Float32, MutUntrackedOrigin](ptr=queries, length=k * d), k, span_dist_4, span_labels_4)
     
     for i in range(k * k):
         assert_true(labels1[i] == labels2[i], "Labels mismatch IVFPQ")
@@ -120,7 +129,7 @@ def test_ivf_flat_io() raises:
     quantizer.init_pointee_move(IndexFlat(d))
     var index = IndexIVFFlat[IndexFlat](quantizer, d, 2)
     index.train(n, data)
-    index.add(n, data)
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d))
     
     var f_w = open("test_ivfflat.bin", "w")
     write_index_ivf_flat(f_w, index)

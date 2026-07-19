@@ -74,7 +74,7 @@ struct ProductQuantizer(Movable):
         sub_x.free()
         self.is_trained = True
 
-    def compute_codes(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], codes: UnsafePointer[UInt8, MutUntrackedOrigin]):
+    def compute_codes(self, n: Int, x: UnsafePointer[Float32, _], codes: UnsafePointer[UInt8, MutUntrackedOrigin]):
         """Encodes vectors into compact byte codes.
         
         Args:
@@ -122,7 +122,7 @@ struct ProductQuantizer(Movable):
                 for j in range(self.dsub):
                     sub_x[j] = c_ptr[j]
 
-    def compute_distance_table(self, query: UnsafePointer[Float32, MutUntrackedOrigin], dis_table: UnsafePointer[Float32, MutUntrackedOrigin], metric_type: MetricType = METRIC_L2):
+    def compute_distance_table(self, query: UnsafePointer[Float32, _], dis_table: UnsafePointer[Float32, MutUntrackedOrigin], metric_type: MetricType = METRIC_L2):
         """Precomputes distances between a query vector and all sub-space centroids.
         
         Args:

@@ -4,7 +4,7 @@ Provides optimized SIMD implementations for computing various vector distances.
 
 from std.math import fma
 @always_inline
-def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrigin], y: UnsafePointer[Float32, MutUntrackedOrigin], d: Int) -> Float32:
+def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, _], y: UnsafePointer[Float32, _], d: Int) -> Float32:
     """
     Computes the squared L2 distance between two vectors of dimension `d` using SIMD instructions.
     
@@ -94,7 +94,7 @@ def l2_distance_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrig
     return res
 
 @always_inline
-def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, MutUntrackedOrigin], y: UnsafePointer[Float32, MutUntrackedOrigin], d: Int) -> Float32:
+def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, _], y: UnsafePointer[Float32, _], d: Int) -> Float32:
     """
     Computes the inner product between two vectors of dimension `d` using SIMD instructions.
     
@@ -179,8 +179,8 @@ from std.sys.info import is_apple_gpu
 
 @always_inline
 def sq8_dot_product_simd(
-    x: UnsafePointer[UInt8, MutUntrackedOrigin],
-    y: UnsafePointer[UInt8, MutUntrackedOrigin],
+    x: UnsafePointer[UInt8, _],
+    y: UnsafePointer[UInt8, _],
     d: Int,
 ) -> UInt32:
     """

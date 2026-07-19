@@ -6,26 +6,24 @@ trait Index:
     """
     Defines the abstract interface for a vector search index.
     """
-    def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def add(mut self, x: Span[Float32, _]):
         """
         Adds multiple vectors to the index.
         
         Args:
-            n: The number of vectors to add.
-            x: A pointer to a flattened array of size `n * d` containing the vectors.
+            x: A safe Span pointing to the flattened vectors to add.
         """
         ...
         
-    def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
         """
-        Searches for the `k` nearest neighbors for `n` query vectors.
+        Searches for the `k` nearest neighbors for the query vectors.
         
         Args:
-            n: The number of query vectors.
-            x: A pointer to a flattened array of size `n * d` containing the queries.
+            x: A safe Span pointing to the flattened query vectors.
             k: The number of nearest neighbors to retrieve per query.
-            distances: An output array of size `n * k` to store the resulting distances.
-            labels: An output array of size `n * k` to store the resulting vector IDs.
+            distances: An output Span to store the resulting distances.
+            labels: An output Span to store the resulting vector IDs.
         """
         ...
 
@@ -33,26 +31,24 @@ trait QuantizerTrait(Movable, ImplicitlyDeletable):
     """
     Defines the interface for a quantizer capable of encoding and decoding vectors.
     """
-    def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def add(mut self, x: Span[Float32, _]):
         """
         Adds multiple vectors to the quantizer.
         
         Args:
-            n: The number of vectors.
-            x: A pointer to a flattened array containing the vectors.
+            x: A safe Span pointing to the flattened vectors to add.
         """
         ...
         
-    def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
         """
         Searches for the `k` nearest neighbors within the quantized vectors.
         
         Args:
-            n: The number of query vectors.
-            x: A pointer to a flattened array containing the queries.
+            x: A safe Span pointing to the flattened query vectors.
             k: The number of nearest neighbors to retrieve.
-            distances: An output array to store the resulting distances.
-            labels: An output array to store the resulting vector IDs.
+            distances: An output Span to store the resulting distances.
+            labels: An output Span to store the resulting vector IDs.
         """
         ...
         

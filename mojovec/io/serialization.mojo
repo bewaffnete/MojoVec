@@ -31,7 +31,7 @@ def check_size_limit(size: Int, max_allowed: Int) raises:
 def write_int(mut f: FileHandle, val: Int) raises:
     var ptr = alloc[Int](1)
     ptr[0] = val
-    var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr.bitcast[UInt8](), length=8)
+    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=8)
     f.write_bytes(span)
     ptr.free()
 
@@ -45,7 +45,7 @@ def read_int(mut f: FileHandle) raises -> Int:
 def write_bool(mut f: FileHandle, val: Bool) raises:
     var ptr = alloc[Bool](1)
     ptr[0] = val
-    var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr.bitcast[UInt8](), length=1)
+    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=1)
     f.write_bytes(span)
     ptr.free()
 
@@ -58,10 +58,10 @@ def read_bool(mut f: FileHandle) raises -> Bool:
 
 def write_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr.bitcast[UInt8](), length=count * 4)
+    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=count * 4)
     f.write_bytes(span)
 
-def read_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_float32(mut f: FileHandle, mut ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = f.read_bytes(count * 4)
     var src = read_data.unsafe_ptr().bitcast[Float32]()
@@ -71,10 +71,10 @@ def read_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, M
 
 def write_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr, length=count)
+    var span = Span[UInt8](ptr=ptr, length=count)
     f.write_bytes(span)
 
-def read_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_uint8(mut f: FileHandle, mut ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = f.read_bytes(count)
     var src = read_data.unsafe_ptr()
@@ -84,10 +84,10 @@ def read_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUn
 
 def write_unsafe_pointer_uint32(mut f: FileHandle, ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr.bitcast[UInt8](), length=count * 4)
+    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=count * 4)
     f.write_bytes(span)
 
-def read_unsafe_pointer_uint32(mut f: FileHandle, ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_uint32(mut f: FileHandle, mut ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = f.read_bytes(count * 4)
     var src = read_data.unsafe_ptr().bitcast[UInt32]()
@@ -97,10 +97,10 @@ def read_unsafe_pointer_uint32(mut f: FileHandle, ptr: UnsafePointer[UInt32, Mut
 
 def write_unsafe_pointer_int(mut f: FileHandle, ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8, MutUntrackedOrigin](ptr=ptr.bitcast[UInt8](), length=count * 8)
+    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=count * 8)
     f.write_bytes(span)
 
-def read_unsafe_pointer_int(mut f: FileHandle, ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_int(mut f: FileHandle, mut ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = f.read_bytes(count * 8)
     var src = read_data.unsafe_ptr().bitcast[Int]()
@@ -230,7 +230,7 @@ def write_hnsw_graph(mut f: FileHandle, graph: HNSWGraph) raises:
     write_unsafe_pointer_int(f, graph.offsets, graph.capacity + 1)
     
     if graph.neighbors_capacity > 0:
-        var span_neighbors = Span[UInt8, MutUntrackedOrigin](ptr=graph.neighbors.bitcast[UInt8](), length=graph.neighbors_capacity * 4)
+        var span_neighbors = Span[UInt8](ptr=graph.neighbors.bitcast[UInt8](), length=graph.neighbors_capacity * 4)
         f.write_bytes(span_neighbors)
     
     write_unsafe_pointer_int(f, graph.cum_nneighbor_per_level, 33)

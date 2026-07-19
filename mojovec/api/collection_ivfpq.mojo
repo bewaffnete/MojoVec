@@ -130,8 +130,8 @@ struct CollectionIVFPQ(Movable):
         for id in ids:
             self._user_ids.append(id)
             
-        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](embeddings.unsafe_ptr())
-        self._ivfpq_ptr[].add(num_vectors, ptr)
+        var span = Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings))
+        self._ivfpq_ptr[].add(span)
 
     def query(self, query_embeddings: List[Float32], n_results: Int = 10) raises -> QueryResults:
         """
@@ -147,8 +147,10 @@ struct CollectionIVFPQ(Movable):
         var distances_ptr = alloc[Float32](num_queries * n_results)
         var labels_ptr = alloc[Int](num_queries * n_results)
 
-        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query_embeddings.unsafe_ptr())
-        self._ivfpq_ptr[].search(num_queries, ptr, n_results, distances_ptr, labels_ptr)
+        var q_span = Span[Float32](ptr=query_embeddings.unsafe_ptr(), length=len(query_embeddings))
+        var d_span = Span[mut=True, Float32, _](ptr=distances_ptr, length=num_queries * n_results)
+        var l_span = Span[mut=True, Int, _](ptr=labels_ptr, length=num_queries * n_results)
+        self._ivfpq_ptr[].search(q_span, n_results, d_span, l_span)
 
         var all_ids = List[List[Int]](capacity=num_queries)
         var all_distances = List[List[Float32]](capacity=num_queries)

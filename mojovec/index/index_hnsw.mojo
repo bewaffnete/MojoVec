@@ -6,6 +6,7 @@ from ..utils.distances import l2_distance_simd, inner_product_simd
 from .hnsw_graph import HNSWGraph
 from .hnsw_visited import VisitedTable, VisitedTablePool
 from std.algorithm import parallelize
+from std.memory.span import Span
 
 
 struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
@@ -73,12 +74,14 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         else:
             return self.hnsw.search_layer[MAX_LINKS=0](comp, ep_id, ep_dist, ef, level, vt, res_dist, res_labels)
 
-    def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
-        """Adds n vectors to the HNSW index from the given pointer x."""
+    def add(mut self, x: Span[Float32, _]):
+        """Adds vectors to the HNSW index from the given Span x."""
+        var n = len(x) // self.d
         if n == 0:
             return
 
-        self.storage.add(n, x)
+        self.storage.add(x)
+        var x_ptr = x.unsafe_ptr()
 
         var old_ntotal = self.ntotal
         var pt_levels = alloc[Int](n)
@@ -132,7 +135,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             var pt_id = old_ntotal + actual_i
             var pt_level = pt_levels[actual_i]
 
-            var q_ptr = x + (actual_i * self.d)
+            var q_ptr = x_ptr + (actual_i * self.d)
             var comp = self.storage.get_distance_computer(q_ptr)
 
             var ep_id = self.hnsw.entry_point
@@ -252,17 +255,21 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
 
     def search(
         self,
-        n: Int,
-        x: UnsafePointer[Float32, MutUntrackedOrigin],
+        x: Span[Float32, _],
         k: Int,
-        distances: UnsafePointer[Float32, MutUntrackedOrigin],
-        labels: UnsafePointer[Int, MutUntrackedOrigin],
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
     ):
-        """Searches the HNSW index for the k nearest neighbors for each of the n query vectors in x."""
+        """Searches the HNSW index for the k nearest neighbors for each query vector in x."""
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
+        var distances_ptr = distances.unsafe_ptr()
+        var labels_ptr = labels.unsafe_ptr()
+        
         if n == 0 or self.ntotal == 0:
             for i in range(n * k):
-                labels[i] = -1
-                distances[i] = 0.0
+                labels_ptr[i] = -1
+                distances_ptr[i] = 0.0
             return
 
         var ef = self.hnsw.efSearch
@@ -280,10 +287,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             var W_labels = w_labels_array.unsafe_ptr()
 
             for j in range(k):
-                distances[i * k + j] = -1.0
-                labels[i * k + j] = -1
+                distances_ptr[i * k + j] = -1.0
+                labels_ptr[i * k + j] = -1
 
-            var q_ptr = x + (i * self.d)
+            var q_ptr = x_ptr + (i * self.d)
             var comp = self.storage.get_distance_computer(q_ptr)
 
             var ep_id = self.hnsw.entry_point
@@ -320,8 +327,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             )
 
             # W is a max-heap of nearest neighbors. We need to pop them and reverse to get sorted order.
-            var res_dist_ptr = distances + (i * k)
-            var res_labels_ptr = labels + (i * k)
+            var res_dist_ptr = distances_ptr + (i * k)
+            var res_labels_ptr = labels_ptr + (i * k)
 
             # Pop to get sorted results (since it's a max heap, popping gives largest first)
             while W_size > k:

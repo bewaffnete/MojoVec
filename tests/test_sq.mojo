@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from std.testing import assert_equal, assert_true, TestSuite
 from mojovec.core.types import METRIC_L2, METRIC_INNER_PRODUCT, QT_8bit, QT_fp16
 from mojovec.index.index_scalar_quantizer import IndexScalarQuantizer
@@ -12,7 +13,7 @@ def test_index_scalar_quantizer_sq8_l2() raises:
 
     # SQ8 requires explicit training (convention: add() is a no-op until trained).
     index.train(3, data)
-    index.add(3, data)
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=3 * 4))
     assert_equal(index.ntotal, 3)
     
     var query = alloc[Float32](4)
@@ -21,7 +22,9 @@ def test_index_scalar_quantizer_sq8_l2() raises:
     var distances = alloc[Float32](2)
     var labels = alloc[Int](2)
     
-    index.search(1, query, 2, distances, labels)
+    var span_dist_1 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1 * 2)
+    var span_labels_1 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 2)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=query, length=1 * 4), 2, span_dist_1, span_labels_1)
     
     assert_true((labels[0] == 1 and labels[1] == 2) or (labels[0] == 2 and labels[1] == 1))
     
@@ -39,7 +42,7 @@ def test_index_scalar_quantizer_fp16_ip() raises:
         data[4 + i] = 2.0
         data[8 + i] = 3.0
         
-    index.add(3, data)
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=3 * 4))
     
     var query = alloc[Float32](4)
     for i in range(4): query[i] = 1.0
@@ -47,7 +50,9 @@ def test_index_scalar_quantizer_fp16_ip() raises:
     var distances = alloc[Float32](2)
     var labels = alloc[Int](2)
     
-    index.search(1, query, 2, distances, labels)
+    var span_dist_2 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1 * 2)
+    var span_labels_2 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 2)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=query, length=1 * 4), 2, span_dist_2, span_labels_2)
     
     var has_12 = False
     var has_8 = False
@@ -72,14 +77,16 @@ def test_index_scalar_quantizer_sq8_negative_bounds() raises:
     data[2] = 0.0; data[3] = 0.0
     data[4] = 100.0; data[5] = 100.0
     index.train(3, data)
-    index.add(3, data)
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=3 * 4))
     
     var query = alloc[Float32](2)
     query[0] = -10.0; query[1] = -10.0
     
     var distances = alloc[Float32](1)
     var labels = alloc[Int](1)
-    index.search(1, query, 1, distances, labels)
+    var span_dist_3 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1 * 1)
+    var span_labels_3 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 1)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=query, length=1 * 4), 1, span_dist_3, span_labels_3)
     
     assert_equal(labels[0], 1)
     assert_true(abs(distances[0] - 200.0) < 25.0, "Distance should be approx 200")

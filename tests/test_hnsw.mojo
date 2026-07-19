@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from mojovec.index.index_hnsw import IndexHNSW
 from mojovec.index.index_flat import IndexFlat
 from mojovec.core.types import METRIC_L2
@@ -21,11 +22,13 @@ def test_hnsw_recall() raises:
     
     # 2. Build and search Flat Index (Ground Truth)
     var flat = IndexFlat(d, METRIC_L2)
-    flat.add(nb, xb)
+    flat.add(Span[Float32, MutUntrackedOrigin](ptr=xb, length=nb * d))
     
     var gt_dist = alloc[Float32](nq * k)
     var gt_labels = alloc[Int](nq * k)
-    flat.search(nq, xq, k, gt_dist, gt_labels)
+    var span_dist_1 = Span[Float32, MutUntrackedOrigin](ptr=gt_dist, length=nq * k)
+    var span_labels_1 = Span[Int, MutUntrackedOrigin](ptr=gt_labels, length=nq * k)
+    flat.search(Span[Float32, MutUntrackedOrigin](ptr=xq, length=nq * d), k, span_dist_1, span_labels_1)
     
     # 3. Build and search HNSW Index
     var storage = IndexFlat(d, METRIC_L2)
@@ -33,11 +36,13 @@ def test_hnsw_recall() raises:
     hnsw.hnsw.efConstruction = 40
     hnsw.hnsw.efSearch = 40
     
-    hnsw.add(nb, xb)
+    hnsw.add(Span[Float32, MutUntrackedOrigin](ptr=xb, length=nb * d))
     
     var hnsw_dist = alloc[Float32](nq * k)
     var hnsw_labels = alloc[Int](nq * k)
-    hnsw.search(nq, xq, k, hnsw_dist, hnsw_labels)
+    var span_dist_2 = Span[Float32, MutUntrackedOrigin](ptr=hnsw_dist, length=nq * k)
+    var span_labels_2 = Span[Int, MutUntrackedOrigin](ptr=hnsw_labels, length=nq * k)
+    hnsw.search(Span[Float32, MutUntrackedOrigin](ptr=xq, length=nq * d), k, span_dist_2, span_labels_2)
     
     # 4. Compare recall
 
@@ -73,14 +78,16 @@ def test_hnsw_edge_cases() raises:
     
     var xb = alloc[Float32](8)
     for i in range(8): xb[i] = Float32(i)
-    hnsw.add(2, xb)
+    hnsw.add(Span[Float32, MutUntrackedOrigin](ptr=xb, length=2 * d))
     
     var xq = alloc[Float32](4)
     for i in range(4): xq[i] = 1.0
         
     var dist = alloc[Float32](5)
     var labels = alloc[Int](5)
-    hnsw.search(1, xq, 5, dist, labels) # k=5 > efSearch=1
+    var span_dist_3 = Span[Float32, MutUntrackedOrigin](ptr=dist, length=1 * 5)
+    var span_labels_3 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 5)
+    hnsw.search(Span[Float32, MutUntrackedOrigin](ptr=xq, length=1 * d), 5, span_dist_3, span_labels_3)
     
     # Check that padded labels are -1
     var num_valid = 0

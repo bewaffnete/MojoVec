@@ -61,7 +61,7 @@ struct Collection(Movable, Writable):
         if num_ids > 0:
             var ids_ptr = self._user_ids.unsafe_ptr()
             var cast_ptr = rebind[UnsafePointer[UInt8, MutUntrackedOrigin]](ids_ptr)
-            f.write_bytes(Span[UInt8, MutUntrackedOrigin](ptr=cast_ptr, length=num_ids * 8))
+            f.write_bytes(Span[UInt8](ptr=cast_ptr, length=num_ids * 8))
             
         write_index_hnsw_sq8(f, self._hnsw)
         f.close()
@@ -107,8 +107,8 @@ struct Collection(Movable, Writable):
         for id in ids:
             self._user_ids.append(id)
             
-        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](embeddings.unsafe_ptr())
-        self._hnsw.add(num_vectors, ptr)
+        var span = Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings))
+        self._hnsw.add(span)
 
     def add_from_pointers(mut self, num_vectors: Int, ids_ptr: UnsafePointer[Int, MutAnyOrigin], embeddings_ptr: UnsafePointer[Float32, MutAnyOrigin]) raises:
         """
@@ -120,8 +120,8 @@ struct Collection(Movable, Writable):
         for i in range(num_vectors):
             self._user_ids.append(ids_ptr[i])
             
-        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](embeddings_ptr)
-        self._hnsw.add(num_vectors, ptr)
+        var span = Span[Float32](ptr=embeddings_ptr, length=num_vectors * self._dimension)
+        self._hnsw.add(span)
 
     def set_ef_search(mut self, ef: Int):
         """
@@ -143,8 +143,11 @@ struct Collection(Movable, Writable):
         var distances_ptr = alloc[Float32](num_queries * n_results)
         var labels_ptr = alloc[Int](num_queries * n_results)
 
-        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query_embeddings.unsafe_ptr())
-        self._hnsw.search(num_queries, ptr, n_results, distances_ptr, labels_ptr)
+        var q_span = Span[Float32](ptr=query_embeddings.unsafe_ptr(), length=len(query_embeddings))
+        var d_span = Span[mut=True, Float32, _](ptr=distances_ptr, length=num_queries * n_results)
+        var l_span = Span[mut=True, Int, _](ptr=labels_ptr, length=num_queries * n_results)
+
+        self._hnsw.search(q_span, n_results, d_span, l_span)
 
         var all_ids = List[List[Int]](capacity=num_queries)
         var all_distances = List[List[Float32]](capacity=num_queries)
@@ -176,10 +179,10 @@ struct Collection(Movable, Writable):
         if num_queries == 0:
             return
 
-        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query_ptr)
-        var dists_ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](out_dists_ptr)
-        var ids_ptr = rebind[UnsafePointer[Int, MutUntrackedOrigin]](out_ids_ptr)
-        self._hnsw.search(num_queries, ptr, n_results, dists_ptr, ids_ptr)
+        var q_span = Span[Float32](ptr=query_ptr, length=num_queries * self._dimension)
+        var d_span = Span[mut=True, Float32, _](ptr=out_dists_ptr, length=num_queries * n_results)
+        var l_span = Span[mut=True, Int, _](ptr=out_ids_ptr, length=num_queries * n_results)
+        self._hnsw.search(q_span, n_results, d_span, l_span)
 
         # Map internal labels to user IDs in place!
         for i in range(num_queries):

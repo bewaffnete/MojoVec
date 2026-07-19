@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from std.memory import alloc
 from std.random import random_float64
 from mojovec.index.index_flat import IndexFlat
@@ -36,7 +37,7 @@ def test_ivf_pq() raises:
     var ids = alloc[Int](n)
     for i in range(n):
         ids[i] = i * 10  # Custom IDs
-    ivf.add_with_ids(n, data, ids)
+    ivf.add_with_ids(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d), ids)
     assert_true(ivf.ntotal == n, "Total should match")
     
     ivf.nprobe = 3
@@ -44,7 +45,9 @@ def test_ivf_pq() raises:
     var dists = alloc[Float32](nq * k)
     var labels = alloc[Int](nq * k)
     
-    ivf.search(nq, queries, k, dists, labels)
+    var span_dist_1 = Span[Float32, MutUntrackedOrigin](ptr=dists, length=nq * k)
+    var span_labels_1 = Span[Int, MutUntrackedOrigin](ptr=labels, length=nq * k)
+    ivf.search(Span[Float32, MutUntrackedOrigin](ptr=queries, length=nq * d), k, span_dist_1, span_labels_1)
     
 
     print("All IndexIVFPQ tests passed!")

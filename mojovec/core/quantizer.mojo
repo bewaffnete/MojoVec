@@ -84,7 +84,7 @@ struct ScalarQuantizer(Movable, Copyable):
         vmax.free()
         self.is_trained = True
 
-    def encode(self, x: UnsafePointer[Float32, MutUntrackedOrigin], codes: UnsafePointer[UInt8, MutUntrackedOrigin]):
+    def encode(self, x: UnsafePointer[Float32, _], codes: UnsafePointer[UInt8, MutUntrackedOrigin]):
         """
         Encodes a single vector into its quantized representation.
         

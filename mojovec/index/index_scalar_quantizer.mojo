@@ -5,6 +5,7 @@ from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from std.sys.intrinsics import prefetch, PrefetchOptions
+from std.memory.span import Span
 
 struct SQDistanceComputer(DistanceComputerTrait):
     """Computes distances between a query vector and scalar quantized database vectors."""
@@ -178,13 +179,14 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         self.sq.train(n, x)
         self.is_trained = self.sq.is_trained
 
-    def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def add(mut self, x: Span[Float32, _]):
         """Quantizes and adds new vectors to the index.
         
         Args:
-            n: The number of vectors to add.
-            x: A pointer to the uncompressed vectors to add.
+            x: A safe Span pointing to the uncompressed vectors to add.
         """
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
         if not self.is_trained:
             return # Should raise error
             
@@ -202,9 +204,9 @@ struct IndexScalarQuantizer(Index, StorageTrait):
             
         var offset_vectors = self.ntotal
         for i in range(n):
-            var x_ptr = x + (i * self.d)
+            var x_curr = x_ptr + (i * self.d)
             var code_ptr = self.codes + ((offset_vectors + i) * self.code_size)
-            self.sq.encode(x_ptr, code_ptr)
+            self.sq.encode(x_curr, code_ptr)
             
         self.ntotal = new_ntotal
         
@@ -220,22 +222,25 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         self.sq.decode(self.codes + (id * self.code_size), self.scratch_x)
         return self.scratch_x
 
-    def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
         """Searches for the k-nearest neighbors of the given query vectors.
         
         Args:
-            n: The number of query vectors.
-            x: A pointer to the uncompressed query vectors.
+            x: A safe Span pointing to the uncompressed query vectors.
             k: The number of nearest neighbors to retrieve.
-            distances: A pointer to the output distances array.
-            labels: A pointer to the output labels array.
+            distances: An output Span for distances.
+            labels: An output Span for labels.
         """
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
+        var distances_ptr = distances.unsafe_ptr()
+        var labels_ptr = labels.unsafe_ptr()
         var scratch_x = alloc[Float32](self.d)
         
         for i in range(n):
-            var query_ptr = x + (i * self.d)
-            var res_dist_ptr = distances + (i * k)
-            var res_labels_ptr = labels + (i * k)
+            var query_ptr = x_ptr + (i * self.d)
+            var res_dist_ptr = distances_ptr + (i * k)
+            var res_labels_ptr = labels_ptr + (i * k)
             var heap_size = 0
             
             for j in range(self.ntotal):
@@ -268,7 +273,7 @@ struct IndexScalarQuantizer(Index, StorageTrait):
                     
         scratch_x.free()
         
-    def get_distance_computer(self, query: UnsafePointer[Float32, MutUntrackedOrigin]) -> Self.ComputerType:
+    def get_distance_computer(self, query: UnsafePointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector.
         
         Args:
@@ -277,4 +282,5 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         Returns:
             An instance of the associated distance computer.
         """
-        return SQDistanceComputer(self.d, self.code_size, self.metric_type, self.sq.copy(), self.codes, query)
+        var q_ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query)
+        return SQDistanceComputer(self.d, self.code_size, self.metric_type, self.sq.copy(), self.codes, q_ptr)

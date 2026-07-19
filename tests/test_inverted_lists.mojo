@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from mojovec.storage.inverted_lists import ArrayInvertedLists
 from std.memory import alloc
 

@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from mojovec.index.index_hnsw import IndexHNSW
 from mojovec.index.index_flat import IndexFlat
 from mojovec.core.types import METRIC_L2
@@ -14,7 +15,7 @@ def main() raises:
     var storage = IndexFlat(d, METRIC_L2)
     var hnsw = IndexHNSW[IndexFlat](storage^, d, METRIC_L2, M=2)
     
-    hnsw.add(nb, xb)
+    hnsw.add(Span[Float32, MutUntrackedOrigin](ptr=xb, length=nb * d))
     
     # Print the graph
     for i in range(nb):

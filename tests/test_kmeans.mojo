@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from mojovec.clustering.kmeans import KMeans
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 from std.memory import alloc

@@ -1,3 +1,4 @@
+from std.memory.span import Span
 """
 Smoke test to verify that the compiled mojovec.mojoc package can be imported
 and used successfully by a downstream client.

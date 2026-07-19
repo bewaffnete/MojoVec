@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from std.memory import alloc
 from std.random import random_float64
 from mojovec.index.index_flat import IndexFlat
@@ -33,7 +34,7 @@ def test_ivf_flat() raises:
     var ids = alloc[Int](n)
     for i in range(n):
         ids[i] = i * 10  # Custom IDs
-    ivf.add_with_ids(n, data, ids)
+    ivf.add_with_ids(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d), ids)
     assert_true(ivf.ntotal == n, "Total should match")
     
     ivf.nprobe = 3
@@ -41,7 +42,9 @@ def test_ivf_flat() raises:
     var dists = alloc[Float32](nq * k)
     var labels = alloc[Int](nq * k)
     
-    ivf.search(nq, queries, k, dists, labels)
+    var span_dist_1 = Span[Float32, MutUntrackedOrigin](ptr=dists, length=nq * k)
+    var span_labels_1 = Span[Int, MutUntrackedOrigin](ptr=labels, length=nq * k)
+    ivf.search(Span[Float32, MutUntrackedOrigin](ptr=queries, length=nq * d), k, span_dist_1, span_labels_1)
     
 
     print("All IndexIVFFlat tests passed!")
@@ -65,11 +68,13 @@ def test_ivf_flat_exact_match() raises:
     var ivf = IndexIVFFlat[IndexFlat](flat_quantizer, d, 1)
     
     ivf.train(1, data)
-    ivf.add(1, data)
+    ivf.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=1 * d))
     
     var distances = alloc[Float32](1)
     var labels = alloc[Int](1)
-    ivf.search(1, data, 1, distances, labels)
+    var span_dist_2 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1 * 1)
+    var span_labels_2 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 1)
+    ivf.search(Span[Float32, MutUntrackedOrigin](ptr=data, length=1 * d), 1, span_dist_2, span_labels_2)
     assert_true(labels[0] == 0, "Should match id 0")
     assert_almost_equal(distances[0], 0.0, msg="Distance should be 0")
     

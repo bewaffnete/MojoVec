@@ -7,7 +7,8 @@ from ..utils.distances import l2_distance_simd, sq8_dot_product_simd, sq8_l2_fro
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from std.sys.intrinsics import prefetch, PrefetchOptions
-from std.memory import alloc
+from std.memory import memcpy
+from std.memory.span import Span
 import std.math as math
 
 struct SQ8DistanceComputer(DistanceComputerTrait):
@@ -190,13 +191,14 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         self.global_max = move.global_max
         self.scale = move.scale
 
-    def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def add(mut self, x: Span[Float32, _]):
         """Adds new vectors to the index, maintaining dynamic quantization bounds.
         
         Args:
-            n: The number of vectors to add.
-            x: A pointer to the uncompressed vectors to add.
+            x: A safe Span pointing to the uncompressed vectors to add.
         """
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
         if self.ntotal + n > self.capacity:
             var new_cap = math.max(self.capacity * 2, self.ntotal + n)
             var new_f32 = alloc[Float32](new_cap * self.d)
@@ -221,7 +223,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         var batch_min = Float32.MAX
         var batch_max = -Float32.MAX
         for i in range(n * self.d):
-            var val = x[i]
+            var val = x_ptr[i]
             if val < batch_min: batch_min = val
             if val > batch_max: batch_max = val
             
@@ -257,7 +259,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         for i in range(n):
             var norm: UInt32 = 0
             for j in range(self.d):
-                var val = x[i * self.d + j]
+                var val = x_ptr[i * self.d + j]
                 self.codes_f32[offset_f32 + i * self.d + j] = val
                 var q = (val - self.global_min) * inv_scale
                 var u8_val = UInt8(math.clamp(math.round(q), 0, 255))
@@ -267,16 +269,20 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
             
         self.ntotal += n
 
-    def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
         """Searches for the k-nearest neighbors of the given query vectors using SQ8 acceleration.
         
         Args:
-            n: The number of query vectors.
-            x: A pointer to the uncompressed query vectors.
+            x: A safe Span pointing to the uncompressed query vectors.
             k: The number of nearest neighbors to retrieve.
-            distances: A pointer to the output distances array.
-            labels: A pointer to the output labels array.
+            distances: An output Span for distances.
+            labels: An output Span for labels.
         """
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
+        var distances_ptr = distances.unsafe_ptr()
+        var labels_ptr = labels.unsafe_ptr()
+        
         var self_d = self.d
         var self_ntotal = self.ntotal
         var self_metric_type = self.metric_type
@@ -288,10 +294,10 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         
         from std.algorithm import parallelize
         
-        def process_query(i: Int) {self_d, self_codes_f32, self_codes_u8, self_norms_u32, self_global_min, self_scale, self_ntotal, self_metric_type, x, k, distances, labels}:
-            var query_ptr = x + (i * self_d)
-            var res_dist_ptr = distances + (i * k)
-            var res_labels_ptr = labels + (i * k)
+        def process_query(i: Int) {self_d, self_codes_f32, self_codes_u8, self_norms_u32, self_global_min, self_scale, self_ntotal, self_metric_type, x_ptr, k, distances_ptr, labels_ptr}:
+            var query_ptr = x_ptr + (i * self_d)
+            var res_dist_ptr = distances_ptr + (i * k)
+            var res_labels_ptr = labels_ptr + (i * k)
             
             var query_u8 = alloc[UInt8](self_d)
             var query_norm: UInt32 = 0
@@ -339,7 +345,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
             
         parallelize(process_query, n, n)
 
-    def get_distance_computer(self, query: UnsafePointer[Float32, MutUntrackedOrigin]) -> Self.ComputerType:
+    def get_distance_computer(self, query: UnsafePointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector.
         
         Args:
@@ -364,7 +370,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
             self.codes_f32,
             self.codes_u8,
             self.norms_u32,
-            query,
+            rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query),
             query_u8,
             query_norm,
             self.scale * self.scale

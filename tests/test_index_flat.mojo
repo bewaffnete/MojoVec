@@ -1,3 +1,4 @@
+from std.memory.span import Span
 from std.testing import assert_equal, assert_true, TestSuite
 from mojovec.index.index_flat import IndexFlat
 from mojovec.core.types import METRIC_L2, METRIC_INNER_PRODUCT
@@ -9,7 +10,7 @@ def test_index_flat_l2() raises:
         data[i] = 0.0
         data[4 + i] = 1.0
         data[8 + i] = 2.0
-    index.add(3, data)
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=3 * 4))
     
     var query = alloc[Float32](4)
     for i in range(4):
@@ -21,7 +22,9 @@ def test_index_flat_l2() raises:
     labels[0] = -1
     labels[1] = -1
     
-    index.search(1, query, 2, distances, labels)
+    var span_dist_1 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1 * 2)
+    var span_labels_1 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 2)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=query, length=1 * 4), 2, span_dist_1, span_labels_1)
     
     assert_true(labels[0] == 1 or labels[1] == 1)
     assert_true(labels[0] == 2 or labels[1] == 2)
@@ -49,7 +52,7 @@ def test_index_flat_inner_product() raises:
         data[i] = 1.0
         data[4 + i] = 2.0
         data[8 + i] = 3.0
-    index.add(3, data)
+    index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=3 * 4))
     
     var query = alloc[Float32](4)
     for i in range(4):
@@ -57,7 +60,9 @@ def test_index_flat_inner_product() raises:
         
     var distances = alloc[Float32](2)
     var labels = alloc[Int](2)
-    index.search(1, query, 2, distances, labels)
+    var span_dist_2 = Span[Float32, MutUntrackedOrigin](ptr=distances, length=1 * 2)
+    var span_labels_2 = Span[Int, MutUntrackedOrigin](ptr=labels, length=1 * 2)
+    index.search(Span[Float32, MutUntrackedOrigin](ptr=query, length=1 * 4), 2, span_dist_2, span_labels_2)
     
     var has_12 = False
     var has_8 = False

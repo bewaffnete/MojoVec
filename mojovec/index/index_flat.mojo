@@ -1,6 +1,7 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from std.memory import memcpy
+from std.memory.span import Span
 
 # Hardware-optimized for Apple Silicon (ARM NEON)
 # While NEON physical width is 4 (128-bit), we unroll by a larger multiple 
@@ -137,15 +138,17 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         self.capacity = move.capacity
         self.codes = move.codes
 
-    def add(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def add(mut self, x: Span[Float32, _]):
         """Adds new vectors to the index.
         
         Args:
-            n: The number of vectors to add.
-            x: A pointer to the flattened vectors to add.
+            x: A safe Span pointing to the flattened vectors to add.
         """
+        var n = len(x) // self.d
         if n == 0:
             return
+            
+        var x_ptr = x.unsafe_ptr()
             
         var new_ntotal = self.ntotal + n
         if new_ntotal > self.capacity:
@@ -158,7 +161,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
             self.capacity = new_capacity
             
         var offset = self.ntotal * self.d
-        memcpy(dest=self.codes + offset, src=x, count=n * self.d)
+        memcpy(dest=self.codes + offset, src=x_ptr, count=n * self.d)
         self.ntotal = new_ntotal
         
     def get_vector(self, id: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:
@@ -172,29 +175,36 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         """
         return self.codes + (id * self.d)
 
-    def search(self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin], k: Int, distances: UnsafePointer[Float32, MutUntrackedOrigin], labels: UnsafePointer[Int, MutUntrackedOrigin]):
+    def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
         """Searches for the k-nearest neighbors of the given query vectors.
         
         Args:
-            n: The number of query vectors.
-            x: A pointer to the flattened query vectors.
+            x: A safe Span pointing to the flattened query vectors.
             k: The number of nearest neighbors to retrieve.
-            distances: A pointer to the output distances array.
-            labels: A pointer to the output labels array.
+            distances: An output Span to store the resulting distances.
+            labels: An output Span to store the resulting labels.
         """
+        var n = len(x) // self.d
+        if n == 0:
+            return
+            
         var self_codes = self.codes
         var self_d = self.d
         var self_ntotal = self.ntotal
         var self_metric_type = self.metric_type
         
+        var x_ptr = x.unsafe_ptr()
+        var dist_ptr = distances.unsafe_ptr()
+        var labels_ptr = labels.unsafe_ptr()
+        
         from std.algorithm import parallelize
         
-        def process_query(i: Int) {self_d, self_codes, self_ntotal, self_metric_type, x, k, distances, labels}:
+        def process_query(i: Int) {self_d, self_codes, self_ntotal, self_metric_type, x_ptr, k, dist_ptr, labels_ptr}:
             var query_offset = i * self_d
-            var query_ptr = x + query_offset
+            var query_ptr = x_ptr + query_offset
             
-            var res_dist_ptr = distances + (i * k)
-            var res_labels_ptr = labels + (i * k)
+            var res_dist_ptr = dist_ptr + (i * k)
+            var res_labels_ptr = labels_ptr + (i * k)
             var heap_size = 0
             
             # Iterate over all database vectors
@@ -230,7 +240,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
                     
         parallelize(process_query, n, n)
                     
-    def get_distance_computer(self, query: UnsafePointer[Float32, MutUntrackedOrigin]) -> Self.ComputerType:
+    def get_distance_computer(self, query: UnsafePointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector.
         
         Args:
@@ -239,4 +249,5 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         Returns:
             An instance of the associated distance computer.
         """
-        return FlatDistanceComputer(self.d, self.metric_type, self.codes, query)
+        var q_ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query)
+        return FlatDistanceComputer(self.d, self.metric_type, self.codes, q_ptr)
