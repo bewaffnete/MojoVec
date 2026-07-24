@@ -24,7 +24,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 |---|---|---|---|
 | MojoVec (Pure Mojo) | **~45.9 s** | **~67,700** | 94.67% |
 | FAISS (HNSW, C++ via Python) | ~100.8 s | ~25,400 | 95.83% |
-| ChromaDB (hnswlib, Python) | ~105.6 s | ~1,990 | 99.22% |
+| ChromaDB (hnswlib, Python) | ~99.15 s | ~6,815 | 95.91% |
 
 ### x86_64 (4 Cores VM)
 
