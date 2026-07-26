@@ -23,9 +23,9 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 | Index | Build Time | QPS | Recall@10 |
 |---|---|---|---|
 | MojoVec Flat | ~97.9 s | **45,126** | 95.88% |
-| MojoVec Quantized (SQ8) | **~45.9 s** | **70,161** | 94.66% |
+| MojoVec Quantized (SQ8) | **~59.3 s** | **70,161** | 94.66% |
 | FAISS Flat | ~100.8 s | 32,103 | 95.85% |
-| FAISS Quantized (SQ8) | ~176.3 s | 30,127 | 94.99% |
+| FAISS Quantized (SQ8) | ~104.9 s | 30,127 | 94.99% |
 | Chroma | ~99.15 s | ~6,815 | 95.91% |
 
 ### x86_64 (4 Cores VM)
