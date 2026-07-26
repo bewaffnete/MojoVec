@@ -13,6 +13,7 @@ Run every command from the repository root so `-I .` can resolve the local
 mojo run -I . examples/api_01_hnsw_fast_search.mojo
 mojo run -I . examples/api_02_ivfpq_compression.mojo
 mojo run -I . examples/api_03_serialization.mojo
+mojo run -I . examples/api_04_compaction.mojo
 ```
 
 To compile without executing:
@@ -21,6 +22,7 @@ To compile without executing:
 mojo build -I . examples/api_01_hnsw_fast_search.mojo
 mojo build -I . examples/api_02_ivfpq_compression.mojo
 mojo build -I . examples/api_03_serialization.mojo
+mojo build -I . examples/api_04_compaction.mojo
 ```
 
 ## Which collection should I use?
@@ -61,6 +63,8 @@ The CRUD operations intentionally have different contracts:
 Updates and upserts append a new internal vector and mark the previous version
 deleted. `count()` reports active application IDs. `count_deleted()` reports
 deleted historical internal records, so it can grow after repeated updates.
+Use `stats()` to inspect that storage and `compact()` or
+`compact_if_needed()` to rebuild from only active records.
 
 ## Example 2: IVF-PQ training and compression
 
@@ -100,6 +104,24 @@ The example writes:
 
 `Collection.load(path)` detects Flat versus SQ8 from the file header. Do not
 create a new collection or pass `quantized` when loading.
+
+## Example 4: statistics and compaction
+
+File: [`api_04_compaction.mojo`](api_04_compaction.mojo)
+
+This example creates historical rows through updates and deletion, then shows:
+
+- the fields returned by `Collection.stats()`;
+- threshold-based `compact_if_needed(deleted_ratio=...)`;
+- the before/after `CompactReport`;
+- preservation of HNSW parameters and search results;
+- the no-op behavior when no deleted rows remain.
+
+Compaction does not edit HNSW links in place. It builds a complete replacement
+from active records and swaps it into the collection only after construction
+succeeds. Peak memory therefore includes both indexes plus a bounded ingestion
+batch. Do not mutate or query the same collection concurrently while a
+compaction call is running.
 
 ## Embedding layout
 
@@ -184,6 +206,14 @@ lists contain complete rows.
 Use `add` only for new IDs. Use `upsert` when a batch may contain IDs already
 stored in the collection. A single operation must still not contain the same ID
 twice.
+
+### Growing deleted count
+
+Repeated updates and upserts retain old internal rows until compaction. Inspect
+`collection.stats().deleted_ratio` and call
+`compact_if_needed(deleted_ratio=0.20)` at an application-appropriate
+maintenance point. A lower threshold reclaims storage more eagerly but rebuilds
+the HNSW graph more often.
 
 ### Invalid IVF-PQ shape
 

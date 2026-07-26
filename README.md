@@ -131,6 +131,30 @@ automatically when it is no longer used.
     var loaded = Collection.load("my_database.bin")
 ```
 
+### 5. Inspect and Compact
+
+`update`, `upsert`, and `delete` use soft deletion so searches can continue
+without mutating HNSW links in place. Inspect accumulated historical rows and
+rebuild the graph when they occupy a meaningful fraction of the collection:
+
+```mojo
+    var snapshot = collection.stats()
+    print("active:", snapshot.active_count)
+    print("deleted:", snapshot.deleted_count)
+    print("deleted ratio:", snapshot.deleted_ratio)
+
+    # Rebuild only when at least 20% of stored rows are deleted.
+    var report = collection.compact_if_needed(deleted_ratio=0.20)
+    print("compacted:", report.performed)
+    print("reclaimed rows:", report.reclaimed_records)
+
+    # Use collection.compact() to rebuild immediately when garbage exists.
+```
+
+Compaction builds the replacement independently and installs it only after a
+successful rebuild. Collection name, storage kind, `M`, `ef_construction`, and
+`ef_search` are preserved.
+
 ---
 
 ## Python API
@@ -156,6 +180,11 @@ collection.upsert(ids, embeddings)
 res = collection.query(embeddings[:128], 3)
 print("IDs:", res["ids"])             # [[2, 3, 1]]
 print("Distances:", res["distances"]) # [[0.0, 0.0, 0.0]]
+
+# Inspect soft-deleted historical rows and compact at a 20% threshold.
+print(collection.stats())
+report = collection.compact_if_needed(0.20)
+print(report)
 
 # Save to disk
 collection.save("my_database.bin")

@@ -2,9 +2,10 @@ from std.collections import Dict, List
 from std.io.file import FileHandle
 from std.memory import alloc
 from std.memory.span import Span
+from std.time import perf_counter_ns
 from std.utils import Variant
 
-from mojovec.api.results import QueryResults
+from mojovec.api.results import CollectionStats, CompactReport, QueryResults
 from mojovec.core.types import (
     METRIC_L2,
     STORAGE_FLAT,
@@ -23,6 +24,8 @@ comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
 comptime COLLECTION_MAGIC_V1 = 1129270348
 comptime COLLECTION_MAGIC_V2 = 1129270349
 comptime COLLECTION_FORMAT_VERSION = 2
+comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
+comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
 
 
 def _write_string(mut file: FileHandle, value: String) raises:
@@ -123,6 +126,137 @@ struct Collection(Movable, Writable):
 
     def count_deleted(self) -> Int:
         return len(self._user_ids) - len(self._id_to_internal)
+
+    def stats(self) -> CollectionStats:
+        """Returns active/deleted counts and the current HNSW configuration."""
+        var active_count = self.count()
+        var total_count = len(self._user_ids)
+        var deleted_count = total_count - active_count
+        var deleted_ratio: Float64 = 0.0
+        if total_count > 0:
+            deleted_ratio = Float64(deleted_count) / Float64(total_count)
+
+        var M: Int
+        var ef_construction: Int
+        var ef_search: Int
+        if self._storage_kind == STORAGE_SQ8:
+            M = self._hnsw.unsafe_get[SQ8HNSW]().hnsw.M
+            ef_construction = (
+                self._hnsw.unsafe_get[SQ8HNSW]().hnsw.efConstruction
+            )
+            ef_search = self._hnsw.unsafe_get[SQ8HNSW]().hnsw.efSearch
+        else:
+            M = self._hnsw.unsafe_get[FlatHNSW]().hnsw.M
+            ef_construction = (
+                self._hnsw.unsafe_get[FlatHNSW]().hnsw.efConstruction
+            )
+            ef_search = self._hnsw.unsafe_get[FlatHNSW]().hnsw.efSearch
+
+        return CollectionStats(
+            active_count,
+            deleted_count,
+            total_count,
+            deleted_ratio,
+            self._dimension,
+            self.is_quantized(),
+            M,
+            ef_construction,
+            ef_search,
+        )
+
+    def _get_vector(
+        self, internal_id: Int
+    ) -> UnsafePointer[Float32, MutUntrackedOrigin]:
+        if self._storage_kind == STORAGE_SQ8:
+            return self._hnsw.unsafe_get[SQ8HNSW]().storage.get_vector(
+                internal_id
+            )
+        return self._hnsw.unsafe_get[FlatHNSW]().storage.get_vector(internal_id)
+
+    def compact(mut self) raises -> CompactReport:
+        """
+        Rebuilds the HNSW index from active records and removes old versions.
+
+        The replacement is installed only after the complete new index has
+        been built. If rebuilding raises, the original collection is left
+        unchanged. Live vectors are copied in bounded batches.
+        """
+        var before = self.stats()
+        if before.deleted_count == 0:
+            return CompactReport(False, before.copy(), before^, 0, 0.0)
+
+        var started = perf_counter_ns()
+        var rebuilt = Collection(
+            before.dimension,
+            M=before.M,
+            ef_construction=before.ef_construction,
+            ef_search=before.ef_search,
+            quantized=before.quantized,
+            name=self._name,
+        )
+        var batch_size = max(
+            1,
+            min(
+                COMPACTION_MAX_BATCH_VECTORS,
+                COMPACTION_MAX_BATCH_COMPONENTS // self._dimension,
+            ),
+        )
+        var batch_ids = List[Int](capacity=batch_size)
+        var batch_embeddings = List[Float32](
+            capacity=batch_size * self._dimension
+        )
+
+        for internal_id in range(len(self._user_ids)):
+            if self._is_deleted[internal_id] > 0:
+                continue
+
+            batch_ids.append(self._user_ids[internal_id])
+            var vector = self._get_vector(internal_id)
+            for dim in range(self._dimension):
+                batch_embeddings.append(vector[dim])
+
+            if len(batch_ids) == batch_size:
+                rebuilt.add(batch_ids, batch_embeddings)
+                batch_ids.clear()
+                batch_embeddings.clear()
+
+        if len(batch_ids) > 0:
+            rebuilt.add(batch_ids, batch_embeddings)
+
+        self = rebuilt^
+
+        var after = self.stats()
+        var elapsed_seconds = (
+            Float64(perf_counter_ns() - started) / 1_000_000_000.0
+        )
+        var reclaimed_records = before.total_count - after.total_count
+        return CompactReport(
+            True,
+            before^,
+            after^,
+            reclaimed_records,
+            elapsed_seconds,
+        )
+
+    def compact_if_needed(
+        mut self, deleted_ratio: Float64 = 0.20
+    ) raises -> CompactReport:
+        """
+        Compacts when deleted records occupy at least `deleted_ratio`.
+
+        The threshold is inclusive and must be between 0.0 and 1.0. A
+        collection without deleted records is always a no-op.
+        """
+        if deleted_ratio < 0.0 or deleted_ratio > 1.0:
+            raise Error("deleted_ratio must be between 0.0 and 1.0.")
+
+        var before = self.stats()
+        if (
+            before.deleted_count == 0
+            or before.deleted_ratio < deleted_ratio
+        ):
+            return CompactReport(False, before.copy(), before^, 0, 0.0)
+        return self.compact()
 
     def _validate_shape(
         self, ids: Span[Int, _], embeddings: Span[Float32, _]

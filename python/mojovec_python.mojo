@@ -4,6 +4,31 @@ from std.python.bindings import PythonModuleBuilder
 from std.memory import alloc
 from std.collections import List
 from mojovec.api.collection import Collection
+from mojovec.api.results import CollectionStats, CompactReport
+
+
+def _stats_to_python(stats: CollectionStats) raises -> PythonObject:
+    var result = Python.dict()
+    result["active_count"] = stats.active_count
+    result["deleted_count"] = stats.deleted_count
+    result["total_count"] = stats.total_count
+    result["deleted_ratio"] = stats.deleted_ratio
+    result["dimension"] = stats.dimension
+    result["quantized"] = stats.quantized
+    result["M"] = stats.M
+    result["ef_construction"] = stats.ef_construction
+    result["ef_search"] = stats.ef_search
+    return result
+
+
+def _report_to_python(report: CompactReport) raises -> PythonObject:
+    var result = Python.dict()
+    result["performed"] = report.performed
+    result["before"] = _stats_to_python(report.before.copy())
+    result["after"] = _stats_to_python(report.after.copy())
+    result["reclaimed_records"] = report.reclaimed_records
+    result["elapsed_seconds"] = report.elapsed_seconds
+    return result
 
 
 struct PyCollection(Movable, Writable):
@@ -104,6 +129,29 @@ struct PyCollection(Movable, Writable):
     @staticmethod
     def py_count(self_ptr: UnsafePointer[Self, MutAnyOrigin]) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].count())
+
+    @staticmethod
+    def py_stats(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) raises -> PythonObject:
+        var stats = self_ptr[].ptr[].stats()
+        return _stats_to_python(stats^)
+
+    @staticmethod
+    def py_compact(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) raises -> PythonObject:
+        var report = self_ptr[].ptr[].compact()
+        return _report_to_python(report^)
+
+    @staticmethod
+    def py_compact_if_needed(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_deleted_ratio: PythonObject,
+    ) raises -> PythonObject:
+        var deleted_ratio = Float64(py=py_deleted_ratio)
+        var report = self_ptr[].ptr[].compact_if_needed(deleted_ratio)
+        return _report_to_python(report^)
 
     @staticmethod
     def py_query(
@@ -234,6 +282,11 @@ def PyInit_mojovec() abi("C") -> PythonObject:
             .def_method[PyCollection.py_update]("update")
             .def_method[PyCollection.py_delete]("delete")
             .def_method[PyCollection.py_count]("count")
+            .def_method[PyCollection.py_stats]("stats")
+            .def_method[PyCollection.py_compact]("compact")
+            .def_method[PyCollection.py_compact_if_needed](
+                "compact_if_needed"
+            )
             .def_method[PyCollection.py_query]("query")
             .def_method[PyCollection.py_upsert]("upsert_batch")
             .def_method[PyCollection.py_query]("query_batch")

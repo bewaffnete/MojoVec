@@ -63,3 +63,55 @@ def test_empty_query():
     # Should return empty
     assert len(res["ids"]) == 0
     assert len(res["distances"]) == 0
+
+
+@pytest.mark.parametrize("quantized", [False, True])
+def test_stats_and_compaction(quantized):
+    col = mojovec.Collection(4, 8, 48, 24, quantized)
+    col.upsert_batch(
+        [10, 20, 30],
+        [
+            1.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+        ],
+    )
+    col.upsert_batch([20], [0.0, 0.9, 0.1, 0.0])
+    col.delete([30])
+
+    before = col.stats()
+    assert before == {
+        "active_count": 2,
+        "deleted_count": 2,
+        "total_count": 4,
+        "deleted_ratio": 0.5,
+        "dimension": 4,
+        "quantized": quantized,
+        "M": 8,
+        "ef_construction": 48,
+        "ef_search": 24,
+    }
+
+    no_op = col.compact_if_needed(0.75)
+    assert no_op["performed"] is False
+    assert no_op["reclaimed_records"] == 0
+
+    report = col.compact_if_needed(0.5)
+    assert report["performed"] is True
+    assert report["before"]["total_count"] == 4
+    assert report["after"]["active_count"] == 2
+    assert report["after"]["deleted_count"] == 0
+    assert report["after"]["total_count"] == 2
+    assert report["reclaimed_records"] == 2
+    assert report["elapsed_seconds"] >= 0.0
+
+    result = col.query_batch([0.0, 0.9, 0.1, 0.0], 1)
+    assert result["ids"][0][0] == 20
+
+
+def test_compact_if_needed_rejects_invalid_threshold():
+    col = mojovec.Collection(4)
+    with pytest.raises(Exception):
+        col.compact_if_needed(-0.01)
+    with pytest.raises(Exception):
+        col.compact_if_needed(1.01)
