@@ -103,6 +103,10 @@ def main() raises:
             print("ID:", results.ids[i][j], "Dist:", results.distances[i][j])
 ```
 
+`query()` returns managed `QueryResults`. Application code never allocates
+output buffers, handles pointers, or calls `free`; result memory is released
+automatically when it is no longer used.
+
 ### 4. Disk Persistence
 
 ```mojo

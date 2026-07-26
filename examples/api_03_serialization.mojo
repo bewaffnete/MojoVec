@@ -1,58 +1,187 @@
 """
-MojoVec API Example 3: Serialization API
-----------------------------------------
-This example demonstrates how to persist your high-level Collection to disk 
-and reload it. The `save()` and `load()` methods automatically serialize both 
-the internal index structures (like HNSW graphs) and your custom IDs.
+Persisting and restoring Flat and SQ8 collections with MojoVec.
+
+Collection.save() persists:
+
+- collection name and vector dimension;
+- whether storage is Flat or SQ8;
+- application IDs and soft-delete flags;
+- stored vectors and the complete HNSW graph.
+
+Collection.load() inspects the file and reconstructs the correct storage type,
+so callers do not need to pass quantized=True/False while loading.
+
+The example writes two files under /tmp to avoid polluting the repository.
 """
 
-from mojovec import Client, Collection
+from mojovec import Client, Collection, QueryResults
 from std.collections import List
+
+
+def append_vector(
+    mut values: List[Float32],
+    x0: Float32,
+    x1: Float32,
+    x2: Float32,
+    x3: Float32,
+):
+    values.append(x0)
+    values.append(x1)
+    values.append(x2)
+    values.append(x3)
+
+
+def make_ids() -> List[Int]:
+    var ids = List[Int]()
+    ids.append(10_001)
+    ids.append(10_002)
+    ids.append(10_003)
+    ids.append(10_004)
+    ids.append(10_005)
+    return ids^
+
+
+def make_embeddings() -> List[Float32]:
+    var embeddings = List[Float32]()
+    append_vector(embeddings, 1.0, 0.0, 0.0, 0.0)
+    append_vector(embeddings, 0.0, 1.0, 0.0, 0.0)
+    append_vector(embeddings, 0.0, 0.0, 1.0, 0.0)
+    append_vector(embeddings, 0.0, 0.0, 0.0, 1.0)
+    append_vector(embeddings, 0.8, 0.2, 0.0, 0.0)
+    return embeddings^
+
+
+def make_query() -> List[Float32]:
+    var query = List[Float32]()
+    append_vector(query, 0.9, 0.1, 0.0, 0.0)
+    return query^
+
+
+def print_results(title: String, results: QueryResults):
+    print(title)
+    for rank in range(len(results.ids[0])):
+        print(
+            "  rank",
+            rank + 1,
+            "| id =",
+            results.ids[0][rank],
+            "| squared L2 distance =",
+            results.distances[0][rank],
+        )
+
+
+def round_trip(
+    label: String,
+    mut collection: Collection,
+    path: String,
+    query: List[Float32],
+) raises:
+    """Saves, loads, inspects, and queries one collection."""
+    print("\n============================================================")
+    print(label)
+    print("============================================================")
+    print("Before save:")
+    print("  name:", collection.name())
+    print("  dimension:", collection.dimension())
+    print("  quantized:", collection.is_quantized())
+    print("  active records:", collection.count())
+    print("  deleted/internal historical records:", collection.count_deleted())
+
+    var before = collection.query(query, n_results=3)
+    print_results("Results before save:", before)
+
+    print("Saving to:", path)
+    collection.save(path)
+
+    # load() is a static factory. The file header determines whether MojoVec
+    # reconstructs IndexHNSW[IndexFlat] or IndexHNSW[IndexFlatSQ8].
+    var loaded = Collection.load(path)
+    print("Loaded collection:")
+    print("  name:", loaded.name())
+    print("  dimension:", loaded.dimension())
+    print("  quantized:", loaded.is_quantized())
+    print("  active records:", loaded.count())
+    print("  deleted/internal historical records:", loaded.count_deleted())
+
+    # ef_search remains a runtime tuning control after loading.
+    loaded.set_ef_search(64)
+    var after = loaded.query(query, n_results=3)
+    print_results("Results after load:", after)
+
+    # For deterministic data, returned IDs should match before and after the
+    # round trip. Floating-point distances should be compared with a tolerance,
+    # especially for SQ8 storage.
+
+
+def populate_and_mutate(
+    client: Client,
+    name: String,
+    quantized: Bool,
+    ids: List[Int],
+    embeddings: List[Float32],
+) raises -> Collection:
+    """Builds state that exercises ID and deletion serialization."""
+    var collection = client.create_collection(
+        name,
+        dimension=4,
+        M=16,
+        ef_construction=100,
+        ef_search=32,
+        quantized=quantized,
+    )
+    collection.add(ids, embeddings)
+
+    # update() appends a replacement internally and soft-deletes the previous
+    # version. Only the replacement remains visible under ID 10_003.
+    var update_ids = List[Int]()
+    update_ids.append(10_003)
+    var update_embeddings = List[Float32]()
+    append_vector(update_embeddings, 0.0, 0.1, 0.9, 0.0)
+    collection.update(update_ids, update_embeddings)
+
+    # Explicitly delete another application ID. Both the replacement mapping
+    # and all deletion flags must survive serialization.
+    var delete_ids = List[Int]()
+    delete_ids.append(10_004)
+    collection.delete(delete_ids)
+
+    return collection^
+
 
 def main() raises:
     var client = Client()
-    var d = 128
-    var file_path = "my_highlevel_collection.bin"
+    var ids = make_ids()
+    var embeddings = make_embeddings()
+    var query = make_query()
 
-    # 1. Create, Populate, and Save
-    print("--- 1. Saving Phase ---")
-    var collection = client.create_collection("my_docs", dimension=d)
-    
-    var num_vectors = 1000
-    var ids = List[Int](capacity=num_vectors)
-    var embeddings = List[Float32](capacity=num_vectors * d)
-    
-    for i in range(num_vectors):
-        ids.append(90000 + i) # Custom IDs
-        
-    for i in range(num_vectors * d):
-        embeddings.append(Float32(i % 50) / 50.0)
+    var sq8 = populate_and_mutate(
+        client,
+        "persistent_sq8",
+        True,
+        ids,
+        embeddings,
+    )
+    round_trip(
+        "SQ8 collection round trip",
+        sq8,
+        "/tmp/mojovec_example_sq8.bin",
+        query,
+    )
 
-    print("Adding 1000 vectors...")
-    collection.add(ids, embeddings)
-    
-    print("Saving collection to disk ('" + file_path + "')...")
-    collection.save(file_path)
-    print("Saved successfully!\n")
+    var flat = populate_and_mutate(
+        client,
+        "persistent_flat",
+        False,
+        ids,
+        embeddings,
+    )
+    round_trip(
+        "Flat collection round trip",
+        flat,
+        "/tmp/mojovec_example_flat.bin",
+        query,
+    )
 
-    # 2. Load and Query
-    print("--- 2. Loading Phase ---")
-    print("Loading collection from disk...")
-    
-    # We use the static method to load it from disk
-    var loaded_collection = Collection.load(file_path)
-    print("Loaded successfully!")
-    
-    var num_queries = 2
-    var k = 3
-    var query_embeddings = List[Float32](capacity=num_queries * d)
-    for i in range(num_queries * d):
-        query_embeddings.append(Float32(i % 50) / 50.0)
-
-    print("Querying the loaded collection...")
-    var results = loaded_collection.query(query_embeddings, n_results=k)
-
-    for i in range(num_queries):
-        print("Query", i, "results:")
-        for j in range(k):
-            print("  Rank", j + 1, "-> ID:", results.ids[i][j], "| L2 Distance:", results.distances[i][j])
+    print("\nExample files:")
+    print("  /tmp/mojovec_example_sq8.bin")
+    print("  /tmp/mojovec_example_flat.bin")

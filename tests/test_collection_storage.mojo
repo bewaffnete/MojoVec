@@ -1,6 +1,4 @@
 from std.collections import List
-from std.memory import alloc
-from std.memory.span import Span
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -68,22 +66,8 @@ def check_storage(quantized: Bool, path: String) raises:
     var updated = collection.query(make_query(100), n_results=1)
     assert_equal(updated.ids[0][0], 10)
 
-    var output_ids = alloc[Int](1)
-    var output_distances = alloc[Float32](1)
-    var query = make_query(100)
-    var query_span = Span[Float32](
-        ptr=query.unsafe_ptr(), length=len(query)
-    )
-    var ids_span = Span[mut=True, Int](ptr=output_ids, length=1)
-    var distances_span = Span[mut=True, Float32](
-        ptr=output_distances, length=1
-    )
-    collection.query_into(
-        query_span, 1, ids_span, distances_span
-    )
-    assert_equal(output_ids[0], 10)
-    output_ids.free()
-    output_distances.free()
+    var managed_result = collection.query(make_query(100), n_results=1)
+    assert_equal(managed_result.ids[0][0], 10)
 
     collection.delete([20])
     assert_equal(collection.count(), 2)

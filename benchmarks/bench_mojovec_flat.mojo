@@ -4,10 +4,12 @@ from std.collections import List
 from std.memory.span import Span
 from mojovec import Client
 
+
 def load_bin_data(path: String) raises -> List[UInt8]:
     var f = open(path, "r")
     var data = f.read_bytes()
     return data^
+
 
 def main() raises:
     var n = 1_000_000
@@ -41,7 +43,13 @@ def main() raises:
             queries_list.append(queries_ptr[offset + j])
 
     print("--------------------------------------------------")
-    print("[MojoVec] Flat HNSW Benchmark (M=" + String(M) + ", efConstruction=" + String(efConstruction) + ")")
+    print(
+        "[MojoVec] Flat HNSW Benchmark (M="
+        + String(M)
+        + ", efConstruction="
+        + String(efConstruction)
+        + ")"
+    )
 
     var client = Client()
     var collection = client.create_collection(
@@ -72,24 +80,16 @@ def main() raises:
         var query_span = Span[Float32](
             ptr=queries_list.unsafe_ptr(), length=len(queries_list)
         )
-        var distance_span = Span[mut=True, Float32](
-            ptr=dist_ptr, length=q * k
-        )
-        var label_span = Span[mut=True, Int](
-            ptr=labels_ptr, length=q * k
-        )
+        var distance_span = Span[mut=True, Float32](ptr=dist_ptr, length=q * k)
+        var label_span = Span[mut=True, Int](ptr=labels_ptr, length=q * k)
 
         # warmup
-        collection.query_into(
-            query_span, k, label_span, distance_span
-        )
+        collection._query_into(query_span, k, label_span, distance_span)
 
         var loops = 100
         var t_s_0 = perf_counter_ns()
         for _ in range(loops):
-            collection.query_into(
-                query_span, k, label_span, distance_span
-            )
+            collection._query_into(query_span, k, label_span, distance_span)
         var t_s_1 = perf_counter_ns()
         var search_time = Float64(t_s_1 - t_s_0) / 1e9
 
@@ -108,7 +108,14 @@ def main() raises:
             recall_sum += Float64(hits) / Float64(k)
         var recall = recall_sum / Float64(q)
 
-        print("  efSearch=" + String(ef) + " | QPS: " + String(qps) + " | Recall@10: " + String(recall))
+        print(
+            "  efSearch="
+            + String(ef)
+            + " | QPS: "
+            + String(qps)
+            + " | Recall@10: "
+            + String(recall)
+        )
 
         dist_ptr.free()
         labels_ptr.free()

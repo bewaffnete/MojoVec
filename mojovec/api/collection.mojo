@@ -67,17 +67,13 @@ struct Collection(Movable, Writable):
 
         if quantized:
             var storage = IndexFlatSQ8(dimension, METRIC_L2)
-            var index = SQ8HNSW(
-                storage^, dimension, METRIC_L2, M=M
-            )
+            var index = SQ8HNSW(storage^, dimension, METRIC_L2, M=M)
             index.hnsw.efConstruction = ef_construction
             index.hnsw.efSearch = ef_search
             self._hnsw = HNSWStorage(index^)
         else:
             var storage = IndexFlat(dimension, METRIC_L2)
-            var index = FlatHNSW(
-                storage^, dimension, METRIC_L2, M=M
-            )
+            var index = FlatHNSW(storage^, dimension, METRIC_L2, M=M)
             index.hnsw.efConstruction = ef_construction
             index.hnsw.efSearch = ef_search
             self._hnsw = HNSWStorage(index^)
@@ -179,35 +175,42 @@ struct Collection(Movable, Writable):
         self._add_to_index(embeddings)
 
     def add(mut self, ids: List[Int], embeddings: List[Float32]) raises:
-        """Adds records and rejects IDs that already exist."""
-        self.add_from_spans(
+        """
+        Adds records and rejects IDs that already exist.
+
+        The collection borrows managed Lists for the duration of the call.
+        Callers never allocate or free MojoVec-owned memory manually.
+        """
+        self._add_from_spans(
             Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](
-                ptr=embeddings.unsafe_ptr(), length=len(embeddings)
-            ),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
         )
 
-    def add_from_spans(
+    def _add_from_spans(
         mut self,
         ids: Span[Int, _],
         embeddings: Span[Float32, _],
     ) raises:
+        """Internal zero-copy bridge used by managed frontends."""
         self._append_records(ids, embeddings, replace_existing=False)
 
     def upsert(mut self, ids: List[Int], embeddings: List[Float32]) raises:
-        """Inserts records or replaces active records with matching IDs."""
-        self.upsert_from_spans(
+        """
+        Inserts records or replaces active records with matching IDs.
+
+        Inputs and collection storage use automatic lifetime management.
+        """
+        self._upsert_from_spans(
             Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](
-                ptr=embeddings.unsafe_ptr(), length=len(embeddings)
-            ),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
         )
 
-    def upsert_from_spans(
+    def _upsert_from_spans(
         mut self,
         ids: Span[Int, _],
         embeddings: Span[Float32, _],
     ) raises:
+        """Internal zero-copy bridge used by managed frontends."""
         self._append_records(ids, embeddings, replace_existing=True)
 
     def update(mut self, ids: List[Int], embeddings: List[Float32]) raises:
@@ -221,9 +224,7 @@ struct Collection(Movable, Writable):
         for i in range(len(ids_span)):
             if ids_span[i] not in self._id_to_internal:
                 raise Error("Cannot update an ID that does not exist.")
-        self._append_records(
-            ids_span, embeddings_span, replace_existing=True
-        )
+        self._append_records(ids_span, embeddings_span, replace_existing=True)
 
     def delete(mut self, ids: List[Int]):
         """Soft-deletes active records by ID."""
@@ -257,14 +258,14 @@ struct Collection(Movable, Writable):
                 queries, n_results, distances, labels, deleted
             )
 
-    def query_into(
+    def _query_into(
         mut self,
         query_embeddings: Span[Float32, _],
         n_results: Int,
         mut ids: Span[mut=True, Int, _],
         mut distances: Span[mut=True, Float32, _],
     ) raises:
-        """Queries into caller-owned buffers without exposing raw pointers."""
+        """Internal zero-copy search bridge used by managed frontends."""
         if self._dimension <= 0:
             raise Error("Collection dimension must be positive.")
         if len(query_embeddings) % self._dimension != 0:
@@ -277,20 +278,20 @@ struct Collection(Movable, Writable):
         var num_queries = len(query_embeddings) // self._dimension
         var output_size = num_queries * n_results
         if len(ids) < output_size or len(distances) < output_size:
-            raise Error("Output buffers are smaller than query_count * n_results.")
+            raise Error(
+                "Output buffers are smaller than query_count * n_results."
+            )
         if num_queries == 0:
             return
 
-        var deleted_ptr = rebind[
-            UnsafePointer[UInt8, MutAnyOrigin]
-        ](self._is_deleted.unsafe_ptr())
+        var deleted_ptr = rebind[UnsafePointer[UInt8, MutAnyOrigin]](
+            self._is_deleted.unsafe_ptr()
+        )
         var deleted = Span[UInt8, MutAnyOrigin](
             ptr=deleted_ptr,
             length=len(self._is_deleted),
         )
-        self._search_index(
-            query_embeddings, n_results, distances, ids, deleted
-        )
+        self._search_index(query_embeddings, n_results, distances, ids, deleted)
 
         for i in range(output_size):
             var internal_id = ids[i]
@@ -304,7 +305,12 @@ struct Collection(Movable, Writable):
         query_embeddings: List[Float32],
         n_results: Int = 10,
     ) raises -> QueryResults:
-        """Runs one or more embedding queries and returns IDs and distances."""
+        """
+        Runs embedding queries and returns automatically managed results.
+
+        QueryResults owns its ID and distance Lists. Callers do not allocate
+        output buffers and never need to release result memory manually.
+        """
         if self._dimension <= 0:
             raise Error("Collection dimension must be positive.")
         if len(query_embeddings) % self._dimension != 0:
@@ -316,9 +322,7 @@ struct Collection(Movable, Writable):
 
         var num_queries = len(query_embeddings) // self._dimension
         if num_queries == 0:
-            return QueryResults(
-                List[List[Int]](), List[List[Float32]]()
-            )
+            return QueryResults(List[List[Int]](), List[List[Float32]]())
 
         var ids_ptr = alloc[Int](num_queries * n_results)
         var distances_ptr = alloc[Float32](num_queries * n_results)
@@ -332,7 +336,7 @@ struct Collection(Movable, Writable):
         var distances = Span[mut=True, Float32](
             ptr=distances_ptr, length=num_queries * n_results
         )
-        self.query_into(queries, n_results, ids, distances)
+        self._query_into(queries, n_results, ids, distances)
 
         var all_ids = List[List[Int]](capacity=num_queries)
         var all_distances = List[List[Float32]](capacity=num_queries)
@@ -375,24 +379,19 @@ struct Collection(Movable, Writable):
                 )
             )
             file.write_bytes(
-                Span[UInt8](
-                    ptr=self._is_deleted.unsafe_ptr(), length=num_ids
-                )
+                Span[UInt8](ptr=self._is_deleted.unsafe_ptr(), length=num_ids)
             )
 
         if self._storage_kind == STORAGE_SQ8:
-            write_index_hnsw_sq8(
-                file, self._hnsw.unsafe_get[SQ8HNSW]()
-            )
+            write_index_hnsw_sq8(file, self._hnsw.unsafe_get[SQ8HNSW]())
         else:
-            write_index_hnsw(
-                file, self._hnsw.unsafe_get[FlatHNSW]()
-            )
+            write_index_hnsw(file, self._hnsw.unsafe_get[FlatHNSW]())
         file.close()
 
     @staticmethod
     def load(path: String) raises -> Collection:
-        """Loads both the legacy SQ8 format and the versioned Flat/SQ8 format."""
+        """Loads both the legacy SQ8 format and the versioned Flat/SQ8 format.
+        """
         from mojovec.io.serialization import (
             check_size_limit,
             read_index_hnsw,
@@ -415,10 +414,7 @@ struct Collection(Movable, Writable):
             name = _read_string(file)
             dimension = read_int(file)
             storage_kind = read_int(file)
-            if (
-                storage_kind != STORAGE_FLAT
-                and storage_kind != STORAGE_SQ8
-            ):
+            if storage_kind != STORAGE_FLAT and storage_kind != STORAGE_SQ8:
                 raise Error("Invalid Collection storage kind.")
         else:
             raise Error("Invalid Collection magic.")
