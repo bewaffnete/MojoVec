@@ -17,16 +17,19 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 ## Performance
 
 **Dataset:** SIFT1M (1,000,000 base vectors, 10,000 query vectors, 128 dimensions).
-**Parameters:** `M=32`, `efConstruction=200`, `efSearch=40`, `k=10`. L2 Distance.
+**MojoVec/FAISS parameters:** `M=32`, `efConstruction=200`,
+`efSearch=96`, `k=10`. L2 Distance. SQ8 results use exact reranking of
+20 candidates (`k_factor=2`).
+
 ### Apple Silicon (ARM64)
 
 | Index | Build Time | QPS | Recall@10 |
 |---|---|---|---|
-| MojoVec Flat | ~97.9 s | **45,126** | 95.88% |
-| MojoVec Quantized (SQ8) | **~59.3 s** | **70,161** | 94.66% |
-| FAISS Flat | ~100.8 s | 32,103 | 95.85% |
-| FAISS Quantized (SQ8) | ~104.9 s | 30,127 | 94.99% |
-| Chroma | ~99.15 s | ~6,815 | 95.91% |
+| MojoVec Flat | ~97.9 s | **23,783** | 99.160% |
+| MojoVec Quantized (SQ8) | **~59.3 s** | **36,353** | 99.144% |
+| FAISS Flat | ~100.8 s | 17,330 | 99.201% |
+| FAISS Quantized (SQ8) | ~104.9 s | 14,712 | 99.185% |
+| ChromaDB (hnswlib, Python) | ~105.6 s | ~1,990 | 99.22% |
 
 ### x86_64 (4 Cores VM)
 
@@ -44,8 +47,8 @@ samples; build times come from separate end-to-end runs and are more sensitive
 to thermal state. Recall is the exact intersection against SIFT1M's provided
 ground truth (`sift_groundtruth.ivecs`).
 
-On Apple Silicon, MojoVec Flat delivers **about 1.4x the QPS of FAISS Flat**,
-while MojoVec SQ8 delivers **about 2.3x the QPS of FAISS SQ8**, with no C/C++
+On Apple Silicon, MojoVec Flat delivers **about 1.37x the QPS of FAISS Flat**,
+while MojoVec SQ8 delivers **about 2.47x the QPS of FAISS SQ8**, with no C/C++
 dependency or handwritten assembly.
 
 

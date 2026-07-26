@@ -43,7 +43,7 @@ gt = read_ivecs(
     "benchmarks/data/sift1m/sift_groundtruth.ivecs", max_n=nq
 )
 
-index.hnsw.efSearch = 40
+index.hnsw.efSearch = 96
 print("Searching FAISS...")
 loops = 100
 t0 = time.perf_counter()

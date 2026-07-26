@@ -48,7 +48,9 @@ gt = read_ivecs(
     "benchmarks/data/sift1m/sift_groundtruth.ivecs", max_n=nq
 )
 
-index.hnsw.efSearch = 40
+index.hnsw.efSearch = 96
+index = faiss.IndexRefineFlat(index, faiss.swig_ptr(db))
+index.k_factor = 2.0
 print("Searching FAISS SQ8...")
 loops = 100
 t0 = time.perf_counter()

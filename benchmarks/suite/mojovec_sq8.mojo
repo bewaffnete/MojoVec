@@ -68,7 +68,7 @@ def main() raises:
     print("Build time: " + String(build_time) + " s")
 
     var ef_list = List[Int]()
-    ef_list.append(40)
+    ef_list.append(96)
 
     print("Search:")
     for i in range(len(ef_list)):

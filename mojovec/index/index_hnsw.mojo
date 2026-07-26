@@ -417,50 +417,84 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                 comp, ep_id, ep_dist, ef, 0, vt, W_dist, W_labels, filter_ptr
             )
 
-            # W is a max-heap of nearest neighbors. We need to pop them and reverse to get sorted order.
+            # W is a max-heap of nearest neighbors. Approximate storage keeps
+            # twice as many candidates and reranks them with the original
+            # Float32 vectors. This is equivalent to FAISS IndexRefineFlat
+            # with k_factor=2, but is automatic because SQ8 already owns the
+            # original vectors.
             var res_dist_ptr = distances_ptr + (i * k)
             var res_labels_ptr = labels_ptr + (i * k)
 
-            # Pop to get sorted results (since it's a max heap, popping gives largest first)
-            while W_size > k:
+            var candidate_count = k
+            if not comp.is_exact():
+                candidate_count = min(ef, k * 2)
+
+            while W_size > candidate_count:
                 _ = max_heap_pop(W_dist, W_labels, W_size)
                 W_size -= 1
 
-            var result_count = W_size
-            for j in range(result_count):
-                var popped = max_heap_pop(W_dist, W_labels, W_size)
-                W_size -= 1
-                var idx = result_count - 1 - j
-                res_dist_ptr[idx] = popped.dist
-                res_labels_ptr[idx] = Int(popped.label)
-
-            for j in range(result_count, k):
-                res_dist_ptr[j] = 0.0
-                res_labels_ptr[j] = -1
-
             if not comp.is_exact():
+                # Keep the exact top-k in the caller's result buffers as a
+                # max-heap, then pop it backwards to produce ascending order.
+                var result_count = 0
+                for j in range(W_size):
+                    var label = Int(W_labels[j])
+                    var db_f32 = self.storage.get_vector(label)
+                    var exact_dist: Float32
+                    if self.metric_type == METRIC_L2:
+                        exact_dist = l2_distance_simd[64](
+                            q_ptr, db_f32, self.d
+                        )
+                    else:
+                        exact_dist = -inner_product_simd[64](
+                            q_ptr, db_f32, self.d
+                        )
+
+                    if result_count < k:
+                        max_heap_push(
+                            res_dist_ptr,
+                            res_labels_ptr,
+                            result_count,
+                            exact_dist,
+                            label,
+                        )
+                        result_count += 1
+                    elif exact_dist < res_dist_ptr[0]:
+                        max_heap_replace_top(
+                            res_dist_ptr,
+                            res_labels_ptr,
+                            k,
+                            exact_dist,
+                            label,
+                        )
+
+                var heap_size = result_count
                 for j in range(result_count):
-                    var l = res_labels_ptr[j]
-                    if l >= 0:
-                        var db_f32 = self.storage.get_vector(l)
-                        var exact_dist: Float32
-                        if self.metric_type == METRIC_L2:
-                            exact_dist = l2_distance_simd[64](q_ptr, db_f32, self.d)
-                        else:
-                            exact_dist = -inner_product_simd[64](q_ptr, db_f32, self.d)
-                        res_dist_ptr[j] = exact_dist
-                        
-                # Insertion sort to re-sort the top-K array
-                for j in range(1, result_count):
-                    var key_dist = res_dist_ptr[j]
-                    var key_label = res_labels_ptr[j]
-                    var m = j - 1
-                    while m >= 0 and res_dist_ptr[m] > key_dist:
-                        res_dist_ptr[m + 1] = res_dist_ptr[m]
-                        res_labels_ptr[m + 1] = res_labels_ptr[m]
-                        m -= 1
-                    res_dist_ptr[m + 1] = key_dist
-                    res_labels_ptr[m + 1] = key_label
+                    var popped = max_heap_pop(
+                        res_dist_ptr, res_labels_ptr, heap_size
+                    )
+                    heap_size -= 1
+                    var idx = result_count - 1 - j
+                    res_dist_ptr[idx] = popped.dist
+                    res_labels_ptr[idx] = popped.label
+
+                for j in range(result_count, k):
+                    res_dist_ptr[j] = 0.0
+                    res_labels_ptr[j] = -1
+            else:
+                var result_count = W_size
+                for j in range(result_count):
+                    var popped = max_heap_pop(
+                        W_dist, W_labels, W_size
+                    )
+                    W_size -= 1
+                    var idx = result_count - 1 - j
+                    res_dist_ptr[idx] = popped.dist
+                    res_labels_ptr[idx] = Int(popped.label)
+
+                for j in range(result_count, k):
+                    res_dist_ptr[j] = 0.0
+                    res_labels_ptr[j] = -1
 
             if self.metric_type == METRIC_INNER_PRODUCT:
                 for j in range(k):
