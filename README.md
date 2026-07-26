@@ -22,9 +22,11 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 
 | Index | Build Time | QPS | Recall@10 |
 |---|---|---|---|
-| MojoVec (Pure Mojo) | **~45.9 s** | **~67,700** | 94.67% |
-| FAISS (HNSW, C++ via Python) | ~100.8 s | ~25,400 | 95.83% |
-| ChromaDB (hnswlib, Python) | ~99.15 s | ~6,815 | 95.91% |
+| MojoVec Flat | ~97.9 s | **45,126** | 95.88% |
+| MojoVec Quantized (SQ8) | **~45.9 s** | **70,161** | 94.66% |
+| FAISS Flat | ~100.8 s | 32,103 | 95.85% |
+| FAISS Quantized (SQ8) | ~176.3 s | 30,127 | 94.99% |
+| Chroma | ~99.15 s | ~6,815 | 95.91% |
 
 ### x86_64 (4 Cores VM)
 
@@ -34,9 +36,17 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 | FAISS (HNSW, C++ via Python) | ~693.2 s | ~4,773 | 95.88% |
 | ChromaDB (hnswlib, Python) | ~658.3 s | ~1,610 | 99.20% |
 
-**Methodology:** FAISS uses OpenMP threads; MojoVec uses `std.algorithm.parallelize` across logical cores. Recall computed by exact intersection against SIFT1M's provided ground truth (`sift_groundtruth.ivecs`).
+**Methodology:** FAISS uses 10 OpenMP threads. MojoVec uses the Mojo AsyncRT
+worker pool for construction and small query batches; large Flat/SQ8 HNSW
+batches use native OS threads so that all logical CPU cores participate. Apple
+Silicon QPS and recall are isolated cold search-only measurements over ten
+samples; build times come from separate end-to-end runs and are more sensitive
+to thermal state. Recall is the exact intersection against SIFT1M's provided
+ground truth (`sift_groundtruth.ivecs`).
 
-MojoVec achieves **over 2.5x the QPS of FAISS** and builds the index **twice as fast** on Apple Silicon, remaining 100% pure Mojo without dropping into C/C++ or assembly.
+On Apple Silicon, MojoVec Flat delivers **about 1.4x the QPS of FAISS Flat**,
+while MojoVec SQ8 delivers **about 2.3x the QPS of FAISS SQ8**, with no C/C++
+dependency or handwritten assembly.
 
 
 
@@ -161,8 +171,9 @@ Requires Mojo (via Pixi/Magic).
 # Run all tests
 for f in tests/test_*.mojo; do mojo run -I . "$f"; done
 
-# Run benchmark suite
-mojo run -I . benchmarks/suite/bench_mojovec.mojo
+# Run the SIFT1M HNSW benchmarks
+mojo run -I . benchmarks/suite/mojovec_sq8.mojo
+mojo run -I . benchmarks/suite/mojovec_flat.mojo
 ```
 
 ---

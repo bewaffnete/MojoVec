@@ -5,9 +5,56 @@ from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from ..utils.distances import l2_distance_simd, inner_product_simd
 from .hnsw_graph import HNSWGraph
 from .hnsw_visited import VisitedTable, VisitedTablePool
+from .index_flat import IndexFlat
+from .index_flat_sq8 import IndexFlatSQ8
 from std.algorithm import parallelize
+from std.ffi import external_call
 from std.memory.span import Span
 from std.memory import alloc
+from std.runtime.asyncrt import parallelism_level
+from std.sys.info import num_logical_cores
+
+
+struct HNSWPThreadContext(Movable):
+    """Type-erased arguments passed to a native pthread search worker."""
+
+    var index_address: Int
+    var queries_address: Int
+    var distances_address: Int
+    var labels_address: Int
+    var filter_address: Int
+    var query_count: Int
+    var k: Int
+    var worker_id: Int
+    var worker_count: Int
+    var storage_kind: Int
+    var has_filter: Bool
+
+    def __init__(
+        out self,
+        index_address: Int,
+        queries_address: Int,
+        distances_address: Int,
+        labels_address: Int,
+        filter_address: Int,
+        query_count: Int,
+        k: Int,
+        worker_id: Int,
+        worker_count: Int,
+        storage_kind: Int,
+        has_filter: Bool,
+    ):
+        self.index_address = index_address
+        self.queries_address = queries_address
+        self.distances_address = distances_address
+        self.labels_address = labels_address
+        self.filter_address = filter_address
+        self.query_count = query_count
+        self.k = k
+        self.worker_id = worker_id
+        self.worker_count = worker_count
+        self.storage_kind = storage_kind
+        self.has_filter = has_filter
 
 
 struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
@@ -300,29 +347,31 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         else:
             self._search_impl[False](x, k, distances, labels, filter)
 
-    def _search_impl[HAS_FILTER: Bool](
+    def _search_range[
+        HAS_FILTER: Bool,
+        x_origin: Origin,
+        distances_origin: MutOrigin,
+        labels_origin: MutOrigin,
+        filter_origin: Origin,
+    ](
         self,
-        x: Span[Float32, _],
+        start: Int,
+        stride: Int,
+        n: Int,
         k: Int,
-        mut distances: Span[mut=True, Float32, _],
-        mut labels: Span[mut=True, Int, _],
-        filter: Span[UInt8, _],
+        x_ptr: UnsafePointer[Float32, x_origin],
+        distances_ptr: UnsafePointer[Float32, distances_origin],
+        labels_ptr: UnsafePointer[Int, labels_origin],
+        filter_ptr: UnsafePointer[UInt8, filter_origin],
     ):
-        var n = len(x) // self.d
-        var x_ptr = x.unsafe_ptr()
-        var distances_ptr = distances.unsafe_ptr()
-        var labels_ptr = labels.unsafe_ptr()
-        var filter_ptr = filter.unsafe_ptr()
-
         var ef = self.hnsw.efSearch
         if ef < k:
             ef = k
 
-        @parameter
-        def search_point(i: Int):
-            var vt_id = self.vt_pool.acquire()
-            var vt = self.vt_pool.get(vt_id)
-
+        var vt_id = self.vt_pool.acquire()
+        var vt = self.vt_pool.get(vt_id)
+        var i = start
+        while i < n:
             var w_dist_array = InlineArray[Float32, 2048](uninitialized=True)
             var w_labels_array = InlineArray[Int32, 2048](uninitialized=True)
             var W_dist = w_dist_array.unsafe_ptr()
@@ -394,7 +443,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     var l = res_labels_ptr[j]
                     if l >= 0:
                         var db_f32 = self.storage.get_vector(l)
-                        var exact_dist: Float32 = 0.0
+                        var exact_dist: Float32
                         if self.metric_type == METRIC_L2:
                             exact_dist = l2_distance_simd[64](q_ptr, db_f32, self.d)
                         else:
@@ -418,6 +467,190 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     if res_labels_ptr[j] != -1:
                         res_dist_ptr[j] = -res_dist_ptr[j]
 
-            self.vt_pool.release(vt_id)
+            i += stride
 
-        parallelize[search_point](n)
+        self.vt_pool.release(vt_id)
+
+    def _search_impl[HAS_FILTER: Bool](
+        self,
+        x: Span[Float32, _],
+        k: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+        filter: Span[UInt8, _],
+    ):
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
+        var distances_ptr = distances.unsafe_ptr()
+        var labels_ptr = labels.unsafe_ptr()
+        var filter_ptr = filter.unsafe_ptr()
+        comptime storage_kind = Self.StorageType.HNSW_PTHREAD_STORAGE_KIND
+        var native_workers = min(n, num_logical_cores())
+        var runtime_workers = parallelism_level()
+        if runtime_workers <= 0:
+            runtime_workers = 1
+
+        # AsyncRT exposes only the performance-core pool on Apple Silicon.
+        # For large batches, native pthreads let the OS schedule work across
+        # every logical core. Small batches keep the lower-overhead std path.
+        if (
+            n >= 256
+            and native_workers > runtime_workers
+            and (storage_kind == 0 or storage_kind == 1)
+        ):
+            var threads = alloc[UInt](native_workers)
+            var contexts = alloc[HNSWPThreadContext](native_workers)
+            var self_address = Int(UnsafePointer(to=self))
+
+            for worker_id in range(native_workers):
+                var context = HNSWPThreadContext(
+                    self_address,
+                    Int(x_ptr),
+                    Int(distances_ptr),
+                    Int(labels_ptr),
+                    Int(filter_ptr),
+                    n,
+                    k,
+                    worker_id,
+                    native_workers,
+                    storage_kind,
+                    HAS_FILTER,
+                )
+                (contexts + worker_id).init_pointee_move(context^)
+                threads[worker_id] = 0
+
+            for worker_id in range(1, native_workers):
+                var status = external_call["pthread_create", Int](
+                    threads + worker_id,
+                    Int(0),
+                    mojovec_hnsw_pthread_worker,
+                    Int(contexts + worker_id),
+                )
+                if status != 0:
+                    threads[worker_id] = 0
+
+            self._search_range[HAS_FILTER](
+                0,
+                native_workers,
+                n,
+                k,
+                x_ptr,
+                distances_ptr,
+                labels_ptr,
+                filter_ptr,
+            )
+
+            for worker_id in range(1, native_workers):
+                if threads[worker_id] == 0:
+                    self._search_range[HAS_FILTER](
+                        worker_id,
+                        native_workers,
+                        n,
+                        k,
+                        x_ptr,
+                        distances_ptr,
+                        labels_ptr,
+                        filter_ptr,
+                    )
+                else:
+                    _ = external_call["pthread_join", Int](
+                        threads[worker_id], Int(0)
+                    )
+
+            contexts.free()
+            threads.free()
+            return
+
+        # Give each parallel task exclusive ownership of one visited table for
+        # its whole query chunk. This removes pool scans and atomics from every
+        # query while retaining a compact table count tied to the CPU.
+        var num_workers = min(n, runtime_workers)
+
+        @parameter
+        def search_worker(worker_id: Int):
+            self._search_range[HAS_FILTER](
+                worker_id,
+                num_workers,
+                n,
+                k,
+                x_ptr,
+                distances_ptr,
+                labels_ptr,
+                filter_ptr,
+            )
+
+        parallelize[search_worker](num_workers, num_workers)
+
+
+@export
+def mojovec_hnsw_pthread_worker(context_address: Int) abi("C") -> Int:
+    """Runs one strided HNSW query range on a native CPU thread."""
+    var context = UnsafePointer[
+        HNSWPThreadContext, MutUntrackedOrigin
+    ](unsafe_from_address=context_address)
+    var queries = UnsafePointer[
+        Float32, MutUntrackedOrigin
+    ](unsafe_from_address=context[].queries_address)
+    var distances = UnsafePointer[
+        Float32, MutUntrackedOrigin
+    ](unsafe_from_address=context[].distances_address)
+    var labels = UnsafePointer[
+        Int, MutUntrackedOrigin
+    ](unsafe_from_address=context[].labels_address)
+    var filter = UnsafePointer[
+        UInt8, MutUntrackedOrigin
+    ](unsafe_from_address=context[].filter_address)
+
+    if context[].storage_kind == 0:
+        var index = UnsafePointer[
+            IndexHNSW[IndexFlat], MutUntrackedOrigin
+        ](unsafe_from_address=context[].index_address)
+        if context[].has_filter:
+            index[]._search_range[True](
+                context[].worker_id,
+                context[].worker_count,
+                context[].query_count,
+                context[].k,
+                queries,
+                distances,
+                labels,
+                filter,
+            )
+        else:
+            index[]._search_range[False](
+                context[].worker_id,
+                context[].worker_count,
+                context[].query_count,
+                context[].k,
+                queries,
+                distances,
+                labels,
+                filter,
+            )
+    else:
+        var index = UnsafePointer[
+            IndexHNSW[IndexFlatSQ8], MutUntrackedOrigin
+        ](unsafe_from_address=context[].index_address)
+        if context[].has_filter:
+            index[]._search_range[True](
+                context[].worker_id,
+                context[].worker_count,
+                context[].query_count,
+                context[].k,
+                queries,
+                distances,
+                labels,
+                filter,
+            )
+        else:
+            index[]._search_range[False](
+                context[].worker_id,
+                context[].worker_count,
+                context[].query_count,
+                context[].k,
+                queries,
+                distances,
+                labels,
+                filter,
+            )
+    return 0

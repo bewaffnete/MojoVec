@@ -115,6 +115,7 @@ struct FlatDistanceComputer(DistanceComputerTrait):
 struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
     """An exact search index that stores raw, uncompressed vectors."""
     comptime ComputerType = FlatDistanceComputer
+    comptime HNSW_PTHREAD_STORAGE_KIND = 0
     var d: Int
     var ntotal: Int
     var metric_type: MetricType

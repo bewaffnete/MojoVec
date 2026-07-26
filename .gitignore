@@ -20,13 +20,13 @@ scratch/
 skills/
 faiss/
 
-# Exclude all markdown files except README.md
+# Exclude generated/reference Markdown except maintained entry-point READMEs
 *.md
 !README.md
+!benchmarks/README.md
 *.bin
 .venv/
 __pycache__/
-*.bin
 bench_mojovec
 mojovec_bench
 *.dSYM/
@@ -36,5 +36,6 @@ profile.txt
 dist/
 *.egg-info/
 sift1m/
-benchmarks/scratch_benches/
+benchmarks/scratch/
+benchmarks/cold_bench/
 test_mojoc/

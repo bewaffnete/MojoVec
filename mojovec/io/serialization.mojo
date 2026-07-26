@@ -304,6 +304,7 @@ def read_index_hnsw(mut f: FileHandle) raises -> IndexHNSW[IndexFlat]:
     index.ntotal = ntotal
     index.is_trained = is_trained
     read_hnsw_graph(f, index.hnsw)
+    index.vt_pool.grow(index.hnsw.capacity)
     return index^
 
 def write_index_hnsw_sq8(mut f: FileHandle, index: IndexHNSW[IndexFlatSQ8]) raises:
@@ -337,6 +338,7 @@ def read_index_hnsw_sq8(mut f: FileHandle) raises -> IndexHNSW[IndexFlatSQ8]:
     index.ntotal = ntotal
     index.is_trained = is_trained
     read_hnsw_graph(f, index.hnsw)
+    index.vt_pool.grow(index.hnsw.capacity)
     return index^
 
 # --- ArrayInvertedLists ---

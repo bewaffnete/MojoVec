@@ -287,9 +287,15 @@ struct Collection(Movable, Writable):
         var deleted_ptr = rebind[UnsafePointer[UInt8, MutAnyOrigin]](
             self._is_deleted.unsafe_ptr()
         )
+        # Keep the common append-only path completely filter-free. Passing an
+        # all-zero deletion bitmap still selects the filtered HNSW kernel and
+        # adds a random bitmap load for every candidate.
+        var deleted_length = len(self._is_deleted)
+        if self.count_deleted() == 0:
+            deleted_length = 0
         var deleted = Span[UInt8, MutAnyOrigin](
             ptr=deleted_ptr,
-            length=len(self._is_deleted),
+            length=deleted_length,
         )
         self._search_index(query_embeddings, n_results, distances, ids, deleted)
 

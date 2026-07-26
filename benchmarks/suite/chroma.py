@@ -20,9 +20,11 @@ def read_ivecs(file_path, max_n=None):
     return a[:max_n] if max_n else a
 
 print("Loading SIFT1M...")
-db = read_fvecs("benchmarks/sift1m/sift_base.fvecs", max_n=n)
-queries = read_fvecs("benchmarks/sift1m/sift_query.fvecs", max_n=nq)
-gt = read_ivecs("benchmarks/sift1m/sift_groundtruth.ivecs", max_n=nq)
+db = read_fvecs("benchmarks/data/sift1m/sift_base.fvecs", max_n=n)
+queries = read_fvecs("benchmarks/data/sift1m/sift_query.fvecs", max_n=nq)
+gt = read_ivecs(
+    "benchmarks/data/sift1m/sift_groundtruth.ivecs", max_n=nq
+)
 
 client = chromadb.Client()
 

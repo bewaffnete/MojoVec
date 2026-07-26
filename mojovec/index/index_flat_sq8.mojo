@@ -145,6 +145,7 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
 struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
     """An index that quantizes vectors to 8-bit integers (SQ8) to accelerate search and reduce memory footprint."""
     comptime ComputerType = SQ8DistanceComputer
+    comptime HNSW_PTHREAD_STORAGE_KIND = 1
     var d: Int
     var ntotal: Int
     var metric_type: MetricType

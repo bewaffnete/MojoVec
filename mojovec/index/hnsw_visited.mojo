@@ -1,13 +1,18 @@
+from std.atomic import Atomic
+from std.sys.info import num_logical_cores
+from std.sys.intrinsics import prefetch, PrefetchOptions
+
+
 struct VisitedTable(Movable):
     """A table to track visited nodes during HNSW graph traversal."""
-    var marks: UnsafePointer[UInt16, MutUntrackedOrigin]
-    var current_mark: UInt16
+    var marks: UnsafePointer[UInt8, MutUntrackedOrigin]
+    var current_mark: UInt8
     var capacity: Int
     
     def __init__(out self, capacity: Int):
         """Initializes a visited table with the specified capacity."""
         self.capacity = capacity
-        self.marks = alloc[UInt16](capacity)
+        self.marks = alloc[UInt8](capacity)
         for i in range(capacity):
             self.marks[i] = 0
         self.current_mark = 1
@@ -25,17 +30,20 @@ struct VisitedTable(Movable):
         
     def advance(mut self):
         """Advances the current mark, clearing the table if the mark overflows."""
-        self.current_mark += 1
-        if self.current_mark == 0:
+        # Reserve zero for freshly allocated/cleared entries and avoid relying
+        # on integer overflow semantics in checked builds.
+        if self.current_mark == 254:
             for i in range(self.capacity):
                 self.marks[i] = 0
             self.current_mark = 1
+        else:
+            self.current_mark += 1
             
     def grow(mut self, new_capacity: Int):
         """Grows the visited table to the specified capacity."""
         if new_capacity <= self.capacity:
             return
-        var new_marks = alloc[UInt16](new_capacity)
+        var new_marks = alloc[UInt8](new_capacity)
         for i in range(self.capacity):
             new_marks[i] = self.marks[i]
         for i in range(self.capacity, new_capacity):
@@ -60,9 +68,6 @@ struct VisitedTable(Movable):
         comptime opts = PrefetchOptions().for_read().low_locality().to_data_cache()
         prefetch[opts](self.marks + node)
 
-from std.atomic import Atomic
-from std.sys.intrinsics import prefetch, PrefetchOptions
-
 struct VisitedTablePool(Movable):
     """A thread-safe pool of visited tables for concurrent HNSW search operations."""
     var capacity: Int
@@ -70,13 +75,17 @@ struct VisitedTablePool(Movable):
     var tables: UnsafePointer[VisitedTable, MutUntrackedOrigin]
     var locks: UnsafePointer[UInt32, MutUntrackedOrigin]
     
-    def __init__(out self, capacity: Int, num_tables: Int = 128):
-        """Initializes the pool with the specified number of tables and capacity per table."""
+    def __init__(out self, capacity: Int, num_tables: Int = 0):
+        """Initializes one visited table per logical CPU worker by default."""
         self.capacity = capacity
         self.num_tables = num_tables
-        self.tables = alloc[VisitedTable](num_tables)
-        self.locks = alloc[UInt32](num_tables)
-        for i in range(num_tables):
+        if self.num_tables <= 0:
+            self.num_tables = num_logical_cores()
+        if self.num_tables <= 0:
+            self.num_tables = 1
+        self.tables = alloc[VisitedTable](self.num_tables)
+        self.locks = alloc[UInt32](self.num_tables)
+        for i in range(self.num_tables):
             var t = VisitedTable(capacity)
             (self.tables + i).init_pointee_move(t^)
             self.locks[i] = 0
@@ -106,7 +115,6 @@ struct VisitedTablePool(Movable):
                 var expected: UInt32 = 0
                 if Atomic.load(ptr) == 0:
                     if Atomic.compare_exchange(ptr, expected, 1):
-                        self.tables[i].advance()
                         return i
                     
     def release(self, id: Int):

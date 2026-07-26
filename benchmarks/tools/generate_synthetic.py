@@ -36,9 +36,11 @@ def main():
     
     print("Saving to files...")
     # Save raw bytes
-    db.tofile("benchmarks/suite/db.bin")
-    queries.tofile("benchmarks/suite/queries.bin")
-    labels.astype(np.int32).tofile("benchmarks/suite/groundtruth.bin")
+    output_dir = "benchmarks/data/generated"
+    os.makedirs(output_dir, exist_ok=True)
+    db.tofile(f"{output_dir}/db.bin")
+    queries.tofile(f"{output_dir}/queries.bin")
+    labels.astype(np.int32).tofile(f"{output_dir}/groundtruth.bin")
     
     print("Done!")
 
