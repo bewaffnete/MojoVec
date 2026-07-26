@@ -14,6 +14,10 @@ struct PyCollection(Movable, Writable):
     def __init__(out self, *, deinit take: Self):
         self.ptr = take.ptr
 
+    def __del__(deinit self):
+        self.ptr.destroy_pointee()
+        self.ptr.free()
+
     def write_to[W: Writer](self, mut writer: W):
         writer.write("Collection()")
 
@@ -23,20 +27,20 @@ struct PyCollection(Movable, Writable):
         var M = 32
         var ef_c = 40
         var ef_s = 16
+        var quantized = True
         if len(args) > 1: M = Int(py=args[1])
         if len(args) > 2: ef_c = Int(py=args[2])
         if len(args) > 3: ef_s = Int(py=args[3])
+        if len(args) > 4: quantized = Bool(py=args[4])
         
         var col_ptr = rebind[UnsafePointer[Collection, MutAnyOrigin]](alloc[Collection](1))
-        col_ptr.init_pointee_move(Collection(d, M, ef_c, ef_s))
+        col_ptr.init_pointee_move(
+            Collection(d, M, ef_c, ef_s, quantized)
+        )
         self = Self(col_ptr)
 
     @staticmethod
-    def py_upsert(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
-        return Self.py_upsert_batch(self_ptr, py_ids, py_embeddings)
-
-    @staticmethod
-    def py_upsert_batch(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
+    def py_add(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
         var mojo_ids = List[Int]()
         for py_id in py_ids:
             mojo_ids.append(Int(py=py_id))
@@ -47,11 +51,41 @@ struct PyCollection(Movable, Writable):
         return Python.none()
 
     @staticmethod
-    def py_query(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_embeddings: PythonObject, n_results: PythonObject) raises -> PythonObject:
-        return Self.py_query_batch(self_ptr, py_embeddings, n_results)
+    def py_upsert(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
+        var mojo_ids = List[Int]()
+        for py_id in py_ids:
+            mojo_ids.append(Int(py=py_id))
+        var mojo_embeddings = List[Float32]()
+        for emb in py_embeddings:
+            mojo_embeddings.append(Float32(py=emb))
+        self_ptr[].ptr[].upsert(mojo_ids, mojo_embeddings)
+        return Python.none()
 
     @staticmethod
-    def py_query_batch(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_embeddings: PythonObject, n_results: PythonObject) raises -> PythonObject:
+    def py_update(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
+        var mojo_ids = List[Int]()
+        for py_id in py_ids:
+            mojo_ids.append(Int(py=py_id))
+        var mojo_embeddings = List[Float32]()
+        for emb in py_embeddings:
+            mojo_embeddings.append(Float32(py=emb))
+        self_ptr[].ptr[].update(mojo_ids, mojo_embeddings)
+        return Python.none()
+
+    @staticmethod
+    def py_delete(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject) raises -> PythonObject:
+        var mojo_ids = List[Int]()
+        for py_id in py_ids:
+            mojo_ids.append(Int(py=py_id))
+        self_ptr[].ptr[].delete(mojo_ids)
+        return Python.none()
+
+    @staticmethod
+    def py_count(self_ptr: UnsafePointer[Self, MutAnyOrigin]) -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].count())
+
+    @staticmethod
+    def py_query(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_embeddings: PythonObject, n_results: PythonObject) raises -> PythonObject:
         var num_res = Int(py=n_results)
         var mojo_embeddings = List[Float32]()
         for emb in py_embeddings:
@@ -76,7 +110,7 @@ struct PyCollection(Movable, Writable):
         return dict
         
     @staticmethod
-    def py_upsert_batch_numpy(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
+    def py_upsert_numpy(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject, py_embeddings: PythonObject) raises -> PythonObject:
         var num_vectors = Int(py=py_ids.__len__())
         var ids_ptr_int = Int(py=py_ids.__array_interface__["data"][0])
         var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
@@ -84,11 +118,18 @@ struct PyCollection(Movable, Writable):
         var ids_ptr = UnsafePointer[Int, MutAnyOrigin](unsafe_from_address=ids_ptr_int)
         var emb_ptr = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address=emb_ptr_int)
         
-        self_ptr[].ptr[].add_from_pointers(num_vectors, ids_ptr, emb_ptr)
+        var ids = Span[Int, MutAnyOrigin](
+            ptr=ids_ptr, length=num_vectors
+        )
+        var embeddings = Span[Float32, MutAnyOrigin](
+            ptr=emb_ptr,
+            length=num_vectors * self_ptr[].ptr[].dimension(),
+        )
+        self_ptr[].ptr[].upsert_from_spans(ids, embeddings)
         return Python.none()
 
     @staticmethod
-    def py_query_batch_numpy(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_embeddings: PythonObject, n_results: PythonObject) raises -> PythonObject:
+    def py_query_numpy(self_ptr: UnsafePointer[Self, MutAnyOrigin], py_embeddings: PythonObject, n_results: PythonObject) raises -> PythonObject:
         var num_queries = Int(py=py_embeddings.shape[0])
         var k = Int(py=n_results)
         var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
@@ -104,13 +145,22 @@ struct PyCollection(Movable, Writable):
         var out_ids_ptr = UnsafePointer[Int, MutAnyOrigin](unsafe_from_address=out_ids_int)
         var out_dists_ptr = UnsafePointer[Float32, MutAnyOrigin](unsafe_from_address=out_dists_int)
         
-        self_ptr[].ptr[].query_from_pointers(num_queries, emb_ptr, k, out_ids_ptr, out_dists_ptr)
-        
-        return Python.tuple(out_ids, out_dists)
-        
-    @staticmethod
-    def py_compact(self_ptr: UnsafePointer[Self, MutAnyOrigin]) raises -> PythonObject:
-        return Python.none()
+        var queries = Span[Float32, MutAnyOrigin](
+            ptr=emb_ptr,
+            length=num_queries * self_ptr[].ptr[].dimension(),
+        )
+        var ids = Span[mut=True, Int, MutAnyOrigin](
+            ptr=out_ids_ptr, length=num_queries * k
+        )
+        var distances = Span[mut=True, Float32, MutAnyOrigin](
+            ptr=out_dists_ptr, length=num_queries * k
+        )
+        self_ptr[].ptr[].query_into(queries, k, ids, distances)
+
+        var result = Python.dict()
+        result["ids"] = out_ids
+        result["distances"] = out_dists
+        return result
 
     @staticmethod
     def py_save(self_ptr: UnsafePointer[Self, MutAnyOrigin], path: PythonObject) raises -> PythonObject:
@@ -134,13 +184,18 @@ def PyInit_mojovec() abi("C") -> PythonObject:
         _ = (
             m.add_type[PyCollection]("Collection")
             .def_py_init[PyCollection.py_init]()
+            .def_method[PyCollection.py_add]("add")
             .def_method[PyCollection.py_upsert]("upsert")
-            .def_method[PyCollection.py_upsert_batch]("upsert_batch")
+            .def_method[PyCollection.py_update]("update")
+            .def_method[PyCollection.py_delete]("delete")
+            .def_method[PyCollection.py_count]("count")
             .def_method[PyCollection.py_query]("query")
-            .def_method[PyCollection.py_query_batch]("query_batch")
-            .def_method[PyCollection.py_upsert_batch_numpy]("upsert_batch_numpy")
-            .def_method[PyCollection.py_query_batch_numpy]("query_batch_numpy")
-            .def_method[PyCollection.py_compact]("compact")
+            .def_method[PyCollection.py_upsert]("upsert_batch")
+            .def_method[PyCollection.py_query]("query_batch")
+            .def_method[PyCollection.py_upsert_numpy]("upsert_numpy")
+            .def_method[PyCollection.py_query_numpy]("query_numpy")
+            .def_method[PyCollection.py_upsert_numpy]("upsert_batch_numpy")
+            .def_method[PyCollection.py_query_numpy]("query_batch_numpy")
             .def_method[PyCollection.py_save]("save")
         )
         m.def_function[PyCollection.py_load]("load")

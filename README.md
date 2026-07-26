@@ -63,14 +63,14 @@ from std.collections import List
 
 def main() raises:
     var client = Client()
-    # Create an HNSW collection (or use create_ivfpq_collection for compression)
-    # You can optionally tune HNSW hyperparameters:
+    # quantized=True selects SQ8; False selects exact Flat storage.
     var collection = client.create_collection(
         "my_docs", 
         dimension=128,
         M=32, 
         ef_construction=40, 
-        ef_search=16
+        ef_search=16,
+        quantized=True,
     )
 ```
 
@@ -83,7 +83,8 @@ def main() raises:
     # ... fill ids and embeddings ...
     
     # No pointers, no alloc/free!
-    collection.add(ids, embeddings)
+    # add rejects existing IDs; upsert inserts or replaces them.
+    collection.upsert(ids, embeddings)
 ```
 
 ### 3. Search
@@ -126,16 +127,16 @@ pip install mojovec
 ```python
 import mojovec
 
-# Initialize collection (dimension=128, M=32, ef_construction=200, ef_search=40)
-collection = mojovec.Collection(128, 32, 200, 40)
+# dimension, M, ef_construction, ef_search, quantized
+collection = mojovec.Collection(128, 32, 200, 40, True)
 
 # Add vectors
 ids = [1, 2, 3]
 embeddings = [0.1] * (128 * 3) # Flattened 1D list
-collection.upsert_batch(ids, embeddings)
+collection.upsert(ids, embeddings)
 
 # Search
-res = collection.query_batch(embeddings[:128], 3)
+res = collection.query(embeddings[:128], 3)
 print("IDs:", res["ids"])             # [[2, 3, 1]]
 print("Distances:", res["distances"]) # [[0.0, 0.0, 0.0]]
 
@@ -143,7 +144,7 @@ print("Distances:", res["distances"]) # [[0.0, 0.0, 0.0]]
 collection.save("my_database.bin")
 
 # Load from disk
-loaded_collection = mojovec.Collection.load("my_database.bin")
+loaded_collection = mojovec.load("my_database.bin")
 ```
 
 ---

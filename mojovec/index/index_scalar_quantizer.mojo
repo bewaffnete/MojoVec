@@ -5,6 +5,8 @@ from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from std.sys.intrinsics import prefetch, PrefetchOptions
+from std.memory import alloc, memcpy
+from std.collections import InlineArray
 from std.memory.span import Span
 
 struct SQDistanceComputer(DistanceComputerTrait):
@@ -62,6 +64,15 @@ struct SQDistanceComputer(DistanceComputerTrait):
         if Int(self.scratch_y) != 0:
             self.scratch_y.free()
         
+    @always_inline
+    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> InlineArray[Float32, 4]:
+        var res = InlineArray[Float32, 4](uninitialized=True)
+        res[0] = self.distance(id0)
+        res[1] = self.distance(id1)
+        res[2] = self.distance(id2)
+        res[3] = self.distance(id3)
+        return res
+
     @always_inline
     def distance(self, id: Int, threshold: Float32 = Float32.MAX) -> Float32:
         """Computes the distance between the query and a specified database vector.

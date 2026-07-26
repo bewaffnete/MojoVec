@@ -70,6 +70,15 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
         self.scale_sq = move.scale_sq
 
     @always_inline
+    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> InlineArray[Float32, 4]:
+        var res = InlineArray[Float32, 4](uninitialized=True)
+        res[0] = self.distance(id0)
+        res[1] = self.distance(id1)
+        res[2] = self.distance(id2)
+        res[3] = self.distance(id3)
+        return res
+
+    @always_inline
     def distance(self, id: Int, threshold: Float32 = Float32.MAX) -> Float32:
         """Computes the distance between the query and a specified database vector.
         
@@ -316,6 +325,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         var self_scale = self.scale
         
         from std.algorithm import parallelize
+        from std.sys.info import num_performance_cores
         
         @parameter
         def process_query(i: Int):

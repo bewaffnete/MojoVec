@@ -3,7 +3,7 @@ from std.memory.span import Span
 from std.memory import alloc
 from ..core.index import Index
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
-from ..index.index_flat import IndexFlat
+from ..index.index_flat import IndexFlat, _alloc_aligned, _free_aligned
 from ..index.index_ivf_flat import IndexIVFFlat
 from ..index.index_ivf_pq import IndexIVFPQ
 from ..index.index_flat_sq8 import IndexFlatSQ8
@@ -138,15 +138,10 @@ def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
         
     var index = IndexFlat(d, metric)
     index.ntotal = ntotal
+    _free_aligned(index.codes)
     index.capacity = capacity
-    
-    # We allocated d * 1024 inside init, so we must reallocate if capacity is larger
-    if Int(index.codes) != 0: index.codes.free()
-    index.capacity = capacity
-    
-    if capacity > 0:
-        index.codes = alloc[Float32](capacity * d)
-        read_unsafe_pointer_float32(f, index.codes, capacity * d)
+    index.codes = _alloc_aligned(capacity * d)
+    read_unsafe_pointer_float32(f, index.codes, capacity * d)
         
     return index^
 

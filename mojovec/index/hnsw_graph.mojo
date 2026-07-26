@@ -229,7 +229,7 @@ struct HNSWGraph(Movable):
         var safe_ef = ef
         if safe_ef > 2048:
             safe_ef = 2048
-        
+
         var c_dist_array = InlineArray[Float32, 2048](uninitialized=True)
         var c_labels_array = InlineArray[Int32, 2048](uninitialized=True)
         var C_dist = c_dist_array.unsafe_ptr()
@@ -275,8 +275,80 @@ struct HNSWGraph(Movable):
             var neighbors_info = self.get_neighbors(Int(c_id), level)
             var neighbors = neighbors_info.ptr
             var max_links = neighbors_info.max_links
-            
+
+            var n_buffered = 0
+            var buffered_ids = InlineArray[Int32, 4](uninitialized=True)
+            var buffered_e = buffered_ids.unsafe_ptr()
+
+            @parameter
+            def process_buffered_ids():
+                if n_buffered == 4:
+                    var d0123 = comp.distance_batch4(Int(buffered_e[0]), Int(buffered_e[1]), Int(buffered_e[2]), Int(buffered_e[3]))
+                    for j in range(4):
+                        var e_id = buffered_e[j]
+                        var e_dist = d0123[j]
+                        var worst_w_dist = W_dist[0]
+                        if W_size < safe_ef or e_dist < worst_w_dist:
+                            if C_size >= C_cap:
+                                pass
+                            else:
+                                min_heap_push(C_dist, C_labels, C_size, e_dist, e_id)
+                                C_size += 1
+
+                            if W_size < safe_ef:
+                                comptime if HAS_FILTER:
+                                    if filter[Int(e_id)] > 0:
+                                        continue
+                                max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
+                                W_size += 1
+                            else:
+                                comptime if HAS_FILTER:
+                                    if filter[Int(e_id)] > 0:
+                                        continue
+                                max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
+                    n_buffered = 0
+
+            @parameter
+            def process_remainder():
+                for j in range(n_buffered):
+                    var e_id = buffered_e[j]
+                    var threshold: Float32 = Float32.MAX
+                    var worst_w_dist = W_dist[0]
+                    if W_size >= safe_ef:
+                        threshold = worst_w_dist
+
+                    var e_dist = comp.distance(Int(e_id), threshold)
+                    if W_size < safe_ef or e_dist < worst_w_dist:
+                        if C_size >= C_cap:
+                            pass
+                        else:
+                            min_heap_push(C_dist, C_labels, C_size, e_dist, e_id)
+                            C_size += 1
+
+                        if W_size < safe_ef:
+                            comptime if HAS_FILTER:
+                                if filter[Int(e_id)] > 0:
+                                    continue
+                            max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
+                            W_size += 1
+                        else:
+                            comptime if HAS_FILTER:
+                                if filter[Int(e_id)] > 0:
+                                    continue
+                            max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
+
             comptime if MAX_LINKS > 0:
+                var look_ahead_idx = 0
+                var prefetched_count = 0
+                while look_ahead_idx < MAX_LINKS and prefetched_count < 4:
+                    var next_e = neighbors[look_ahead_idx]
+                    if next_e < 0:
+                        break
+                    if not vt[].is_visited(Int(next_e)):
+                        comp.prefetch_vector(Int(next_e))
+                        prefetched_count += 1
+                    look_ahead_idx += 1
+
                 for i in range(MAX_LINKS):
                     var e = neighbors[i]
                     if e < 0:
@@ -291,40 +363,34 @@ struct HNSWGraph(Movable):
                     if not vt[].is_visited(Int(e)):
                         vt[].set_visited(Int(e))
 
-                        # Prefetch next unvisited neighbor's vector while computing distance for current one.
-                        for look_ahead in range(i + 1, MAX_LINKS):
-                            var next_e = neighbors[look_ahead]
+                        # Advance look_ahead_idx to prefetch 1 new unvisited neighbor
+                        while look_ahead_idx < MAX_LINKS:
+                            var next_e = neighbors[look_ahead_idx]
+                            look_ahead_idx += 1
                             if next_e < 0:
                                 break
                             if not vt[].is_visited(Int(next_e)):
                                 comp.prefetch_vector(Int(next_e))
                                 break
 
-                        var threshold: Float32 = Float32.MAX
-                        var worst_w_dist = W_dist[0]
-                        if W_size >= safe_ef:
-                            threshold = worst_w_dist
-                            
-                        var e_dist = comp.distance(Int(e), threshold)
-                        if W_size < safe_ef or e_dist < worst_w_dist:
-                            if C_size >= C_cap:
-                                pass
-                            else:
-                                min_heap_push(C_dist, C_labels, C_size, e_dist, e)
-                                C_size += 1
+                        buffered_e[n_buffered] = e
+                        n_buffered += 1
+                        if n_buffered == 4:
+                            process_buffered_ids()
 
-                            if W_size < safe_ef:
-                                comptime if HAS_FILTER:
-                                    if filter[Int(e)] > 0:
-                                        continue
-                                max_heap_push(W_dist, W_labels, W_size, e_dist, e)
-                                W_size += 1
-                            else:
-                                comptime if HAS_FILTER:
-                                    if filter[Int(e)] > 0:
-                                        continue
-                                max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e)
+                process_remainder()
             else:
+                var look_ahead_idx = 0
+                var prefetched_count = 0
+                while look_ahead_idx < max_links and prefetched_count < 4:
+                    var next_e = neighbors[look_ahead_idx]
+                    if next_e < 0:
+                        break
+                    if not vt[].is_visited(Int(next_e)):
+                        comp.prefetch_vector(Int(next_e))
+                        prefetched_count += 1
+                    look_ahead_idx += 1
+
                 for i in range(max_links):
                     var e = neighbors[i]
                     if e < 0:
@@ -339,39 +405,22 @@ struct HNSWGraph(Movable):
                     if not vt[].is_visited(Int(e)):
                         vt[].set_visited(Int(e))
 
-                        # Prefetch next unvisited neighbor's vector while computing distance for current one.
-                        for look_ahead in range(i + 1, max_links):
-                            var next_e = neighbors[look_ahead]
+                        # Advance look_ahead_idx to prefetch 1 new unvisited neighbor
+                        while look_ahead_idx < max_links:
+                            var next_e = neighbors[look_ahead_idx]
+                            look_ahead_idx += 1
                             if next_e < 0:
                                 break
                             if not vt[].is_visited(Int(next_e)):
                                 comp.prefetch_vector(Int(next_e))
                                 break
 
-                        var threshold: Float32 = Float32.MAX
-                        var worst_w_dist = W_dist[0]
-                        if W_size >= safe_ef:
-                            threshold = worst_w_dist
-                            
-                        var e_dist = comp.distance(Int(e), threshold)
-                        if W_size < safe_ef or e_dist < worst_w_dist:
-                            if C_size >= C_cap:
-                                pass
-                            else:
-                                min_heap_push(C_dist, C_labels, C_size, e_dist, e)
-                                C_size += 1
+                        buffered_e[n_buffered] = e
+                        n_buffered += 1
+                        if n_buffered == 4:
+                            process_buffered_ids()
 
-                            if W_size < safe_ef:
-                                comptime if HAS_FILTER:
-                                    if filter[Int(e)] > 0:
-                                        continue
-                                max_heap_push(W_dist, W_labels, W_size, e_dist, e)
-                                W_size += 1
-                            else:
-                                comptime if HAS_FILTER:
-                                    if filter[Int(e)] > 0:
-                                        continue
-                                max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e)
+                process_remainder()
 
         return W_size
 

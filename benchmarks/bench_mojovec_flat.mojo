@@ -1,8 +1,8 @@
 from std.time import perf_counter_ns
-from std.memory import alloc, memcpy
-from mojovec import Client
+from std.memory import alloc
 from std.collections import List
 from std.memory.span import Span
+from mojovec import Client
 
 def load_bin_data(path: String) raises -> List[UInt8]:
     var f = open(path, "r")
@@ -16,17 +16,16 @@ def main() raises:
     var k = 10
     var M = 32
     var efConstruction = 200
-    
+
     print("Loading data...")
     var db_data = load_bin_data("benchmarks/sift1m/sift_base.fvecs")
     var queries_data = load_bin_data("benchmarks/sift1m/sift_query.fvecs")
     var gt_data = load_bin_data("benchmarks/sift1m/sift_groundtruth.ivecs")
-    
+
     var db_ptr = db_data.unsafe_ptr().bitcast[Float32]()
     var queries_ptr = queries_data.unsafe_ptr().bitcast[Float32]()
     var gt = gt_data.unsafe_ptr().bitcast[Int32]()
-    
-    # Convert pointer data to List[Float32] and List[Int] for new API
+
     var db_list = List[Float32](capacity=n * d)
     var ids_list = List[Int](capacity=n)
     for i in range(n):
@@ -34,50 +33,57 @@ def main() raises:
         var offset = i * (d + 1) + 1
         for j in range(d):
             db_list.append(db_ptr[offset + j])
-            
+
     var queries_list = List[Float32](capacity=q * d)
     for i in range(q):
         var offset = i * (d + 1) + 1
         for j in range(d):
             queries_list.append(queries_ptr[offset + j])
-    
+
     print("--------------------------------------------------")
-    print("[MojoVec] Collection API (HNSW, M=" + String(M) + ", efConstruction=" + String(efConstruction) + ")")
-    
+    print("[MojoVec] Flat HNSW Benchmark (M=" + String(M) + ", efConstruction=" + String(efConstruction) + ")")
+
     var client = Client()
-    var collection = client.create_collection("bench_hnsw", dimension=d, M=M, ef_construction=efConstruction)
-    
+    var collection = client.create_collection(
+        "bench_hnsw_flat",
+        dimension=d,
+        M=M,
+        ef_construction=efConstruction,
+        ef_search=40,
+        quantized=False,
+    )
+
     var t0 = perf_counter_ns()
     collection.add(ids_list, db_list)
     var t1 = perf_counter_ns()
     var build_time = Float64(t1 - t0) / 1e9
     print("Build time: " + String(build_time) + " s")
-    
+
     var ef_list = List[Int]()
     ef_list.append(40)
-    
+
     print("Search:")
     for i in range(len(ef_list)):
         var ef = ef_list[i]
         collection.set_ef_search(ef)
-        var num_queries = q
-        var dist_ptr = alloc[Float32](num_queries * 10)
-        var labels_ptr = alloc[Int](num_queries * 10)
+
+        var dist_ptr = alloc[Float32](q * k)
+        var labels_ptr = alloc[Int](q * k)
         var query_span = Span[Float32](
             ptr=queries_list.unsafe_ptr(), length=len(queries_list)
         )
         var distance_span = Span[mut=True, Float32](
-            ptr=dist_ptr, length=num_queries * k
+            ptr=dist_ptr, length=q * k
         )
         var label_span = Span[mut=True, Int](
-            ptr=labels_ptr, length=num_queries * k
+            ptr=labels_ptr, length=q * k
         )
-        
+
         # warmup
         collection.query_into(
             query_span, k, label_span, distance_span
         )
-        
+
         var loops = 100
         var t_s_0 = perf_counter_ns()
         for _ in range(loops):
@@ -86,15 +92,15 @@ def main() raises:
             )
         var t_s_1 = perf_counter_ns()
         var search_time = Float64(t_s_1 - t_s_0) / 1e9
-        
+
         var qps = Float64(q * loops) / search_time
-        
+
         # Calculate recall
         var recall_sum: Float64 = 0.0
         for qi in range(q):
             var hits = 0
             for j in range(k):
-                var res_id = labels_ptr[qi * 10 + j]
+                var res_id = labels_ptr[qi * k + j]
                 for g in range(k):
                     if res_id == Int(gt[qi * 101 + 1 + g]):
                         hits += 1
