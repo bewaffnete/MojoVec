@@ -5,6 +5,14 @@ from std.memory.span import Span
 from std.time import perf_counter_ns
 from std.utils import Variant
 
+from mojovec.api.metadata import (
+    METADATA_BOOL,
+    METADATA_FLOAT,
+    METADATA_INT,
+    METADATA_STRING,
+    Metadata,
+    MetadataValue,
+)
 from mojovec.api.results import CollectionStats, CompactReport, QueryResults
 from mojovec.core.types import (
     METRIC_L2,
@@ -23,7 +31,8 @@ comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
 
 comptime COLLECTION_MAGIC_V1 = 1129270348
 comptime COLLECTION_MAGIC_V2 = 1129270349
-comptime COLLECTION_FORMAT_VERSION = 2
+comptime COLLECTION_FORMAT_VERSION = 3
+comptime COLLECTION_FORMAT_VERSION_WITH_METADATA = 3
 comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
 comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
 
@@ -44,6 +53,68 @@ def _read_string(mut file: FileHandle) raises -> String:
     return String(from_utf8=data)
 
 
+def _write_float64(mut file: FileHandle, value: Float64) raises:
+    var storage = alloc[Float64](1)
+    storage[0] = value
+    file.write_bytes(
+        Span[UInt8](ptr=storage.bitcast[UInt8](), length=8)
+    )
+    storage.free()
+
+
+def _read_float64(mut file: FileHandle) raises -> Float64:
+    var data = file.read_bytes(8)
+    var value = data.unsafe_ptr().bitcast[Float64]()[0]
+    _ = len(data)
+    return value
+
+
+def _write_metadata(mut file: FileHandle, metadata: Metadata) raises:
+    from mojovec.io.serialization import write_bool, write_int
+
+    write_int(file, metadata.count())
+    for index in range(metadata.count()):
+        _write_string(file, metadata._key_at(index))
+        var value = metadata._value_at(index)
+        write_int(file, value.kind())
+        if value.kind() == METADATA_STRING:
+            _write_string(file, value.as_string())
+        elif value.kind() == METADATA_INT:
+            write_int(file, value.as_int())
+        elif value.kind() == METADATA_FLOAT:
+            _write_float64(file, value.as_float())
+        elif value.kind() == METADATA_BOOL:
+            write_bool(file, value.as_bool())
+        else:
+            raise Error("Unsupported metadata value kind.")
+
+
+def _read_metadata(mut file: FileHandle) raises -> Metadata:
+    from mojovec.io.serialization import (
+        check_size_limit,
+        read_bool,
+        read_int,
+    )
+
+    var field_count = read_int(file)
+    check_size_limit(field_count, 65_536)
+    var metadata = Metadata()
+    for _ in range(field_count):
+        var key = _read_string(file)
+        var kind = read_int(file)
+        if kind == METADATA_STRING:
+            metadata.set(key, _read_string(file))
+        elif kind == METADATA_INT:
+            metadata.set(key, read_int(file))
+        elif kind == METADATA_FLOAT:
+            metadata.set(key, _read_float64(file))
+        elif kind == METADATA_BOOL:
+            metadata.set(key, read_bool(file))
+        else:
+            raise Error("Invalid metadata value kind.")
+    return metadata^
+
+
 struct Collection(Movable, Writable):
     """A Chroma-style embedding collection backed by Flat or SQ8 HNSW."""
 
@@ -53,6 +124,8 @@ struct Collection(Movable, Writable):
     var _hnsw: HNSWStorage
     var _user_ids: List[Int]
     var _is_deleted: List[UInt8]
+    var _metadata_by_internal: Dict[Int, Int]
+    var _metadatas: List[Metadata]
     var _id_to_internal: Dict[Int, Int]
 
     def __init__(
@@ -83,6 +156,8 @@ struct Collection(Movable, Writable):
 
         self._user_ids = List[Int]()
         self._is_deleted = List[UInt8]()
+        self._metadata_by_internal = Dict[Int, Int]()
+        self._metadatas = List[Metadata]()
         self._id_to_internal = Dict[Int, Int]()
 
     def __init__(out self, *, deinit take: Self):
@@ -92,6 +167,8 @@ struct Collection(Movable, Writable):
         self._hnsw = take._hnsw^
         self._user_ids = take._user_ids^
         self._is_deleted = take._is_deleted^
+        self._metadata_by_internal = take._metadata_by_internal^
+        self._metadatas = take._metadatas^
         self._id_to_internal = take._id_to_internal^
 
     def write_to[W: Writer](self, mut writer: W):
@@ -126,6 +203,25 @@ struct Collection(Movable, Writable):
 
     def count_deleted(self) -> Int:
         return len(self._user_ids) - len(self._id_to_internal)
+
+    def get_metadata(self, record_id: Int) raises -> Metadata:
+        """Returns an owned copy of the active record's metadata."""
+        if record_id not in self._id_to_internal:
+            raise Error("Cannot get metadata for an ID that does not exist.")
+        var internal_id = self._id_to_internal[record_id]
+        return self._metadata_for_internal(internal_id)
+
+    def _metadata_for_internal(self, internal_id: Int) raises -> Metadata:
+        if internal_id in self._metadata_by_internal:
+            var metadata_index = self._metadata_by_internal[internal_id]
+            return self._metadatas[metadata_index].copy()
+        return Metadata()
+
+    def _store_metadata(mut self, internal_id: Int, metadata: Metadata):
+        if metadata.count() == 0:
+            return
+        self._metadata_by_internal[internal_id] = len(self._metadatas)
+        self._metadatas.append(metadata.copy())
 
     def stats(self) -> CollectionStats:
         """Returns active/deleted counts and the current HNSW configuration."""
@@ -205,23 +301,28 @@ struct Collection(Movable, Writable):
         var batch_embeddings = List[Float32](
             capacity=batch_size * self._dimension
         )
+        var batch_metadatas = List[Metadata](capacity=batch_size)
 
         for internal_id in range(len(self._user_ids)):
             if self._is_deleted[internal_id] > 0:
                 continue
 
             batch_ids.append(self._user_ids[internal_id])
+            batch_metadatas.append(
+                self._metadata_for_internal(internal_id)
+            )
             var vector = self._get_vector(internal_id)
             for dim in range(self._dimension):
                 batch_embeddings.append(vector[dim])
 
             if len(batch_ids) == batch_size:
-                rebuilt.add(batch_ids, batch_embeddings)
+                rebuilt.add(batch_ids, batch_embeddings, batch_metadatas)
                 batch_ids.clear()
                 batch_embeddings.clear()
+                batch_metadatas.clear()
 
         if len(batch_ids) > 0:
-            rebuilt.add(batch_ids, batch_embeddings)
+            rebuilt.add(batch_ids, batch_embeddings, batch_metadatas)
 
         self = rebuilt^
 
@@ -287,23 +388,41 @@ struct Collection(Movable, Writable):
         ids: Span[Int, _],
         embeddings: Span[Float32, _],
         replace_existing: Bool,
+        metadatas: List[Metadata],
+        has_metadatas: Bool,
     ) raises:
         self._validate_shape(ids, embeddings)
         self._validate_unique_batch(ids)
+        if has_metadatas and len(metadatas) != len(ids):
+            raise Error("Metadata length must equal len(ids).")
         if len(ids) == 0:
             return
 
         for i in range(len(ids)):
             var record_id = ids[i]
+            var previous = -1
             if record_id in self._id_to_internal:
                 if not replace_existing:
                     raise Error("ID already exists; use upsert or update.")
-                var previous = self._id_to_internal[record_id]
+                previous = self._id_to_internal[record_id]
                 self._is_deleted[previous] = 1
 
             var internal_id = len(self._user_ids)
             self._user_ids.append(record_id)
             self._is_deleted.append(0)
+            if has_metadatas:
+                self._store_metadata(internal_id, metadatas[i])
+            elif (
+                previous >= 0
+                and previous in self._metadata_by_internal
+            ):
+                var previous_metadata_index = (
+                    self._metadata_by_internal[previous]
+                )
+                var inherited_metadata = (
+                    self._metadatas[previous_metadata_index].copy()
+                )
+                self._store_metadata(internal_id, inherited_metadata)
             self._id_to_internal[record_id] = internal_id
 
         self._add_to_index(embeddings)
@@ -320,13 +439,34 @@ struct Collection(Movable, Writable):
             Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
         )
 
+    def add(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        metadatas: List[Metadata],
+    ) raises:
+        """Adds records together with one metadata object per ID."""
+        self._append_records(
+            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            replace_existing=False,
+            metadatas=metadatas,
+            has_metadatas=True,
+        )
+
     def _add_from_spans(
         mut self,
         ids: Span[Int, _],
         embeddings: Span[Float32, _],
     ) raises:
         """Internal zero-copy bridge used by managed frontends."""
-        self._append_records(ids, embeddings, replace_existing=False)
+        self._append_records(
+            ids,
+            embeddings,
+            replace_existing=False,
+            metadatas=List[Metadata](),
+            has_metadatas=False,
+        )
 
     def upsert(mut self, ids: List[Int], embeddings: List[Float32]) raises:
         """
@@ -339,13 +479,39 @@ struct Collection(Movable, Writable):
             Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
         )
 
+    def upsert(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        metadatas: List[Metadata],
+    ) raises:
+        """Inserts or replaces records and explicitly replaces metadata."""
+        self._append_records(
+            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            replace_existing=True,
+            metadatas=metadatas,
+            has_metadatas=True,
+        )
+
     def _upsert_from_spans(
         mut self,
         ids: Span[Int, _],
         embeddings: Span[Float32, _],
     ) raises:
         """Internal zero-copy bridge used by managed frontends."""
-        self._append_records(ids, embeddings, replace_existing=True)
+        self._append_records(
+            ids,
+            embeddings,
+            replace_existing=True,
+            metadatas=List[Metadata](),
+            has_metadatas=False,
+        )
+
+    def _validate_existing_ids(self, ids: Span[Int, _]) raises:
+        for i in range(len(ids)):
+            if ids[i] not in self._id_to_internal:
+                raise Error("Cannot update an ID that does not exist.")
 
     def update(mut self, ids: List[Int], embeddings: List[Float32]) raises:
         """Updates existing IDs and rejects missing IDs."""
@@ -355,10 +521,36 @@ struct Collection(Movable, Writable):
         )
         self._validate_shape(ids_span, embeddings_span)
         self._validate_unique_batch(ids_span)
-        for i in range(len(ids_span)):
-            if ids_span[i] not in self._id_to_internal:
-                raise Error("Cannot update an ID that does not exist.")
-        self._append_records(ids_span, embeddings_span, replace_existing=True)
+        self._validate_existing_ids(ids_span)
+        self._append_records(
+            ids_span,
+            embeddings_span,
+            replace_existing=True,
+            metadatas=List[Metadata](),
+            has_metadatas=False,
+        )
+
+    def update(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        metadatas: List[Metadata],
+    ) raises:
+        """Updates existing records and explicitly replaces their metadata."""
+        var ids_span = Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+        var embeddings_span = Span[Float32](
+            ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+        )
+        self._validate_shape(ids_span, embeddings_span)
+        self._validate_unique_batch(ids_span)
+        self._validate_existing_ids(ids_span)
+        self._append_records(
+            ids_span,
+            embeddings_span,
+            replace_existing=True,
+            metadatas=metadatas,
+            has_metadatas=True,
+        )
 
     def delete(mut self, ids: List[Int]):
         """Soft-deletes active records by ID."""
@@ -522,6 +714,15 @@ struct Collection(Movable, Writable):
                 Span[UInt8](ptr=self._is_deleted.unsafe_ptr(), length=num_ids)
             )
 
+        # Metadata is sparse: collections that do not use it pay no
+        # per-record object or file-format overhead.
+        write_int(file, len(self._metadatas))
+        for internal_id in range(num_ids):
+            if internal_id in self._metadata_by_internal:
+                write_int(file, internal_id)
+                var metadata_index = self._metadata_by_internal[internal_id]
+                _write_metadata(file, self._metadatas[metadata_index])
+
         if self._storage_kind == STORAGE_SQ8:
             write_index_hnsw_sq8(file, self._hnsw.unsafe_get[SQ8HNSW]())
         else:
@@ -544,12 +745,13 @@ struct Collection(Movable, Writable):
         var name = String("")
         var dimension: Int
         var storage_kind: StorageKind = STORAGE_SQ8
+        var version = 1
 
         if magic == COLLECTION_MAGIC_V1:
             dimension = read_int(file)
         elif magic == COLLECTION_MAGIC_V2:
-            var version = read_int(file)
-            if version != COLLECTION_FORMAT_VERSION:
+            version = read_int(file)
+            if version < 2 or version > COLLECTION_FORMAT_VERSION:
                 raise Error("Unsupported Collection format version.")
             name = _read_string(file)
             dimension = read_int(file)
@@ -582,6 +784,22 @@ struct Collection(Movable, Writable):
                     collection._id_to_internal[record_id] = i
             _ = len(ids_data)
             _ = len(deleted_data)
+
+        if version >= COLLECTION_FORMAT_VERSION_WITH_METADATA:
+            var metadata_count = read_int(file)
+            check_size_limit(metadata_count, num_ids)
+            for _ in range(metadata_count):
+                var internal_id = read_int(file)
+                if (
+                    internal_id < 0
+                    or internal_id >= num_ids
+                    or internal_id in collection._metadata_by_internal
+                ):
+                    raise Error("Invalid metadata internal ID.")
+                var metadata = _read_metadata(file)
+                if metadata.count() == 0:
+                    raise Error("Sparse metadata entries cannot be empty.")
+                collection._store_metadata(internal_id, metadata)
 
         if storage_kind == STORAGE_SQ8:
             var index = read_index_hnsw_sq8(file)

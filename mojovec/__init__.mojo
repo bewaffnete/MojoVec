@@ -11,5 +11,7 @@ from mojovec.api import (
     CollectionIVFPQ,
     CollectionStats,
     CompactReport,
+    Metadata,
+    MetadataValue,
     QueryResults,
 )

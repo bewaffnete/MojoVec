@@ -14,6 +14,7 @@ mojo run -I . examples/api_01_hnsw_fast_search.mojo
 mojo run -I . examples/api_02_ivfpq_compression.mojo
 mojo run -I . examples/api_03_serialization.mojo
 mojo run -I . examples/api_04_compaction.mojo
+mojo run -I . examples/api_05_metadata.mojo
 ```
 
 To compile without executing:
@@ -23,6 +24,7 @@ mojo build -I . examples/api_01_hnsw_fast_search.mojo
 mojo build -I . examples/api_02_ivfpq_compression.mojo
 mojo build -I . examples/api_03_serialization.mojo
 mojo build -I . examples/api_04_compaction.mojo
+mojo build -I . examples/api_05_metadata.mojo
 ```
 
 ## Which collection should I use?
@@ -87,7 +89,7 @@ biased first ingestion batch usually reduces recall.
 File: [`api_03_serialization.mojo`](api_03_serialization.mojo)
 
 This example round-trips both SQ8 and Flat HNSW collections and verifies the
-metadata visible after loading:
+collection state visible after loading:
 
 - collection name;
 - dimension and storage kind;
@@ -122,6 +124,25 @@ from active records and swaps it into the collection only after construction
 succeeds. Peak memory therefore includes both indexes plus a bounded ingestion
 batch. Do not mutate or query the same collection concurrently while a
 compaction call is running.
+
+## Example 5: typed record metadata
+
+File: [`api_05_metadata.mojo`](api_05_metadata.mojo)
+
+This example covers:
+
+- `Metadata` values of type `String`, `Int`, `Float64`, and `Bool`;
+- adding one metadata object per vector;
+- retrieving an owned metadata copy by application ID;
+- metadata inheritance during vector-only `update` and `upsert`;
+- complete replacement when metadata is supplied explicitly;
+- reading metadata for IDs returned by `query`;
+- preservation through save/load and compaction.
+
+Metadata is stored as a snapshot alongside every internal vector version.
+Calling `get_metadata(id)` for a missing or deleted ID raises an error. Metadata
+is not embedded into every `QueryResults` object; fetch it only for returned
+IDs that the application needs.
 
 ## Embedding layout
 

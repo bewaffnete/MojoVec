@@ -71,7 +71,7 @@ Place the `mojovec.mojoc` file in your project directory. You can now import it 
 ### 1. Initialize the Client
 
 ```mojo
-from mojovec import Client
+from mojovec import Client, Metadata
 from std.collections import List
 
 def main() raises:
@@ -96,11 +96,51 @@ def main() raises:
     # ... fill ids and embeddings ...
     
     # No pointers, no alloc/free!
-    # add rejects existing IDs; upsert inserts or replaces them.
+    # add inserts new records and rejects IDs that already exist.
+    collection.add(ids, embeddings)
+```
+
+### 3. Insert or Replace with Upsert
+
+Use `upsert` when the same batch may contain both new and existing IDs. New
+IDs are inserted; existing active records are replaced:
+
+```mojo
     collection.upsert(ids, embeddings)
 ```
 
-### 3. Search
+A single `add` or `upsert` batch must not contain duplicate IDs.
+
+### 4. Add Metadata
+
+Metadata is an owned, typed record supporting `String`, `Int`, `Float64`, and
+`Bool` values:
+
+```mojo
+    var document = Metadata()
+    document.set("title", "Mojo vector search")
+    document.set("year", 2026)
+    document.set("score", Float64(0.97))
+    document.set("published", True)
+
+    var document_embedding = List[Float32]()
+    # ... append exactly collection.dimension() components ...
+
+    var metadatas = List[Metadata]()
+    metadatas.append(document.copy())
+    collection.add([42], document_embedding, metadatas)
+
+    var stored = collection.get_metadata(42)
+    print(stored.get_string("title"))
+    print(stored.keys())
+```
+
+There must be one metadata object per ID. Vector-only `update` and `upsert`
+preserve the current metadata snapshot; overloads receiving
+`List[Metadata]` replace it completely. Returned metadata is an owned copy.
+Metadata is preserved by save/load and compaction.
+
+### 5. Search
 
 ```mojo
     var query_embeddings = List[Float32]()
@@ -120,7 +160,7 @@ def main() raises:
 output buffers, handles pointers, or calls `free`; result memory is released
 automatically when it is no longer used.
 
-### 4. Disk Persistence
+### 6. Disk Persistence
 
 ```mojo
     # Save to disk
@@ -131,7 +171,11 @@ automatically when it is no longer used.
     var loaded = Collection.load("my_database.bin")
 ```
 
-### 5. Inspect and Compact
+The current versioned collection format stores metadata sparsely. Loading
+legacy V1/V2 collection files remains supported; records loaded from those
+formats have empty metadata.
+
+### 7. Inspect and Compact
 
 `update`, `upsert`, and `delete` use soft deletion so searches can continue
 without mutating HNSW links in place. Inspect accumulated historical rows and
@@ -176,6 +220,14 @@ ids = [1, 2, 3]
 embeddings = [0.1] * (128 * 3) # Flattened 1D list
 collection.upsert(ids, embeddings)
 
+# Add records with scalar metadata.
+collection.add_with_metadata(
+    [4],
+    [0.2] * 128,
+    [{"title": "Mojo vector search", "year": 2026, "published": True}],
+)
+print(collection.get_metadata(4))
+
 # Search
 res = collection.query(embeddings[:128], 3)
 print("IDs:", res["ids"])             # [[2, 3, 1]]
@@ -192,6 +244,11 @@ collection.save("my_database.bin")
 # Load from disk
 loaded_collection = mojovec.load("my_database.bin")
 ```
+
+Python metadata accepts dictionaries with string keys and scalar `str`, `int`,
+`float`, or `bool` values. Use `add_with_metadata`,
+`upsert_with_metadata`, or `update_with_metadata` when replacing metadata;
+vector-only operations retain an existing record's metadata.
 
 ---
 

@@ -115,3 +115,73 @@ def test_compact_if_needed_rejects_invalid_threshold():
         col.compact_if_needed(-0.01)
     with pytest.raises(Exception):
         col.compact_if_needed(1.01)
+
+
+@pytest.mark.parametrize("quantized", [False, True])
+def test_metadata_storage_serialization_and_compaction(tmp_path, quantized):
+    col = mojovec.Collection(4, 8, 48, 24, quantized)
+    col.add_with_metadata(
+        [10, 20],
+        [
+            1.0, 2.0, 3.0, 4.0,
+            10.0, 11.0, 12.0, 13.0,
+        ],
+        [
+            {
+                "label": "first",
+                "year": 2026,
+                "score": 0.875,
+                "published": True,
+            },
+            {
+                "label": "second",
+                "score": -12.5,
+                "published": False,
+            },
+        ],
+    )
+
+    assert col.get_metadata(10) == {
+        "label": "first",
+        "year": 2026,
+        "score": 0.875,
+        "published": True,
+    }
+
+    # A vector-only update inherits metadata from the active version.
+    col.upsert_batch([10], [2.0, 3.0, 4.0, 5.0])
+    assert col.get_metadata(10)["label"] == "first"
+
+    # An explicit metadata update replaces the complete metadata object.
+    col.update_with_metadata(
+        [10],
+        [3.0, 4.0, 5.0, 6.0],
+        [{"label": "replacement", "version": 2}],
+    )
+    assert col.get_metadata(10) == {
+        "label": "replacement",
+        "version": 2,
+    }
+
+    col.delete([20])
+    report = col.compact()
+    assert report["performed"] is True
+    assert col.get_metadata(10)["label"] == "replacement"
+
+    path = str(tmp_path / f"metadata_{quantized}.mojovec")
+    col.save(path)
+    loaded = mojovec.load(path)
+    assert loaded.get_metadata(10) == {
+        "label": "replacement",
+        "version": 2,
+    }
+
+
+def test_metadata_rejects_unsupported_python_values():
+    col = mojovec.Collection(4)
+    with pytest.raises(Exception):
+        col.add_with_metadata(
+            [1],
+            [1.0, 2.0, 3.0, 4.0],
+            [{"tags": ["unsupported", "for now"]}],
+        )

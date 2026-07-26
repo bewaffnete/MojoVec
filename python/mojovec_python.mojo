@@ -4,6 +4,13 @@ from std.python.bindings import PythonModuleBuilder
 from std.memory import alloc
 from std.collections import List
 from mojovec.api.collection import Collection
+from mojovec.api.metadata import (
+    METADATA_BOOL,
+    METADATA_FLOAT,
+    METADATA_INT,
+    METADATA_STRING,
+    Metadata,
+)
 from mojovec.api.results import CollectionStats, CompactReport
 
 
@@ -28,6 +35,55 @@ def _report_to_python(report: CompactReport) raises -> PythonObject:
     result["after"] = _stats_to_python(report.after.copy())
     result["reclaimed_records"] = report.reclaimed_records
     result["elapsed_seconds"] = report.elapsed_seconds
+    return result
+
+
+def _metadata_from_python(py_metadata: PythonObject) raises -> Metadata:
+    var builtins = Python.import_module("builtins")
+    if not Bool(py=builtins.isinstance(py_metadata, builtins.dict)):
+        raise Error("Each metadata item must be a Python dict.")
+
+    var metadata = Metadata()
+    for py_key in py_metadata:
+        if not Bool(py=builtins.isinstance(py_key, builtins.str)):
+            raise Error("Metadata keys must be strings.")
+        var key = String(py=py_key)
+        var value = py_metadata[py_key]
+        if Bool(py=builtins.isinstance(value, builtins.bool)):
+            metadata.set(key, Bool(py=value))
+        elif Bool(py=builtins.isinstance(value, builtins.int)):
+            metadata.set(key, Int(py=value))
+        elif Bool(py=builtins.isinstance(value, builtins.float)):
+            metadata.set(key, Float64(py=value))
+        elif Bool(py=builtins.isinstance(value, builtins.str)):
+            metadata.set(key, String(py=value))
+        else:
+            raise Error(
+                "Metadata values must be str, int, float, or bool."
+            )
+    return metadata^
+
+
+def _metadatas_from_python(py_metadatas: PythonObject) raises -> List[Metadata]:
+    var metadatas = List[Metadata]()
+    for py_metadata in py_metadatas:
+        metadatas.append(_metadata_from_python(py_metadata))
+    return metadatas^
+
+
+def _metadata_to_python(metadata: Metadata) raises -> PythonObject:
+    var result = Python.dict()
+    for index in range(metadata.count()):
+        var key = metadata._key_at(index)
+        var value = metadata._value_at(index)
+        if value.kind() == METADATA_STRING:
+            result[key] = value.as_string()
+        elif value.kind() == METADATA_INT:
+            result[key] = value.as_int()
+        elif value.kind() == METADATA_FLOAT:
+            result[key] = value.as_float()
+        elif value.kind() == METADATA_BOOL:
+            result[key] = value.as_bool()
     return result
 
 
@@ -87,6 +143,23 @@ struct PyCollection(Movable, Writable):
         return Python.none()
 
     @staticmethod
+    def py_add_with_metadata(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_ids: PythonObject,
+        py_embeddings: PythonObject,
+        py_metadatas: PythonObject,
+    ) raises -> PythonObject:
+        var mojo_ids = List[Int]()
+        for py_id in py_ids:
+            mojo_ids.append(Int(py=py_id))
+        var mojo_embeddings = List[Float32]()
+        for emb in py_embeddings:
+            mojo_embeddings.append(Float32(py=emb))
+        var metadatas = _metadatas_from_python(py_metadatas)
+        self_ptr[].ptr[].add(mojo_ids, mojo_embeddings, metadatas)
+        return Python.none()
+
+    @staticmethod
     def py_upsert(
         self_ptr: UnsafePointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
@@ -99,6 +172,23 @@ struct PyCollection(Movable, Writable):
         for emb in py_embeddings:
             mojo_embeddings.append(Float32(py=emb))
         self_ptr[].ptr[].upsert(mojo_ids, mojo_embeddings)
+        return Python.none()
+
+    @staticmethod
+    def py_upsert_with_metadata(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_ids: PythonObject,
+        py_embeddings: PythonObject,
+        py_metadatas: PythonObject,
+    ) raises -> PythonObject:
+        var mojo_ids = List[Int]()
+        for py_id in py_ids:
+            mojo_ids.append(Int(py=py_id))
+        var mojo_embeddings = List[Float32]()
+        for emb in py_embeddings:
+            mojo_embeddings.append(Float32(py=emb))
+        var metadatas = _metadatas_from_python(py_metadatas)
+        self_ptr[].ptr[].upsert(mojo_ids, mojo_embeddings, metadatas)
         return Python.none()
 
     @staticmethod
@@ -117,6 +207,23 @@ struct PyCollection(Movable, Writable):
         return Python.none()
 
     @staticmethod
+    def py_update_with_metadata(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_ids: PythonObject,
+        py_embeddings: PythonObject,
+        py_metadatas: PythonObject,
+    ) raises -> PythonObject:
+        var mojo_ids = List[Int]()
+        for py_id in py_ids:
+            mojo_ids.append(Int(py=py_id))
+        var mojo_embeddings = List[Float32]()
+        for emb in py_embeddings:
+            mojo_embeddings.append(Float32(py=emb))
+        var metadatas = _metadatas_from_python(py_metadatas)
+        self_ptr[].ptr[].update(mojo_ids, mojo_embeddings, metadatas)
+        return Python.none()
+
+    @staticmethod
     def py_delete(
         self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject
     ) raises -> PythonObject:
@@ -129,6 +236,16 @@ struct PyCollection(Movable, Writable):
     @staticmethod
     def py_count(self_ptr: UnsafePointer[Self, MutAnyOrigin]) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].count())
+
+    @staticmethod
+    def py_get_metadata(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_record_id: PythonObject,
+    ) raises -> PythonObject:
+        var metadata = self_ptr[].ptr[].get_metadata(
+            Int(py=py_record_id)
+        )
+        return _metadata_to_python(metadata^)
 
     @staticmethod
     def py_stats(
@@ -278,10 +395,20 @@ def PyInit_mojovec() abi("C") -> PythonObject:
             m.add_type[PyCollection]("Collection")
             .def_py_init[PyCollection.py_init]()
             .def_method[PyCollection.py_add]("add")
+            .def_method[PyCollection.py_add_with_metadata](
+                "add_with_metadata"
+            )
             .def_method[PyCollection.py_upsert]("upsert")
+            .def_method[PyCollection.py_upsert_with_metadata](
+                "upsert_with_metadata"
+            )
             .def_method[PyCollection.py_update]("update")
+            .def_method[PyCollection.py_update_with_metadata](
+                "update_with_metadata"
+            )
             .def_method[PyCollection.py_delete]("delete")
             .def_method[PyCollection.py_count]("count")
+            .def_method[PyCollection.py_get_metadata]("get_metadata")
             .def_method[PyCollection.py_stats]("stats")
             .def_method[PyCollection.py_compact]("compact")
             .def_method[PyCollection.py_compact_if_needed](
