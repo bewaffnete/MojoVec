@@ -94,7 +94,9 @@ def test_accuracy_ivf_flat() raises:
     var quantizer = alloc[IndexFlat](1)
     quantizer.init_pointee_move(IndexFlat(d, METRIC_L2))
     var index = IndexIVFFlat[IndexFlat](quantizer, d, nlist, METRIC_L2)
-    index.train(nb, ds.db)
+    index.train(
+        Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d)
+    )
     index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
     index.nprobe = 16
     
@@ -126,7 +128,9 @@ def test_accuracy_ivf_pq() raises:
     var quantizer = alloc[IndexFlat](1)
     quantizer.init_pointee_move(IndexFlat(d, METRIC_L2))
     var index = IndexIVFPQ[IndexFlat](quantizer, d, nlist, m, METRIC_L2)
-    index.train(nb, ds.db)
+    index.train(
+        Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d)
+    )
     index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
     index.nprobe = 16
     

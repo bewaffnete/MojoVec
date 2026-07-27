@@ -158,7 +158,9 @@ def test_ivf_flat_io() raises:
     var quantizer = alloc[IndexFlat](1)
     quantizer.init_pointee_move(IndexFlat(d, METRIC_L2))
     var index = IndexIVFFlat[IndexFlat](quantizer, d, 8, METRIC_L2)
-    index.train(n, ds.db)
+    index.train(
+        Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=n * d)
+    )
     index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=n * d))
     index.nprobe = 4
     
@@ -200,7 +202,9 @@ def test_ivf_pq_io() raises:
     var quantizer = alloc[IndexFlat](1)
     quantizer.init_pointee_move(IndexFlat(d, METRIC_L2))
     var index = IndexIVFPQ[IndexFlat](quantizer, d, 8, 4, METRIC_L2)
-    index.train(n, ds.db)
+    index.train(
+        Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=n * d)
+    )
     index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=n * d))
     index.nprobe = 4
     

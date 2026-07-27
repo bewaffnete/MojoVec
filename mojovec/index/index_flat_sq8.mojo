@@ -290,7 +290,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
                 labels_ptr[i] = -1
                 distances_ptr[i] = 0.0
             return
-        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        var empty_filter = Span[UInt8, MutUntrackedOrigin]()
         self._search_impl[False](x, k, distances, labels, empty_filter)
 
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):

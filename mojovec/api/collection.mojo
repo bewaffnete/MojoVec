@@ -262,12 +262,20 @@ struct Collection(Movable, Writable):
 
     def _get_vector(
         self, internal_id: Int
-    ) -> UnsafePointer[Float32, MutUntrackedOrigin]:
+    ) -> Span[Float32, MutUntrackedOrigin]:
         if self._storage_kind == STORAGE_SQ8:
-            return self._hnsw.unsafe_get[SQ8HNSW]().storage.get_vector(
-                internal_id
+            return Span[Float32, MutUntrackedOrigin](
+                ptr=self._hnsw.unsafe_get[
+                    SQ8HNSW
+                ]().storage.get_vector(internal_id),
+                length=self._dimension,
             )
-        return self._hnsw.unsafe_get[FlatHNSW]().storage.get_vector(internal_id)
+        return Span[Float32, MutUntrackedOrigin](
+            ptr=self._hnsw.unsafe_get[
+                FlatHNSW
+            ]().storage.get_vector(internal_id),
+            length=self._dimension,
+        )
 
     def compact(mut self) raises -> CompactReport:
         """
@@ -568,7 +576,7 @@ struct Collection(Movable, Writable):
             self._hnsw.unsafe_get[FlatHNSW]().hnsw.efSearch = ef
 
     def _search_index(
-        mut self,
+        self,
         queries: Span[Float32, _],
         n_results: Int,
         mut distances: Span[mut=True, Float32, _],
@@ -585,7 +593,7 @@ struct Collection(Movable, Writable):
             )
 
     def _query_into(
-        mut self,
+        self,
         query_embeddings: Span[Float32, _],
         n_results: Int,
         mut ids: Span[mut=True, Int, _],
@@ -610,20 +618,27 @@ struct Collection(Movable, Writable):
         if num_queries == 0:
             return
 
-        var deleted_ptr = rebind[UnsafePointer[UInt8, MutAnyOrigin]](
-            self._is_deleted.unsafe_ptr()
-        )
         # Keep the common append-only path completely filter-free. Passing an
         # all-zero deletion bitmap still selects the filtered HNSW kernel and
         # adds a random bitmap load for every candidate.
-        var deleted_length = len(self._is_deleted)
         if self.count_deleted() == 0:
-            deleted_length = 0
-        var deleted = Span[UInt8, MutAnyOrigin](
-            ptr=deleted_ptr,
-            length=deleted_length,
-        )
-        self._search_index(query_embeddings, n_results, distances, ids, deleted)
+            var empty_filter = Span[UInt8, MutUntrackedOrigin]()
+            self._search_index(
+                query_embeddings,
+                n_results,
+                distances,
+                ids,
+                empty_filter,
+            )
+        else:
+            var deleted = Span[mut=False, UInt8](self._is_deleted)
+            self._search_index(
+                query_embeddings,
+                n_results,
+                distances,
+                ids,
+                deleted,
+            )
 
         for i in range(output_size):
             var internal_id = ids[i]
@@ -656,18 +671,17 @@ struct Collection(Movable, Writable):
         if num_queries == 0:
             return QueryResults(List[List[Int]](), List[List[Float32]]())
 
-        var ids_ptr = alloc[Int](num_queries * n_results)
-        var distances_ptr = alloc[Float32](num_queries * n_results)
+        var output_size = num_queries * n_results
+        var ids_storage = List[Int](unsafe_uninit_length=output_size)
+        var distances_storage = List[Float32](
+            unsafe_uninit_length=output_size
+        )
         var queries = Span[Float32](
             ptr=query_embeddings.unsafe_ptr(),
             length=len(query_embeddings),
         )
-        var ids = Span[mut=True, Int](
-            ptr=ids_ptr, length=num_queries * n_results
-        )
-        var distances = Span[mut=True, Float32](
-            ptr=distances_ptr, length=num_queries * n_results
-        )
+        var ids = Span[mut=True, Int](ids_storage)
+        var distances = Span[mut=True, Float32](distances_storage)
         self._query_into(queries, n_results, ids, distances)
 
         var all_ids = List[List[Int]](capacity=num_queries)
@@ -677,13 +691,11 @@ struct Collection(Movable, Writable):
             var row_distances = List[Float32](capacity=n_results)
             for j in range(n_results):
                 var offset = i * n_results + j
-                row_ids.append(ids_ptr[offset])
-                row_distances.append(distances_ptr[offset])
+                row_ids.append(ids_storage[offset])
+                row_distances.append(distances_storage[offset])
             all_ids.append(row_ids^)
             all_distances.append(row_distances^)
 
-        ids_ptr.free()
-        distances_ptr.free()
         return QueryResults(all_ids^, all_distances^)
 
     def save(mut self, path: String) raises:

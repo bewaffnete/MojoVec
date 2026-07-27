@@ -17,14 +17,23 @@ def test_pq_encoding_error() raises:
         
     var pq = ProductQuantizer(d, M, ksub)
     
-    pq.train(n, data)
+    var data_span = Span[Float32, MutUntrackedOrigin](
+        ptr=data, length=n * d
+    )
+    pq.train(data_span)
     assert_true(pq.is_trained, "Should be trained")
     
     var codes = alloc[UInt8](n * M)
-    pq.compute_codes(n, data, codes)
+    var codes_span = Span[UInt8, MutUntrackedOrigin](
+        ptr=codes, length=n * M
+    )
+    pq.compute_codes(data_span, codes_span)
     
     var decoded = alloc[Float32](n * d)
-    pq.decode(n, codes, decoded)
+    var decoded_span = Span[Float32, MutUntrackedOrigin](
+        ptr=decoded, length=n * d
+    )
+    pq.decode(codes_span, decoded_span)
     
     # Check reconstruction error
     var total_error: Float32 = 0.0
@@ -52,17 +61,32 @@ def test_pq_symmetric_distances() raises:
         data[i] = Float32(random_float64(-1.0, 1.0))
         
     var pq = ProductQuantizer(d, M, ksub)
-    pq.train(n, data)
+    var data_span = Span[Float32, MutUntrackedOrigin](
+        ptr=data, length=n * d
+    )
+    pq.train(data_span)
     
     var codes = alloc[UInt8](n * M)
-    pq.compute_codes(n, data, codes)
+    var codes_span = Span[UInt8, MutUntrackedOrigin](
+        ptr=codes, length=n * M
+    )
+    pq.compute_codes(data_span, codes_span)
     
     var decoded = alloc[Float32](n * d)
-    pq.decode(n, codes, decoded)
+    var decoded_span = Span[Float32, MutUntrackedOrigin](
+        ptr=decoded, length=n * d
+    )
+    pq.decode(codes_span, decoded_span)
     
     var query = data + 0
     var dis_table = alloc[Float32](M * ksub)
-    pq.compute_distance_table(query, dis_table)
+    var query_span = Span[Float32, MutUntrackedOrigin](
+        ptr=query, length=d
+    )
+    var table_span = Span[Float32, MutUntrackedOrigin](
+        ptr=dis_table, length=M * ksub
+    )
+    pq.compute_distance_table(query_span, table_span)
     
     # Compute ADC distance to vector 0
     var approx_dist: Float32 = 0.0

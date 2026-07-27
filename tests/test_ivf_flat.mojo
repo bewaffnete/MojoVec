@@ -26,7 +26,9 @@ def test_ivf_flat() raises:
     var ivf = IndexIVFFlat[IndexFlat](flat_quantizer, d, nlist)
     
     pass  # print("Training IVF...")
-    ivf.train(n, data)
+    ivf.train(
+        Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d)
+    )
     assert_true(ivf.is_trained, "Should be trained")
     
     pass  # print("Adding vectors...")
@@ -34,7 +36,10 @@ def test_ivf_flat() raises:
     var ids = alloc[Int](n)
     for i in range(n):
         ids[i] = i * 10  # Custom IDs
-    ivf.add_with_ids(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d), ids)
+    ivf.add_with_ids(
+        Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d),
+        Span[Int, MutUntrackedOrigin](ptr=ids, length=n),
+    )
     assert_true(ivf.ntotal == n, "Total should match")
     
     ivf.nprobe = 3
@@ -67,7 +72,7 @@ def test_ivf_flat_exact_match() raises:
     flat_quantizer.init_pointee_move(IndexFlat(d))
     var ivf = IndexIVFFlat[IndexFlat](flat_quantizer, d, 1)
     
-    ivf.train(1, data)
+    ivf.train(Span[Float32, MutUntrackedOrigin](ptr=data, length=d))
     ivf.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=1 * d))
     
     var distances = alloc[Float32](1)

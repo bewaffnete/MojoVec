@@ -4,7 +4,7 @@ from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..clustering.kmeans import KMeans
-from std.memory import alloc
+from std.collections import List
 from std.memory.span import Span
 
 struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
@@ -54,17 +54,16 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         self.quantizer = move.quantizer
         self.invlists = move.invlists^
         
-    def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def train(mut self, x: Span[Float32, _]):
         """Trains the coarse quantizer using a set of training vectors.
         
         Args:
-            n: Number of training vectors.
-            x: Pointer to the contiguous array of training vectors.
+            x: Contiguous flattened training vectors.
         """
         if self.is_trained: return
         
         var kmeans = KMeans(self.d, self.nlist, 15)
-        kmeans.train(n, x)
+        kmeans.train(x)
         
         self.quantizer[0].add(Span[Float32, MutUntrackedOrigin](ptr=kmeans.centroids, length=self.nlist * self.d))
         self.is_trained = True
@@ -76,18 +75,21 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
             x: A safe Span pointing to the contiguous array of vectors.
         """
         var n = len(x) // self.d
-        var ids = alloc[Int](n)
+        var ids = List[Int](unsafe_uninit_length=n)
         for i in range(n):
             ids[i] = self.ntotal + i
-        self.add_with_ids(x, ids)
-        ids.free()
+        self.add_with_ids(x, Span[mut=True, Int](ids))
 
-    def add_with_ids(mut self, x: Span[Float32, _], ids: UnsafePointer[Int, MutUntrackedOrigin]):
+    def add_with_ids(
+        mut self,
+        x: Span[Float32, _],
+        ids: Span[Int, _],
+    ):
         """Adds vectors to the index with explicitly provided IDs.
         
         Args:
             x: A safe Span pointing to the contiguous array of vectors.
-            ids: Pointer to the array of vector IDs.
+            ids: Vector IDs, one per input vector.
         """
         if not self.is_trained:
             # Cannot add without training
@@ -95,13 +97,15 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
             
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()
+        var ids_ptr = ids.unsafe_ptr()
             
-        var assign_distances = alloc[Float32](n)
-        var assign_labels = alloc[Int](n)
+        var assign_distances = List[Float32](unsafe_uninit_length=n)
+        var assign_labels = List[Int](unsafe_uninit_length=n)
         
-        var d_span = Span[mut=True, Float32, _](ptr=assign_distances, length=n)
-        var l_span = Span[mut=True, Int, _](ptr=assign_labels, length=n)
+        var d_span = Span[mut=True, Float32](assign_distances)
+        var l_span = Span[mut=True, Int](assign_labels)
         self.quantizer[0].search(x, 1, d_span, l_span)
+        var assign_labels_ptr = assign_labels.unsafe_ptr()
         
         # In a real scenario we could group vectors by list_no to minimize resize calls.
         # But ArrayInvertedLists already has O(1) amortized add via capacity doubling.
@@ -109,18 +113,21 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var code_size = self.d * 4
         
         for i in range(n):
-            var list_no = assign_labels[i]
+            var list_no = assign_labels_ptr[i]
             if list_no < 0 or list_no >= self.nlist: continue
             
-            var single_id = ids + i
+            var single_id = ids_ptr + i
             var single_code = code_ptr + (i * code_size)
-            self.invlists.add_entries(list_no, 1, single_id, single_code)
+            self.invlists.add_entries(
+                list_no,
+                Span[Int, _](ptr=single_id, length=1),
+                Span[UInt8, _](
+                    ptr=single_code, length=code_size
+                ),
+            )
             
         self.ntotal += n
         
-        assign_distances.free()
-        assign_labels.free()
-
     def search(
         self,
         x: Span[Float32, _],
@@ -128,7 +135,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         mut distances: Span[mut=True, Float32, _],
         mut labels: Span[mut=True, Int, _],
     ):
-        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        var empty_filter = Span[UInt8, MutUntrackedOrigin]()
         self.search(x, k, distances, labels, empty_filter)
 
     def search(
@@ -162,13 +169,17 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var nprobe = self.nprobe
         if nprobe > self.nlist: nprobe = self.nlist
         
-        var q_distances = alloc[Float32](n * nprobe)
-        var q_labels = alloc[Int](n * nprobe)
+        var probe_count = n * nprobe
+        var q_distances = List[Float32](
+            unsafe_uninit_length=probe_count
+        )
+        var q_labels = List[Int](unsafe_uninit_length=probe_count)
         
-        var qd_span = Span[mut=True, Float32, _](ptr=q_distances, length=n * nprobe)
-        var ql_span = Span[mut=True, Int, _](ptr=q_labels, length=n * nprobe)
+        var qd_span = Span[mut=True, Float32](q_distances)
+        var ql_span = Span[mut=True, Int](q_labels)
         
         self.quantizer[0].search(x, nprobe, qd_span, ql_span)
+        var q_labels_ptr = q_labels.unsafe_ptr()
         
         for i in range(n):
             var q_ptr = x_ptr + i * self.d
@@ -177,14 +188,18 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
             var heap_size = 0
             
             for p in range(nprobe):
-                var list_no = q_labels[i * nprobe + p]
+                var list_no = q_labels_ptr[i * nprobe + p]
                 if list_no < 0 or list_no >= self.nlist: continue
                 
                 var list_size = self.invlists.list_size(list_no)
                 if list_size == 0: continue
                 
-                var list_codes = self.invlists.get_codes(list_no).bitcast[Float32]()
-                var list_ids = self.invlists.get_ids(list_no)
+                var list_codes = (
+                    self.invlists.get_codes(list_no)
+                    .unsafe_ptr()
+                    .bitcast[Float32]()
+                )
+                var list_ids = self.invlists.get_ids(list_no).unsafe_ptr()
                 
                 for j in range(list_size):
                     var db_ptr = list_codes + j * self.d
@@ -213,5 +228,3 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
                 for j in range(k):
                     res_dist_ptr[j] = -res_dist_ptr[j]
                     
-        q_distances.free()
-        q_labels.free()

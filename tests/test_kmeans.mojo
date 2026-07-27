@@ -11,7 +11,7 @@ def test_kmeans() raises:
     var x = alloc[Float32](n * d)
     rand(x, n * d)
     var kmeans = KMeans(d, k, 5)
-    kmeans.train(n, x)
+    kmeans.train(Span[Float32, MutUntrackedOrigin](ptr=x, length=n * d))
     x.free()
 
 def test_kmeans_k_greater_than_n() raises:
@@ -21,7 +21,7 @@ def test_kmeans_k_greater_than_n() raises:
     var x = alloc[Float32](n * d)
     for i in range(n * d): x[i] = Float32(i)
     var kmeans = KMeans(d, k, 5)
-    kmeans.train(n, x) # Should not crash
+    kmeans.train(Span[Float32, MutUntrackedOrigin](ptr=x, length=n * d))
     x.free()
 
 def test_kmeans_identical_points() raises:
@@ -31,7 +31,7 @@ def test_kmeans_identical_points() raises:
     var x = alloc[Float32](n * d)
     for i in range(n * d): x[i] = 1.0 # all identical
     var kmeans = KMeans(d, k, 5)
-    kmeans.train(n, x) # Should not crash or produce NaN centroids
+    kmeans.train(Span[Float32, MutUntrackedOrigin](ptr=x, length=n * d))
     
     # Assert no NaNs
     for i in range(k * d):

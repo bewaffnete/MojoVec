@@ -232,7 +232,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     vt,
                     W_dist,
                     W_labels,
-                    alloc[UInt8](0)
+                    Span[UInt8, MutUntrackedOrigin]().unsafe_ptr()
                 )
 
                 var w_sorted_dist_array = InlineArray[Float32, 2048](
@@ -321,7 +321,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                 distances_ptr[i] = 0.0
             return
 
-        var empty_filter = Span[UInt8, _](ptr=alloc[UInt8](0), length=0)
+        var empty_filter = Span[UInt8, MutUntrackedOrigin]()
         self._search_impl[False](x, k, distances, labels, empty_filter)
 
     def search(

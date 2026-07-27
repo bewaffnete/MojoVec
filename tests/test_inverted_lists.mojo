@@ -19,7 +19,11 @@ def test_inverted_lists_crud() raises:
     for i in range(8):
         codes[i] = UInt8(i)
         
-    invlists.add_entries(5, 2, ids, codes)
+    invlists.add_entries(
+        5,
+        Span[Int, MutUntrackedOrigin](ptr=ids, length=2),
+        Span[UInt8, MutUntrackedOrigin](ptr=codes, length=8),
+    )
     
     assert_equal(invlists.list_size(5), 2)
     assert_equal(invlists.get_ids(5)[0], 100)
@@ -40,7 +44,13 @@ def test_inverted_lists_crud() raises:
             large_codes[i * code_size + j] = UInt8(j)
             
     # Add large number of entries to list 5, triggering resize
-    invlists.add_entries(5, large_n, large_ids, large_codes)
+    invlists.add_entries(
+        5,
+        Span[Int, MutUntrackedOrigin](ptr=large_ids, length=large_n),
+        Span[UInt8, MutUntrackedOrigin](
+            ptr=large_codes, length=large_n * code_size
+        ),
+    )
     
     assert_equal(invlists.list_size(5), 2 + large_n)
     

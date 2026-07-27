@@ -24,7 +24,9 @@ def test_ivf_pq_crud() raises:
     assert_true(not ivf.is_trained)
     
     # Train
-    ivf.train(n, data)
+    ivf.train(
+        Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d)
+    )
     assert_true(ivf.is_trained, "Should be trained")
     
     # Ensure quantizer has the centroids
@@ -34,7 +36,10 @@ def test_ivf_pq_crud() raises:
     var ids = alloc[Int](n)
     for i in range(n):
         ids[i] = i * 10
-    ivf.add_with_ids(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d), ids)
+    ivf.add_with_ids(
+        Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d),
+        Span[Int, MutUntrackedOrigin](ptr=ids, length=n),
+    )
     
     # Verify elements are successfully distributed into the inverted lists
     assert_equal(ivf.ntotal, n)

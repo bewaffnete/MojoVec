@@ -1,4 +1,5 @@
-from std.memory import alloc
+from std.collections import List
+from std.memory.span import Span
 from ..clustering.kmeans import KMeans
 from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
@@ -45,46 +46,59 @@ struct ProductQuantizer(Movable):
         if Int(self.centroids) != 0:
             self.centroids.free()
 
-    def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def train(mut self, x: Span[Float32, _]):
         """Trains the quantizer by finding centroids for each sub-space using K-Means.
         
         Args:
-            n: Number of training vectors.
-            x: Pointer to the contiguous array of training vectors.
+            x: Contiguous flattened training vectors.
         """
         if self.is_trained: return
+        var n = len(x) // self.d
+        var x_ptr = x.unsafe_ptr()
 
         # For each subspace, we need to extract the sub-vectors.
-        var sub_x = alloc[Float32](n * self.dsub)
+        var sub_x = List[Float32](
+            unsafe_uninit_length=n * self.dsub
+        )
+        var sub_x_ptr = sub_x.unsafe_ptr()
         
         for m in range(self.M):
             # Extract sub-vectors
             for i in range(n):
                 for j in range(self.dsub):
-                    sub_x[i * self.dsub + j] = x[i * self.d + m * self.dsub + j]
+                    sub_x_ptr[i * self.dsub + j] = x_ptr[
+                        i * self.d + m * self.dsub + j
+                    ]
             
             var kmeans = KMeans(self.dsub, self.ksub, 15)
-            kmeans.train(n, sub_x)
+            kmeans.train(
+                Span[mut=True, Float32](sub_x)
+            )
             
             # Copy learned centroids
             var offset = m * self.ksub * self.dsub
             for i in range(self.ksub * self.dsub):
                 self.centroids[offset + i] = kmeans.centroids[i]
                 
-        sub_x.free()
         self.is_trained = True
 
-    def compute_codes(self, n: Int, x: UnsafePointer[Float32, _], codes: UnsafePointer[UInt8, MutUntrackedOrigin]):
+    def compute_codes(
+        self,
+        x: Span[Float32, _],
+        mut codes: Span[mut=True, UInt8, _],
+    ):
         """Encodes vectors into compact byte codes.
         
         Args:
-            n: Number of vectors to encode.
-            x: Pointer to the array of original vectors.
-            codes: Pointer to the output array for the encoded byte codes.
+            x: Contiguous flattened vectors.
+            codes: Output storage for the encoded byte codes.
         """
+        var n = len(x) // self.d
+        var x_data = x.unsafe_ptr()
+        var codes_data = codes.unsafe_ptr()
         for i in range(n):
-            var x_ptr = x + i * self.d
-            var codes_ptr = codes + i * self.M
+            var x_ptr = x_data + i * self.d
+            var codes_ptr = codes_data + i * self.M
             
             for m in range(self.M):
                 var min_dist: Float32 = 1e38
@@ -102,17 +116,23 @@ struct ProductQuantizer(Movable):
                         
                 codes_ptr[m] = UInt8(best_k)
 
-    def decode(self, n: Int, codes: UnsafePointer[UInt8, MutUntrackedOrigin], x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def decode(
+        self,
+        codes: Span[UInt8, _],
+        mut x: Span[mut=True, Float32, _],
+    ):
         """Decodes byte codes back to approximate vectors.
         
         Args:
-            n: Number of vectors to decode.
-            codes: Pointer to the array of byte codes.
-            x: Pointer to the output array for the reconstructed vectors.
+            codes: Contiguous byte codes.
+            x: Output storage for reconstructed vectors.
         """
+        var n = len(codes) // self.M
+        var codes_data = codes.unsafe_ptr()
+        var x_data = x.unsafe_ptr()
         for i in range(n):
-            var codes_ptr = codes + i * self.M
-            var x_ptr = x + i * self.d
+            var codes_ptr = codes_data + i * self.M
+            var x_ptr = x_data + i * self.d
             
             for m in range(self.M):
                 var k = Int(codes_ptr[m])
@@ -122,18 +142,25 @@ struct ProductQuantizer(Movable):
                 for j in range(self.dsub):
                     sub_x[j] = c_ptr[j]
 
-    def compute_distance_table(self, query: UnsafePointer[Float32, _], dis_table: UnsafePointer[Float32, MutUntrackedOrigin], metric_type: MetricType = METRIC_L2):
+    def compute_distance_table(
+        self,
+        query: Span[Float32, _],
+        mut dis_table: Span[mut=True, Float32, _],
+        metric_type: MetricType = METRIC_L2,
+    ):
         """Precomputes distances between a query vector and all sub-space centroids.
         
         Args:
-            query: Pointer to the single query vector.
-            dis_table: Pointer to the output distance table.
+            query: A single query vector.
+            dis_table: Output distance table.
             metric_type: The distance metric to use.
         """
+        var query_ptr = query.unsafe_ptr()
+        var table_ptr = dis_table.unsafe_ptr()
         for m in range(self.M):
-            var sub_q = query + m * self.dsub
+            var sub_q = query_ptr + m * self.dsub
             var centroids_m = self.centroids + m * self.ksub * self.dsub
-            var table_m = dis_table + m * self.ksub
+            var table_m = table_ptr + m * self.ksub
             
             for k in range(self.ksub):
                 var c_ptr = centroids_m + k * self.dsub

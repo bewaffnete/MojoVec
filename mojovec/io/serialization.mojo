@@ -381,8 +381,8 @@ def read_invlists(mut f: FileHandle, mut invlists: ArrayInvertedLists) raises:
         _ = Int(invlists.lists)
         invlists.lists[i].size = size
         
-        var list_codes = invlists.get_codes(i)
-        var list_ids = invlists.get_ids(i)
+        var list_codes = invlists.get_codes(i).unsafe_ptr()
+        var list_ids = invlists.get_ids(i).unsafe_ptr()
         
         read_unsafe_pointer_int(f, list_ids, size)
         read_unsafe_pointer_uint8(f, list_codes, size * code_size)

@@ -1,5 +1,7 @@
 from std.algorithm import parallelize
+from std.collections import List
 from std.memory import alloc
+from std.memory.span import Span
 from std.random import random_si64
 from ..utils.distances import l2_distance_simd
 from std.math import min
@@ -38,14 +40,15 @@ struct KMeans:
         if Int(self.assignments) != 0: self.assignments.free()
         if Int(self.counts) != 0: self.counts.free()
             
-    def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def train(mut self, x: Span[Float32, _]):
         """Trains the K-Means model to find cluster centroids.
         
         Args:
-            n: Number of training vectors.
-            x: Pointer to the contiguous array of training vectors.
+            x: Contiguous flattened training vectors.
         """
+        var n = len(x) // self.d
         if n == 0: return
+        var data_ptr = x.unsafe_ptr()
             
         if Int(self.assignments) != 0: self.assignments.free()
         self.assignments = alloc[Int](n)
@@ -53,15 +56,21 @@ struct KMeans:
         # 1. Initialize centroids (random subsampling)
         for i in range(self.k):
             var src_idx = Int(random_si64(0, Int64(n - 1)))
-            var src_ptr = x + src_idx * self.d
+            var src_ptr = data_ptr + src_idx * self.d
             var dst_ptr = self.centroids + i * self.d
             for j in range(self.d):
                 dst_ptr[j] = src_ptr[j]
                 
         var num_chunks = 32
         var chunk_size = (n + num_chunks - 1) // num_chunks
-        var local_centroids = alloc[Float32](num_chunks * self.k * self.d)
-        var local_counts = alloc[Int](num_chunks * self.k)
+        var local_centroids = List[Float32](
+            unsafe_uninit_length=num_chunks * self.k * self.d
+        )
+        var local_counts = List[Int](
+            unsafe_uninit_length=num_chunks * self.k
+        )
+        var local_centroids_ptr = local_centroids.unsafe_ptr()
+        var local_counts_ptr = local_counts.unsafe_ptr()
         
         # Main loop
         for _ in range(self.niter):
@@ -70,7 +79,7 @@ struct KMeans:
             def process_point(i: Int):
                 var min_dist: Float32 = 1e38
                 var best_c = -1
-                var x_ptr = x + i * self.d
+                var x_ptr = data_ptr + i * self.d
                 
                 for c in range(self.k):
                     var c_ptr = self.centroids + c * self.d
@@ -86,23 +95,25 @@ struct KMeans:
             
             # Zero out thread-local accumulators
             for i in range(num_chunks * self.k * self.d):
-                local_centroids[i] = 0.0
+                local_centroids_ptr[i] = 0.0
             for i in range(num_chunks * self.k):
-                local_counts[i] = 0
+                local_counts_ptr[i] = 0
                 
             # M-step: Update centroids in parallel
             @parameter
             def process_chunk(chunk_id: Int):
                 var start = chunk_id * chunk_size
                 var end = min(start + chunk_size, n)
-                var my_centroids = local_centroids + chunk_id * self.k * self.d
-                var my_counts = local_counts + chunk_id * self.k
+                var my_centroids = (
+                    local_centroids_ptr + chunk_id * self.k * self.d
+                )
+                var my_counts = local_counts_ptr + chunk_id * self.k
                 
                 for i in range(start, end):
                     var c = self.assignments[i]
                     my_counts[c] += 1
                     var c_ptr = my_centroids + c * self.d
-                    var x_ptr = x + i * self.d
+                    var x_ptr = data_ptr + i * self.d
                     
                     var j = 0
                     while j <= self.d - 4:
@@ -124,8 +135,10 @@ struct KMeans:
                     c_ptr[j] = 0.0
                     
             for chunk_id in range(num_chunks):
-                var my_centroids = local_centroids + chunk_id * self.k * self.d
-                var my_counts = local_counts + chunk_id * self.k
+                var my_centroids = (
+                    local_centroids_ptr + chunk_id * self.k * self.d
+                )
+                var my_counts = local_counts_ptr + chunk_id * self.k
                 
                 for c in range(self.k):
                     self.counts[c] += my_counts[c]
@@ -156,6 +169,3 @@ struct KMeans:
                     while j < self.d:
                         c_ptr[j] *= inv_count
                         j += 1
-
-        local_centroids.free()
-        local_counts.free()

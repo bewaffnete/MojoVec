@@ -1,7 +1,7 @@
 from mojovec.index.index_ivf_pq import IndexIVFPQ
 from mojovec.index.index_flat import IndexFlat
 from mojovec.core.types import METRIC_L2
-from std.memory import alloc
+from std.memory import OwnedPointer
 from std.collections import List
 from std.memory.span import Span
 from .results import QueryResults
@@ -11,9 +11,9 @@ struct CollectionIVFPQ(Movable):
     A vector collection using IVF-PQ index for extreme compression and fast search.
     """
     var _dimension: Int
-    var _ivfpq_ptr: UnsafePointer[IndexIVFPQ[IndexFlat], MutUntrackedOrigin]
+    var _ivfpq: OwnedPointer[IndexIVFPQ[IndexFlat]]
     var _user_ids: List[Int]
-    var _flat_quantizer: UnsafePointer[IndexFlat, MutUntrackedOrigin]
+    var _flat_quantizer: OwnedPointer[IndexFlat]
 
     def __init__(out self, dimension: Int, nlist: Int = 100, M: Int = 16):
         """
@@ -21,12 +21,20 @@ struct CollectionIVFPQ(Movable):
         """
         self._dimension = dimension
         
-        self._flat_quantizer = alloc[IndexFlat](1)
-        self._flat_quantizer.init_pointee_move(IndexFlat(dimension, METRIC_L2))
-        
-        self._ivfpq_ptr = alloc[IndexIVFPQ[IndexFlat]](1)
-        self._ivfpq_ptr.init_pointee_move(IndexIVFPQ[IndexFlat](self._flat_quantizer, dimension, nlist, M))
-        self._ivfpq_ptr[].nprobe = 10
+        self._flat_quantizer = OwnedPointer(
+            IndexFlat(dimension, METRIC_L2)
+        )
+        self._ivfpq = OwnedPointer(
+            IndexIVFPQ[IndexFlat](
+                rebind[
+                    UnsafePointer[IndexFlat, MutUntrackedOrigin]
+                ](self._flat_quantizer.unsafe_ptr()),
+                dimension,
+                nlist,
+                M,
+            )
+        )
+        self._ivfpq[].nprobe = 10
         self._user_ids = List[Int]()
         
     def __init__(out self, *, deinit take: Self):
@@ -34,18 +42,9 @@ struct CollectionIVFPQ(Movable):
         Takes ownership of an existing IVF-PQ collection.
         """
         self._dimension = take._dimension
-        self._ivfpq_ptr = take._ivfpq_ptr
-        self._flat_quantizer = take._flat_quantizer
+        self._ivfpq = take._ivfpq^
+        self._flat_quantizer = take._flat_quantizer^
         self._user_ids = take._user_ids^
-
-    def __del__(deinit self):
-        """
-        Frees the allocated memory for the quantizer and index.
-        """
-        self._ivfpq_ptr.destroy_pointee()
-        self._ivfpq_ptr.free()
-        self._flat_quantizer.destroy_pointee()
-        self._flat_quantizer.free()
 
     def save(self, path: String) raises:
         """
@@ -61,10 +60,14 @@ struct CollectionIVFPQ(Movable):
         write_int(f, num_ids)
         if num_ids > 0:
             var ids_ptr = self._user_ids.unsafe_ptr()
-            var cast_ptr = rebind[UnsafePointer[UInt8, MutUntrackedOrigin]](ids_ptr)
-            f.write_bytes(Span[UInt8, MutUntrackedOrigin](ptr=cast_ptr, length=num_ids * 8))
+            f.write_bytes(
+                Span[UInt8, _](
+                    ptr=ids_ptr.bitcast[UInt8](),
+                    length=num_ids * 8,
+                )
+            )
             
-        write_index_ivf_pq(f, self._ivfpq_ptr[])
+        write_index_ivf_pq(f, self._ivfpq[])
         f.close()
 
     @staticmethod
@@ -93,8 +96,13 @@ struct CollectionIVFPQ(Movable):
             _ = len(read_data)
                 
         var loaded_ivfpq = read_index_ivf_pq(f)
-        col._ivfpq_ptr.destroy_pointee()
-        col._ivfpq_ptr.init_pointee_move(loaded_ivfpq^)
+        var loaded_quantizer = loaded_ivfpq.quantizer.take_pointee()
+        loaded_ivfpq.quantizer.free()
+        col._flat_quantizer[] = loaded_quantizer^
+        loaded_ivfpq.quantizer = rebind[
+            UnsafePointer[IndexFlat, MutUntrackedOrigin]
+        ](col._flat_quantizer.unsafe_ptr())
+        col._ivfpq = OwnedPointer(loaded_ivfpq^)
         f.close()
         return col^
 
@@ -109,8 +117,12 @@ struct CollectionIVFPQ(Movable):
         if num_vectors == 0:
             return
             
-        var ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](embeddings.unsafe_ptr())
-        self._ivfpq_ptr[].train(num_vectors, ptr)
+        self._ivfpq[].train(
+            Span[Float32](
+                ptr=embeddings.unsafe_ptr(),
+                length=len(embeddings),
+            )
+        )
 
     def add(mut self, ids: List[Int], embeddings: List[Float32]) raises:
         """
@@ -123,7 +135,7 @@ struct CollectionIVFPQ(Movable):
         if num_vectors == 0:
             return
             
-        if not self._ivfpq_ptr[].is_trained:
+        if not self._ivfpq[].is_trained:
             # Auto-train if not trained
             self.train(embeddings)
 
@@ -131,7 +143,7 @@ struct CollectionIVFPQ(Movable):
             self._user_ids.append(id)
             
         var span = Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings))
-        self._ivfpq_ptr[].add(span)
+        self._ivfpq[].add(span)
 
     def query(self, query_embeddings: List[Float32], n_results: Int = 10) raises -> QueryResults:
         """
@@ -144,13 +156,16 @@ struct CollectionIVFPQ(Movable):
         if num_queries == 0:
             return QueryResults(List[List[Int]](), List[List[Float32]]())
 
-        var distances_ptr = alloc[Float32](num_queries * n_results)
-        var labels_ptr = alloc[Int](num_queries * n_results)
+        var output_size = num_queries * n_results
+        var distances_storage = List[Float32](
+            unsafe_uninit_length=output_size
+        )
+        var labels_storage = List[Int](unsafe_uninit_length=output_size)
 
         var q_span = Span[Float32](ptr=query_embeddings.unsafe_ptr(), length=len(query_embeddings))
-        var d_span = Span[mut=True, Float32, _](ptr=distances_ptr, length=num_queries * n_results)
-        var l_span = Span[mut=True, Int, _](ptr=labels_ptr, length=num_queries * n_results)
-        self._ivfpq_ptr[].search(q_span, n_results, d_span, l_span)
+        var d_span = Span[mut=True, Float32](distances_storage)
+        var l_span = Span[mut=True, Int](labels_storage)
+        self._ivfpq[].search(q_span, n_results, d_span, l_span)
 
         var all_ids = List[List[Int]](capacity=num_queries)
         var all_distances = List[List[Float32]](capacity=num_queries)
@@ -159,8 +174,8 @@ struct CollectionIVFPQ(Movable):
             var q_ids = List[Int](capacity=n_results)
             var q_dists = List[Float32](capacity=n_results)
             for j in range(n_results):
-                var internal_label = labels_ptr[i * n_results + j]
-                var dist = distances_ptr[i * n_results + j]
+                var internal_label = labels_storage[i * n_results + j]
+                var dist = distances_storage[i * n_results + j]
                 if internal_label >= 0 and internal_label < len(self._user_ids):
                     q_ids.append(self._user_ids[internal_label])
                     q_dists.append(dist)
@@ -169,8 +184,5 @@ struct CollectionIVFPQ(Movable):
                     q_dists.append(dist)
             all_ids.append(q_ids^)
             all_distances.append(q_dists^)
-
-        distances_ptr.free()
-        labels_ptr.free()
 
         return QueryResults(all_ids^, all_distances^)

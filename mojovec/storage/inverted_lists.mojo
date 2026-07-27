@@ -3,6 +3,7 @@ Defines data structures and traits for managing inverted lists in vector storage
 """
 
 from std.memory import alloc
+from std.memory.span import Span
 from std.math import max
 from std.atomic import Atomic
 
@@ -11,9 +12,14 @@ trait InvertedListsTrait(Movable, ImplicitlyDeletable):
     Abstract interface for an inverted lists storage container.
     """
     def list_size(self, list_no: Int) -> Int: ...
-    def get_codes(self, list_no: Int) -> UnsafePointer[UInt8, MutUntrackedOrigin]: ...
-    def get_ids(self, list_no: Int) -> UnsafePointer[Int, MutUntrackedOrigin]: ...
-    def add_entries(mut self, list_no: Int, n_entry: Int, ids: UnsafePointer[Int, _], codes: UnsafePointer[UInt8, _]): ...
+    def get_codes(self, list_no: Int) -> Span[UInt8, MutUntrackedOrigin]: ...
+    def get_ids(self, list_no: Int) -> Span[Int, MutUntrackedOrigin]: ...
+    def add_entries(
+        mut self,
+        list_no: Int,
+        ids: Span[Int, _],
+        codes: Span[UInt8, _],
+    ): ...
     def resize(mut self, list_no: Int, new_size: Int): ...
 
 @fieldwise_init
@@ -91,18 +97,24 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
         return self.lists[list_no].size
 
     @always_inline
-    def get_codes(self, list_no: Int) -> UnsafePointer[UInt8, MutUntrackedOrigin]:
+    def get_codes(self, list_no: Int) -> Span[UInt8, MutUntrackedOrigin]:
         """
         Returns a pointer to the codes array for the specified list.
         """
-        return self.lists[list_no].codes
+        return Span[UInt8, MutUntrackedOrigin](
+            ptr=self.lists[list_no].codes,
+            length=self.lists[list_no].size * self.code_size,
+        )
 
     @always_inline
-    def get_ids(self, list_no: Int) -> UnsafePointer[Int, MutUntrackedOrigin]:
+    def get_ids(self, list_no: Int) -> Span[Int, MutUntrackedOrigin]:
         """
         Returns a pointer to the IDs array for the specified list.
         """
-        return self.lists[list_no].ids
+        return Span[Int, MutUntrackedOrigin](
+            ptr=self.lists[list_no].ids,
+            length=self.lists[list_no].size,
+        )
 
     def resize(mut self, list_no: Int, new_size: Int):
         """
@@ -147,20 +159,28 @@ struct ArrayInvertedLists(Movable, InvertedListsTrait):
     def unlock_list(self, list_no: Int):
         _ = Atomic.fetch_add(self.now_serving + list_no, 1)
 
-    def add_entries(mut self, list_no: Int, n_entry: Int, ids: UnsafePointer[Int, _], codes: UnsafePointer[UInt8, _]):
+    def add_entries(
+        mut self,
+        list_no: Int,
+        ids: Span[Int, _],
+        codes: Span[UInt8, _],
+    ):
         """
         Adds multiple entries (codes and their corresponding IDs) to a specific list.
         """
+        var n_entry = len(ids)
+        var ids_ptr = ids.unsafe_ptr()
+        var codes_ptr = codes.unsafe_ptr()
         self.lock_list(list_no)
         _ = Int(self.lists)  # WORKAROUND: Force memory materialization to avoid MLIR/LLVM alias analysis bug
         var old_size = self.lists[list_no].size
         self.resize(list_no, old_size + n_entry)
 
         for i in range(n_entry):
-            self.lists[list_no].ids[old_size + i] = ids[i]
+            self.lists[list_no].ids[old_size + i] = ids_ptr[i]
 
         var code_offset = old_size * self.code_size
         for i in range(n_entry * self.code_size):
-            self.lists[list_no].codes[code_offset + i] = codes[i]
+            self.lists[list_no].codes[code_offset + i] = codes_ptr[i]
             
         self.unlock_list(list_no)
