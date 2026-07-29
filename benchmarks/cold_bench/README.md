@@ -2,18 +2,6 @@
 
 Reproducible cold-search benchmarks for MojoVec and FAISS on SIFT1M.
 
-The two `bench_*_api.mojo` programs exercise only the public managed API:
-
-```mojo
-var collection = Collection.load(path)
-collection.set_ef_search(96)
-var results = collection.query(queries, n_results=10)
-```
-
-They do not call `_query_into` or other internal methods and contain no
-`UnsafePointer`, `Span`, `alloc`, or `free`. Binary SIFT decoding is isolated in
-`sift1m_data.mojo` and is outside the timed region.
-
 ## Configuration
 
 - 1,000,000 base vectors;
