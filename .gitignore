@@ -24,6 +24,8 @@ faiss/
 *.md
 !README.md
 !benchmarks/README.md
+!benchmarks/cold_bench/README.md
+!benchmarks/cold_bench/RESULTS.md
 *.bin
 .venv/
 __pycache__/
@@ -37,5 +39,10 @@ dist/
 *.egg-info/
 sift1m/
 benchmarks/scratch/
-benchmarks/cold_bench/
+benchmarks/cold_bench/*.index
+benchmarks/cold_bench/*.mojovec
+benchmarks/cold_bench/bench_flat_1m_api
+benchmarks/cold_bench/bench_sq8_1m_api
+benchmarks/cold_bench/tune_mojovec_recall
+benchmarks/cold_bench/tune_mojovec_rerank
 test_mojoc/
