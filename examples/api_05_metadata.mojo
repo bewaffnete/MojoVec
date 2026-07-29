@@ -11,11 +11,14 @@ Metadata is an owned string-to-scalar record. Its supported value types are:
 Every active vector has one metadata snapshot. A vector-only update or upsert
 inherits the current snapshot. Passing metadata explicitly replaces the whole
 snapshot. Metadata follows records through save/load and compaction.
+
+The next tutorial, api_06_where_filters.mojo, uses the same metadata snapshots
+for typed `where` queries backed by automatic bitmap indexes.
 """
 
 from std.collections import List
 
-from mojovec import Client, Collection, Metadata
+from mojovec import Client, Collection, Metadata, Where
 
 
 comptime DIMENSION = 4
@@ -119,6 +122,18 @@ def main() raises:
     var nearest_id = results.ids[0][0]
     print("\nNearest document")
     print_document(collection, nearest_id)
+
+    # Stored fields are immediately available to the typed filter API. Bitmap
+    # indexes are maintained automatically; applications do not create them.
+    var published = collection.query(
+        [1.0, 0.0, 0.0, 0.0],
+        where=Where.eq("published", True),
+        n_results=2,
+    )
+    print("\nPublished result IDs")
+    for record_id in published.ids[0]:
+        if record_id >= 0:
+            print(" ", record_id)
 
     # Metadata is written into the collection file together with IDs, deletion
     # state, vector storage, and the HNSW graph.

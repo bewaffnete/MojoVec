@@ -66,6 +66,18 @@ struct MetadataValue(Movable, Copyable, Writable):
     def is_bool(self) -> Bool:
         return self._kind == METADATA_BOOL
 
+    def equals(self, other: Self) -> Bool:
+        """Compares both the scalar type and value."""
+        if self._kind != other._kind:
+            return False
+        if self._kind == METADATA_STRING:
+            return self._string_value == other._string_value
+        if self._kind == METADATA_INT:
+            return self._int_value == other._int_value
+        if self._kind == METADATA_FLOAT:
+            return self._float_value == other._float_value
+        return self._bool_value == other._bool_value
+
     def as_string(self) raises -> String:
         if not self.is_string():
             raise Error("Metadata value is not a String.")

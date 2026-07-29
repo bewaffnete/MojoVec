@@ -13,7 +13,12 @@ from mojovec.api.metadata import (
     Metadata,
     MetadataValue,
 )
+from mojovec.api.metadata_bitmap import (
+    BITMAP_WORD_BITS,
+    MetadataBitmapIndex,
+)
 from mojovec.api.results import CollectionStats, CompactReport, QueryResults
+from mojovec.api.where import Where, WhereNode
 from mojovec.core.types import (
     METRIC_L2,
     STORAGE_FLAT,
@@ -126,6 +131,7 @@ struct Collection(Movable, Writable):
     var _is_deleted: List[UInt8]
     var _metadata_by_internal: Dict[Int, Int]
     var _metadatas: List[Metadata]
+    var _metadata_index: MetadataBitmapIndex
     var _id_to_internal: Dict[Int, Int]
 
     def __init__(
@@ -158,6 +164,7 @@ struct Collection(Movable, Writable):
         self._is_deleted = List[UInt8]()
         self._metadata_by_internal = Dict[Int, Int]()
         self._metadatas = List[Metadata]()
+        self._metadata_index = MetadataBitmapIndex()
         self._id_to_internal = Dict[Int, Int]()
 
     def __init__(out self, *, deinit take: Self):
@@ -169,6 +176,7 @@ struct Collection(Movable, Writable):
         self._is_deleted = take._is_deleted^
         self._metadata_by_internal = take._metadata_by_internal^
         self._metadatas = take._metadatas^
+        self._metadata_index = take._metadata_index^
         self._id_to_internal = take._id_to_internal^
 
     def write_to[W: Writer](self, mut writer: W):
@@ -217,11 +225,14 @@ struct Collection(Movable, Writable):
             return self._metadatas[metadata_index].copy()
         return Metadata()
 
-    def _store_metadata(mut self, internal_id: Int, metadata: Metadata):
+    def _store_metadata(
+        mut self, internal_id: Int, metadata: Metadata
+    ) raises:
         if metadata.count() == 0:
             return
         self._metadata_by_internal[internal_id] = len(self._metadatas)
         self._metadatas.append(metadata.copy())
+        self._metadata_index.add(internal_id, metadata)
 
     def stats(self) -> CollectionStats:
         """Returns active/deleted counts and the current HNSW configuration."""
@@ -647,6 +658,188 @@ struct Collection(Movable, Writable):
             else:
                 ids[i] = -1
 
+    def _empty_bitmap(self) -> List[UInt64]:
+        var word_count = (
+            len(self._user_ids) + BITMAP_WORD_BITS - 1
+        ) // BITMAP_WORD_BITS
+        var result = List[UInt64](unsafe_uninit_length=word_count)
+        for index in range(word_count):
+            result[index] = 0
+        return result^
+
+    def _scan_predicate_bitmap(
+        self, node: WhereNode
+    ) raises -> List[UInt64]:
+        var result = self._empty_bitmap()
+        var key = node.key()
+        for internal_id in range(len(self._user_ids)):
+            if internal_id not in self._metadata_by_internal:
+                continue
+            var metadata_index = self._metadata_by_internal[internal_id]
+            if not self._metadatas[metadata_index].contains(key):
+                continue
+            var value = self._metadatas[metadata_index].get(key)
+            if node.matches(value):
+                var word_index = internal_id // BITMAP_WORD_BITS
+                result[word_index] |= (
+                    UInt64(1)
+                    << UInt64(internal_id % BITMAP_WORD_BITS)
+                )
+        return result^
+
+    def _predicate_bitmap(
+        self, node: WhereNode
+    ) raises -> List[UInt64]:
+        var key = node.key()
+        if not self._metadata_index.contains_field(key):
+            return self._empty_bitmap()
+        if self._metadata_index.can_evaluate(key):
+            return self._metadata_index.evaluate(
+                node, len(self._user_ids)
+            )
+        return self._scan_predicate_bitmap(node)
+
+    def _where_filter(self, where: Where) raises -> List[UInt8]:
+        """
+        Builds the HNSW exclusion mask from typed bitmap predicates.
+
+        Metadata bitmaps contain matching internal IDs. Logical instructions
+        combine complete packed UInt64 words before one final conversion to
+        the byte mask required by HNSW. Deleted rows are always excluded.
+        """
+        var nodes = where.nodes()
+        if len(nodes) == 0:
+            raise Error("Where expression cannot be empty.")
+
+        # Validate the postfix expression and calculate its maximum bitmap
+        # stack depth so compound filters allocate only the required slots.
+        var depth = 0
+        var max_depth = 0
+        for node_index in range(len(nodes)):
+            if nodes[node_index].is_predicate():
+                depth += 1
+                max_depth = max(max_depth, depth)
+            elif nodes[node_index].is_not():
+                if depth < 1:
+                    raise Error("Invalid Where expression.")
+            else:
+                var arity = nodes[node_index].arity()
+                if arity <= 0 or depth < arity:
+                    raise Error("Invalid Where expression.")
+                depth = depth - arity + 1
+        if depth != 1:
+            raise Error("Invalid Where expression.")
+
+        var word_count = (
+            len(self._user_ids) + BITMAP_WORD_BITS - 1
+        ) // BITMAP_WORD_BITS
+        var stack_words = List[UInt64](
+            unsafe_uninit_length=max_depth * word_count
+        )
+        var stack_size = 0
+        for node_index in range(len(nodes)):
+            if nodes[node_index].is_predicate():
+                var predicate = self._predicate_bitmap(nodes[node_index])
+                var destination = stack_size * word_count
+                for word_index in range(word_count):
+                    stack_words[destination + word_index] = (
+                        predicate[word_index]
+                    )
+                stack_size += 1
+            elif nodes[node_index].is_not():
+                var destination = (stack_size - 1) * word_count
+                for word_index in range(word_count):
+                    stack_words[destination + word_index] = ~stack_words[
+                        destination + word_index
+                    ]
+            else:
+                var arity = nodes[node_index].arity()
+                var first = stack_size - arity
+                var destination = first * word_count
+                for word_index in range(word_count):
+                    var combined = stack_words[
+                        destination + word_index
+                    ]
+                    for operand in range(1, arity):
+                        var operand_word = stack_words[
+                            (first + operand) * word_count + word_index
+                        ]
+                        if nodes[node_index].is_all():
+                            combined &= operand_word
+                        elif nodes[node_index].is_any():
+                            combined |= operand_word
+                        else:
+                            raise Error("Invalid Where expression.")
+                    stack_words[destination + word_index] = combined
+                stack_size = first + 1
+
+        # NOT may set unused high bits in the final word. Mask them so the
+        # packed result always describes exactly the collection's row count.
+        var remainder = len(self._user_ids) % BITMAP_WORD_BITS
+        if word_count > 0 and remainder > 0:
+            var valid_bits = (
+                UInt64(1) << UInt64(remainder)
+            ) - UInt64(1)
+            stack_words[word_count - 1] &= valid_bits
+
+        var exclusion = List[UInt8](
+            unsafe_uninit_length=len(self._user_ids)
+        )
+        for internal_id in range(len(self._user_ids)):
+            var word = stack_words[internal_id // BITMAP_WORD_BITS]
+            var mask = UInt64(1) << UInt64(
+                internal_id % BITMAP_WORD_BITS
+            )
+            var matches = (word & mask) != 0
+            exclusion[internal_id] = (
+                1
+                if self._is_deleted[internal_id] > 0 or not matches
+                else 0
+            )
+        return exclusion^
+
+    def _query_into_filtered(
+        self,
+        query_embeddings: Span[Float32, _],
+        n_results: Int,
+        mut ids: Span[mut=True, Int, _],
+        mut distances: Span[mut=True, Float32, _],
+        exclusion: Span[UInt8, _],
+    ) raises:
+        if self._dimension <= 0:
+            raise Error("Collection dimension must be positive.")
+        if len(query_embeddings) % self._dimension != 0:
+            raise Error(
+                "Query embeddings length must be a multiple of dimension."
+            )
+        if n_results <= 0 or n_results > 2048:
+            raise Error("n_results must be between 1 and 2048.")
+
+        var num_queries = len(query_embeddings) // self._dimension
+        var output_size = num_queries * n_results
+        if len(ids) < output_size or len(distances) < output_size:
+            raise Error(
+                "Output buffers are smaller than query_count * n_results."
+            )
+        if len(exclusion) != len(self._user_ids):
+            raise Error("Where filter size does not match collection size.")
+        if num_queries == 0:
+            return
+
+        self._search_index(
+            query_embeddings,
+            n_results,
+            distances,
+            ids,
+            exclusion,
+        )
+        for index in range(output_size):
+            var internal_id = ids[index]
+            if internal_id >= 0 and internal_id < len(self._user_ids):
+                ids[index] = self._user_ids[internal_id]
+            else:
+                ids[index] = -1
+
     def query(
         mut self,
         query_embeddings: List[Float32],
@@ -683,6 +876,61 @@ struct Collection(Movable, Writable):
         var ids = Span[mut=True, Int](ids_storage)
         var distances = Span[mut=True, Float32](distances_storage)
         self._query_into(queries, n_results, ids, distances)
+
+        var all_ids = List[List[Int]](capacity=num_queries)
+        var all_distances = List[List[Float32]](capacity=num_queries)
+        for i in range(num_queries):
+            var row_ids = List[Int](capacity=n_results)
+            var row_distances = List[Float32](capacity=n_results)
+            for j in range(n_results):
+                var offset = i * n_results + j
+                row_ids.append(ids_storage[offset])
+                row_distances.append(distances_storage[offset])
+            all_ids.append(row_ids^)
+            all_distances.append(row_distances^)
+
+        return QueryResults(all_ids^, all_distances^)
+
+    def query(
+        mut self,
+        query_embeddings: List[Float32],
+        where: Where,
+        n_results: Int = 10,
+    ) raises -> QueryResults:
+        """Queries nearest neighbors restricted by a typed metadata filter."""
+        if self._dimension <= 0:
+            raise Error("Collection dimension must be positive.")
+        if len(query_embeddings) % self._dimension != 0:
+            raise Error(
+                "Query embeddings length must be a multiple of dimension."
+            )
+        if n_results <= 0 or n_results > 2048:
+            raise Error("n_results must be between 1 and 2048.")
+
+        var num_queries = len(query_embeddings) // self._dimension
+        if num_queries == 0:
+            return QueryResults(List[List[Int]](), List[List[Float32]]())
+
+        var output_size = num_queries * n_results
+        var ids_storage = List[Int](unsafe_uninit_length=output_size)
+        var distances_storage = List[Float32](
+            unsafe_uninit_length=output_size
+        )
+        var exclusion_storage = self._where_filter(where)
+        var queries = Span[Float32](
+            ptr=query_embeddings.unsafe_ptr(),
+            length=len(query_embeddings),
+        )
+        var ids = Span[mut=True, Int](ids_storage)
+        var distances = Span[mut=True, Float32](distances_storage)
+        var exclusion = Span[UInt8](exclusion_storage)
+        self._query_into_filtered(
+            queries,
+            n_results,
+            ids,
+            distances,
+            exclusion,
+        )
 
         var all_ids = List[List[Int]](capacity=num_queries)
         var all_distances = List[List[Float32]](capacity=num_queries)

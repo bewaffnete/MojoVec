@@ -15,6 +15,7 @@ mojo run -I . examples/api_02_ivfpq_compression.mojo
 mojo run -I . examples/api_03_serialization.mojo
 mojo run -I . examples/api_04_compaction.mojo
 mojo run -I . examples/api_05_metadata.mojo
+mojo run -I . examples/api_06_where_filters.mojo
 ```
 
 To compile without executing:
@@ -25,6 +26,7 @@ mojo build -I . examples/api_02_ivfpq_compression.mojo
 mojo build -I . examples/api_03_serialization.mojo
 mojo build -I . examples/api_04_compaction.mojo
 mojo build -I . examples/api_05_metadata.mojo
+mojo build -I . examples/api_06_where_filters.mojo
 ```
 
 ## Which collection should I use?
@@ -143,6 +145,25 @@ Metadata is stored as a snapshot alongside every internal vector version.
 Calling `get_metadata(id)` for a missing or deleted ID raises an error. Metadata
 is not embedded into every `QueryResults` object; fetch it only for returned
 IDs that the application needs.
+
+## Example 6: typed `where` filters and bitmap indexes
+
+File: [`api_06_where_filters.mojo`](api_06_where_filters.mojo)
+
+This example covers:
+
+- type-safe String, Int, Float64, and Bool predicates;
+- equality, ordered comparisons, and typed `in_` membership;
+- nested `and_` and `or_` expressions;
+- filtered search through `Collection.query(..., where=...)`;
+- the distinction between `ne` and logical `not_` for missing fields.
+
+MojoVec maintains sparse packed bitmap postings automatically as metadata is
+added or replaced. Deleted historical rows are excluded by the normal
+collection deletion mask. Bitmap state is rebuilt from metadata after load and
+compaction, so applications do not serialize or manage indexes separately.
+Fields exceeding 1024 distinct values use a scan fallback to avoid excessive
+per-value bitmap overhead.
 
 ## Embedding layout
 

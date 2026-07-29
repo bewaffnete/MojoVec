@@ -14,4 +14,5 @@ from mojovec.api import (
     Metadata,
     MetadataValue,
     QueryResults,
+    Where,
 )

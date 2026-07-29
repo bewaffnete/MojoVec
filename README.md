@@ -10,6 +10,15 @@ MojoVec is an Approximate Nearest Neighbor (ANN) search library built from scrat
 
 FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narrower question: can a pure-Mojo implementation get close to hand-tuned C++ SIMD performance without dropping into C/C++/assembly, using only what the language and its `SIMD` type give you today. This was prompted by curiosity about Mojo's SIMD codegen and a desire to build a zero-dependency, bare-metal alternative to FAISS for the Mojo ecosystem.
 
+## Features
+
+- Flat and SQ8 HNSW collections behind one Chroma-style API;
+- managed `add`, `upsert`, `update`, `delete`, and batched `query`;
+- typed `String`, `Int`, `Float64`, and `Bool` record metadata;
+- typed `where` filtering backed by automatic sparse bitmap indexes;
+- compound `and_`, `or_`, `not_`, `in_`, and `not_in` expressions;
+- save/load, collection statistics, and graph compaction;
+- IVF-Flat and IVF-PQ lower-level indexes implemented in pure Mojo.
 
 
 ---
@@ -71,7 +80,7 @@ Place the `mojovec.mojoc` file in your project directory. You can now import it 
 ### 1. Initialize the Client
 
 ```mojo
-from mojovec import Client, Metadata
+from mojovec import Client, Metadata, Where
 from std.collections import List
 
 def main() raises:
@@ -160,7 +169,41 @@ Metadata is preserved by save/load and compaction.
 output buffers, handles pointers, or calls `free`; result memory is released
 automatically when it is no longer used.
 
-### 6. Disk Persistence
+### 6. Filter by Metadata
+
+`Where` overloads every predicate by metadata type. Ordered comparisons accept
+`Int` or `Float64`:
+
+```mojo
+    var conditions = List[Where]()
+    conditions.append(Where.eq("published", True))
+    conditions.append(Where.gte("year", 2024))
+
+    var filtered = collection.query(
+        query_embeddings,
+        where=Where.and_(conditions),
+        n_results=5,
+    )
+```
+
+Available predicates are `eq`, `ne`, `gt`, `gte`, `lt`, `lte`, `in_`, and
+`not_in`. Combine them with `and_`, `or_`, and `not_`. MojoVec automatically
+maintains typed bitmap indexes for metadata fields and rebuilds them on load or
+compaction; no index-management API is required.
+
+| Constructor | Accepted values |
+|---|---|
+| `eq`, `ne` | `String`, `Int`, `Float64`, or `Bool` |
+| `gt`, `gte`, `lt`, `lte` | `Int` or `Float64` |
+| `in_`, `not_in` | typed `List[String/Int/Float64/Bool]` |
+| `and_`, `or_` | `List[Where]` |
+| `not_` | one `Where` expression |
+
+Scalar predicates require the field to exist. Consequently, `ne` and `not_in`
+do not match records missing that field. `not_(...)` negates the complete
+expression and can therefore include records with missing fields.
+
+### 7. Disk Persistence
 
 ```mojo
     # Save to disk
@@ -175,7 +218,7 @@ The current versioned collection format stores metadata sparsely. Loading
 legacy V1/V2 collection files remains supported; records loaded from those
 formats have empty metadata.
 
-### 7. Inspect and Compact
+### 8. Inspect and Compact
 
 `update`, `upsert`, and `delete` use soft deletion so searches can continue
 without mutating HNSW links in place. Inspect accumulated historical rows and
