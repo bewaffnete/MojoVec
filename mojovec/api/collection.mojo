@@ -5,6 +5,7 @@ from std.memory.span import Span
 from std.time import perf_counter_ns
 from std.utils import Variant
 
+from mojovec.api.bm25 import BM25Index
 from mojovec.api.metadata import (
     METADATA_BOOL,
     METADATA_FLOAT,
@@ -122,7 +123,7 @@ def _read_metadata(mut file: FileHandle) raises -> Metadata:
 
 
 struct Collection(Movable, Writable):
-    """A Chroma-style embedding collection backed by Flat or SQ8 HNSW."""
+    """A Chroma-style vector and document collection with HNSW and BM25."""
 
     var _name: String
     var _dimension: Int
@@ -135,6 +136,7 @@ struct Collection(Movable, Writable):
     var _metadata_index: MetadataBitmapIndex
     var _document_by_internal: Dict[Int, Int]
     var _documents: List[String]
+    var _bm25: BM25Index
     var _id_to_internal: Dict[Int, Int]
 
     def __init__(
@@ -170,6 +172,7 @@ struct Collection(Movable, Writable):
         self._metadata_index = MetadataBitmapIndex()
         self._document_by_internal = Dict[Int, Int]()
         self._documents = List[String]()
+        self._bm25 = BM25Index()
         self._id_to_internal = Dict[Int, Int]()
 
     def __init__(out self, *, deinit take: Self):
@@ -184,6 +187,7 @@ struct Collection(Movable, Writable):
         self._metadata_index = take._metadata_index^
         self._document_by_internal = take._document_by_internal^
         self._documents = take._documents^
+        self._bm25 = take._bm25^
         self._id_to_internal = take._id_to_internal^
 
     def write_to[W: Writer](self, mut writer: W):
@@ -261,13 +265,18 @@ struct Collection(Movable, Writable):
 
     def _store_document(
         mut self, internal_id: Int, document: String
-    ):
+    ) raises:
         # Empty strings represent an absent document in managed results and
         # allow update/upsert to remove a previous document explicitly.
         if document.byte_length() == 0:
             return
         self._document_by_internal[internal_id] = len(self._documents)
         self._documents.append(document.copy())
+        if (
+            internal_id >= len(self._is_deleted)
+            or self._is_deleted[internal_id] == 0
+        ):
+            self._bm25.add(internal_id, document)
 
     def stats(self) -> CollectionStats:
         """Returns active/deleted counts and the current HNSW configuration."""
@@ -479,6 +488,7 @@ struct Collection(Movable, Writable):
                     raise Error("ID already exists; use upsert or update.")
                 previous = self._id_to_internal[record_id]
                 self._is_deleted[previous] = 1
+                self._bm25.deactivate(previous)
 
             var internal_id = len(self._user_ids)
             self._user_ids.append(record_id)
@@ -778,6 +788,7 @@ struct Collection(Movable, Writable):
             var internal_id = self._id_to_internal.pop(ids[i], -1)
             if internal_id >= 0:
                 self._is_deleted[internal_id] = 1
+                self._bm25.deactivate(internal_id)
 
     def set_ef_search(mut self, ef: Int) raises:
         if ef <= 0 or ef > 2048:
@@ -1079,6 +1090,7 @@ struct Collection(Movable, Writable):
                 vector_distances^,
                 List[List[Metadata]](),
                 List[List[String]](),
+                List[List[Float32]](),
             )
 
         var all_ids = List[List[Int]](capacity=num_queries)
@@ -1138,6 +1150,7 @@ struct Collection(Movable, Writable):
             all_distances^,
             all_metadatas^,
             all_documents^,
+            List[List[Float32]](),
         )
 
     def query(
@@ -1148,8 +1161,9 @@ struct Collection(Movable, Writable):
         """
         Runs embedding queries and returns automatically managed results.
 
-        QueryResults owns aligned ID, distance, metadata, and document Lists.
-        Callers do not allocate output buffers or release result memory.
+        QueryResults owns aligned ID, distance, metadata, and document Lists;
+        its BM25-only `scores` field is empty. Callers do not allocate output
+        buffers or release result memory.
         """
         if self._dimension <= 0:
             raise Error("Collection dimension must be positive.")
@@ -1167,6 +1181,7 @@ struct Collection(Movable, Writable):
                 List[List[Float32]](),
                 List[List[Metadata]](),
                 List[List[String]](),
+                List[List[Float32]](),
             )
 
         var output_size = num_queries * n_results
@@ -1212,6 +1227,7 @@ struct Collection(Movable, Writable):
                 List[List[Float32]](),
                 List[List[Metadata]](),
                 List[List[String]](),
+                List[List[Float32]](),
             )
 
         var output_size = num_queries * n_results
@@ -1240,6 +1256,147 @@ struct Collection(Movable, Writable):
             distances_storage,
             num_queries,
             n_results,
+        )
+
+    def _build_bm25_query_results(
+        self,
+        internal_ids_storage: List[Int],
+        scores_storage: List[Float32],
+        num_queries: Int,
+        n_results: Int,
+    ) raises -> QueryResults:
+        """Materializes BM25 scores and aligned collection payloads."""
+        var include_metadatas = len(self._metadatas) > 0
+        var include_documents = len(self._documents) > 0
+        var all_ids = List[List[Int]](capacity=num_queries)
+        var all_scores = List[List[Float32]](capacity=num_queries)
+        var all_metadatas = List[List[Metadata]]()
+        var all_documents = List[List[String]]()
+        if include_metadatas:
+            all_metadatas = List[List[Metadata]](capacity=num_queries)
+        if include_documents:
+            all_documents = List[List[String]](capacity=num_queries)
+
+        for query_index in range(num_queries):
+            var row_ids = List[Int](capacity=n_results)
+            var row_scores = List[Float32](capacity=n_results)
+            var row_metadatas = List[Metadata]()
+            var row_documents = List[String]()
+            if include_metadatas:
+                row_metadatas = List[Metadata](capacity=n_results)
+            if include_documents:
+                row_documents = List[String](capacity=n_results)
+
+            for rank in range(n_results):
+                var offset = query_index * n_results + rank
+                var internal_id = internal_ids_storage[offset]
+                var is_valid = (
+                    internal_id >= 0
+                    and internal_id < len(self._user_ids)
+                    and self._is_deleted[internal_id] == 0
+                )
+                row_ids.append(
+                    self._user_ids[internal_id] if is_valid else -1
+                )
+                row_scores.append(scores_storage[offset])
+
+                if include_metadatas:
+                    if is_valid:
+                        row_metadatas.append(
+                            self._metadata_for_internal(internal_id)
+                        )
+                    else:
+                        row_metadatas.append(Metadata())
+                if include_documents:
+                    if is_valid:
+                        row_documents.append(
+                            self._document_for_internal(internal_id)
+                        )
+                    else:
+                        row_documents.append("")
+
+            all_ids.append(row_ids^)
+            all_scores.append(row_scores^)
+            if include_metadatas:
+                all_metadatas.append(row_metadatas^)
+            if include_documents:
+                all_documents.append(row_documents^)
+
+        return QueryResults(
+            all_ids^,
+            List[List[Float32]](),
+            all_metadatas^,
+            all_documents^,
+            all_scores^,
+        )
+
+    def _query_bm25(
+        self,
+        query_texts: List[String],
+        n_results: Int,
+        exclusion: List[UInt8],
+    ) raises -> QueryResults:
+        if n_results <= 0 or n_results > 2048:
+            raise Error("n_results must be between 1 and 2048.")
+        if len(query_texts) == 0:
+            return QueryResults(
+                List[List[Int]](),
+                List[List[Float32]](),
+                List[List[Metadata]](),
+                List[List[String]](),
+                List[List[Float32]](),
+            )
+
+        var ids_storage = List[Int](
+            capacity=len(query_texts) * n_results
+        )
+        var scores_storage = List[Float32](
+            capacity=len(query_texts) * n_results
+        )
+        for query_text in query_texts:
+            var result = self._bm25.search(
+                query_text, n_results, exclusion
+            )
+            for rank in range(n_results):
+                ids_storage.append(result.internal_ids[rank])
+                scores_storage.append(result.scores[rank])
+
+        return self._build_bm25_query_results(
+            ids_storage,
+            scores_storage,
+            len(query_texts),
+            n_results,
+        )
+
+    def query(
+        self,
+        query_texts: List[String],
+        n_results: Int = 10,
+    ) raises -> QueryResults:
+        """
+        Runs BM25 full-text queries over active collection documents.
+
+        Results are ordered by descending `scores`; `distances` is empty.
+        The shared analyzer applies Unicode lowercase and word boundaries,
+        then removes bundled English and Russian stopwords without stemming.
+        """
+        return self._query_bm25(
+            query_texts,
+            n_results,
+            List[UInt8](),
+        )
+
+    def query(
+        self,
+        query_texts: List[String],
+        where: Where,
+        n_results: Int = 10,
+    ) raises -> QueryResults:
+        """Runs BM25 queries restricted by a typed metadata filter."""
+        return self._query_bm25(
+            query_texts,
+            n_results,
+            self._where_filter(where),
         )
 
     def save(mut self, path: String) raises:

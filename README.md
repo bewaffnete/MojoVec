@@ -16,6 +16,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 - managed `add`, `upsert`, `update`, `delete`, and batched `query`;
 - typed `String`, `Int`, `Float64`, and `Bool` record metadata;
 - record documents returned directly with query results;
+- native BM25 full-text search over collection documents;
 - typed `where` filtering backed by automatic sparse bitmap indexes;
 - compound `and_`, `or_`, `not_`, `in_`, and `not_in` expressions;
 - save/load, collection statistics, and graph compaction;
@@ -215,7 +216,50 @@ Scalar predicates require the field to exist. Consequently, `ne` and `not_in`
 do not match records missing that field. `not_(...)` negates the complete
 expression and can therefore include records with missing fields.
 
-### 7. Disk Persistence
+### 7. Search Documents with BM25
+
+The same `query` name accepts `List[String]` for native full-text search. No
+embedding model or second collection is required:
+
+```mojo
+    var text_results = collection.query(
+        [String("fast vector search"), String("HNSW graph")],
+        n_results=5,
+    )
+
+    for query_index in range(len(text_results.ids)):
+        for rank in range(len(text_results.ids[query_index])):
+            print(
+                text_results.ids[query_index][rank],
+                text_results.scores[query_index][rank],
+                text_results.documents[query_index][rank],
+            )
+```
+
+BM25 results are ordered by descending `scores`—larger is better—and leave
+`distances` empty. Vector results populate `distances` and leave `scores`
+empty. Text queries also accept the same typed `where` filter:
+
+```mojo
+    var filtered_text = collection.query(
+        [String("vector database")],
+        where=Where.eq("published", True),
+        n_results=5,
+    )
+```
+
+BM25 uses the same analyzer while indexing documents and parsing queries:
+
+- Unicode-aware lowercase normalization;
+- word boundaries at whitespace, ASCII/Unicode punctuation, symbols, and emoji;
+- bundled English and Russian stopwords.
+
+ASCII apostrophes and underscores are preserved inside a term, so values such
+as `rock'n'roll` and `model_v2` stay intact. Stemming is intentionally not
+applied: `run` and `running` remain different terms. A query containing only
+stopwords returns the normal padded no-match result.
+
+### 8. Disk Persistence
 
 ```mojo
     # Save to disk
@@ -230,7 +274,7 @@ The current versioned collection format stores metadata and documents sparsely.
 Loading legacy V1–V3 collection files remains supported; records loaded from
 formats predating a payload type receive empty values for that type.
 
-### 8. Inspect and Compact
+### 9. Inspect and Compact
 
 `update`, `upsert`, and `delete` use soft deletion so searches can continue
 without mutating HNSW links in place. Inspect accumulated historical rows and

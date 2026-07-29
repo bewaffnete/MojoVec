@@ -16,6 +16,7 @@ mojo run -I . examples/api_03_serialization.mojo
 mojo run -I . examples/api_04_compaction.mojo
 mojo run -I . examples/api_05_metadata.mojo
 mojo run -I . examples/api_06_where_filters.mojo
+mojo run -I . examples/api_07_bm25.mojo
 ```
 
 To compile without executing:
@@ -27,6 +28,7 @@ mojo build -I . examples/api_03_serialization.mojo
 mojo build -I . examples/api_04_compaction.mojo
 mojo build -I . examples/api_05_metadata.mojo
 mojo build -I . examples/api_06_where_filters.mojo
+mojo build -I . examples/api_07_bm25.mojo
 ```
 
 ## Which collection should I use?
@@ -167,6 +169,27 @@ compaction, so applications do not serialize or manage indexes separately.
 Fields exceeding 1024 distinct values use a scan fallback to avoid excessive
 per-value bitmap overhead.
 
+## Example 7: native BM25 document search
+
+File: [`api_07_bm25.mojo`](api_07_bm25.mojo)
+
+This example covers:
+
+- adding documents and metadata in one managed batch;
+- single and batched BM25 queries through `Collection.query(List[String])`;
+- descending BM25 scores and aligned payloads in `QueryResults`;
+- Unicode lowercase and word-boundary tokenization;
+- automatic English and Russian stopword removal without stemming;
+- combining full-text ranking with typed metadata filters;
+- automatic posting updates after `update`, `upsert`, and `delete`;
+- rebuilding the text index from documents after save/load and compaction.
+
+The BM25 index is append-only over internal record versions, just like the
+collection itself. Replaced and deleted versions are deactivated immediately.
+Compaction discards their stale postings, while load deterministically rebuilds
+the index from stored documents. There is no separate text-index file or manual
+index-maintenance API.
+
 ## Embedding layout
 
 Every public high-level method receives one flattened `List[Float32]`. For
@@ -224,12 +247,14 @@ results.ids[query_index][rank]
 results.distances[query_index][rank]
 results.metadatas[query_index][rank]
 results.documents[query_index][rank]
+results.scores[query_index][rank]
 ```
 
 MojoVec owns all temporary search buffers and transfers the result Lists to the
 caller. User code does not call `alloc`, work with pointers, or call `free`.
 Dropping `QueryResults` releases its storage automatically. If the collection
-does not store a payload kind, its corresponding outer List is empty.
+does not store a payload kind, its corresponding outer List is empty. Vector
+queries populate `distances`; BM25 queries populate `scores`.
 
 ## Distance interpretation
 

@@ -30,6 +30,7 @@ def test_collection_hnsw() raises:
     assert_true(len(results.ids) == 1, "Should have 1 query result list")
     assert_true(len(results.ids[0]) == 2, "Should return top 2 results")
     assert_true(results.ids[0][0] == 10, "First result should be ID 10")
+    assert_equal(len(results.scores), 0)
     
     # Test Serialization
     col.save("test_hnsw_col.bin")
@@ -63,6 +64,7 @@ def test_collection_ivfpq() raises:
     assert_true(len(results.ids) == 1, "Should have 1 query result list")
     assert_true(len(results.ids[0]) == 3, "Should return top 3 results")
     assert_true(results.ids[0][0] == 1000, "First result should be ID 1000")
+    assert_equal(len(results.scores), 0)
     
     # Test Serialization
     col.save("test_ivfpq_col.bin")

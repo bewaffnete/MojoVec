@@ -125,8 +125,8 @@ def main() raises:
     replacements.append(replacement.copy())
     collection.update([101], [1.0, 0.1, 0.0, 0.0], replacements)
 
-    # QueryResults owns four aligned matrices. Metadata and documents are
-    # available directly at the same query/rank coordinates as the nearest ID.
+    # A vector query populates four aligned matrices and leaves BM25 `scores`
+    # empty. Payloads use the same query/rank coordinates as the nearest ID.
     var results = collection.query([1.0, 0.0, 0.0, 0.0], n_results=1)
     var nearest_id = results.ids[0][0]
     print("\nNearest document")

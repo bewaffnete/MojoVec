@@ -6,17 +6,21 @@ from mojovec.api.metadata import Metadata
 @fieldwise_init
 struct QueryResults(Movable, Copyable):
     """
-    Managed values returned by a vector query.
+    Managed values returned by vector or BM25 queries.
 
     When a collection contains metadata or documents, those outer Lists align
     with `ids` and every inner value aligns by rank. A missing per-record value
     is represented by empty Metadata or an empty String. When the collection
     contains no values of a kind, its corresponding outer List is empty.
+
+    Vector queries populate `distances` and leave `scores` empty. BM25 queries
+    populate `scores` (larger is better) and leave `distances` empty.
     """
     var ids: List[List[Int]]
     var distances: List[List[Float32]]
     var metadatas: List[List[Metadata]]
     var documents: List[List[String]]
+    var scores: List[List[Float32]]
 
 
 @fieldwise_init

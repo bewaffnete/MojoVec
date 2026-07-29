@@ -160,6 +160,7 @@ struct CollectionIVFPQ(Movable):
                 List[List[Float32]](),
                 List[List[Metadata]](),
                 List[List[String]](),
+                List[List[Float32]](),
             )
 
         var output_size = num_queries * n_results
@@ -196,4 +197,5 @@ struct CollectionIVFPQ(Movable):
             all_distances^,
             List[List[Metadata]](),
             List[List[String]](),
+            List[List[Float32]](),
         )
