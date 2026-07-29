@@ -1,0 +1,321 @@
+from std.collections import List
+from std.os import SEEK_SET
+from std.testing import (
+    TestSuite,
+    assert_equal,
+    assert_false,
+    assert_true,
+)
+
+from mojovec import (
+    Collection,
+    Metadata,
+    WAL_ASYNC,
+    WAL_SYNC,
+)
+
+
+comptime DIMENSION = 4
+
+
+def vector(base: Float32) -> List[Float32]:
+    return [base, base + 1.0, base + 2.0, base + 3.0]
+
+
+def vectors(first: Float32, second: Float32) -> List[Float32]:
+    var result = vector(first)
+    for value in vector(second):
+        result.append(value)
+    return result^
+
+
+def metadata(label: String, year: Int) -> Metadata:
+    var value = Metadata()
+    value.set("label", label)
+    value.set("year", year)
+    value.set("score", Float64(0.875))
+    value.set("published", True)
+    return value^
+
+
+def empty_file(path: String) raises:
+    var file = open(path, "w")
+    file.close()
+
+
+def make_snapshot(snapshot_path: String, quantized: Bool = False) raises:
+    var collection = Collection(
+        DIMENSION,
+        M=8,
+        ef_construction=32,
+        ef_search=16,
+        quantized=quantized,
+        name="wal-tests",
+    )
+    collection.save(snapshot_path)
+
+
+def test_async_wal_recovers_batched_crud_and_payloads() raises:
+    var snapshot_path = "test_wal_async.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_async.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_ASYNC)
+    assert_true(collection.wal_enabled())
+    assert_equal(collection.wal_sequence(), 0)
+
+    var metadatas = List[Metadata]()
+    metadatas.append(metadata("first", 2025))
+    metadatas.append(metadata("second", 2026))
+    collection.add(
+        [10, 20],
+        vectors(1.0, 10.0),
+        metadatas,
+        ["first document", "second document"],
+    )
+    # One public batch produces one WAL sequence, not one per vector.
+    assert_equal(collection.wal_sequence(), 1)
+
+    var replacements = List[Metadata]()
+    replacements.append(metadata("updated", 2030))
+    collection.upsert(
+        [10],
+        vector(100.0),
+        replacements,
+        ["updated document"],
+    )
+    collection.delete([20])
+    assert_equal(collection.wal_sequence(), 3)
+    collection.flush_wal()
+    collection.disable_wal()
+    assert_false(collection.wal_enabled())
+
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        durability=WAL_ASYNC,
+        memory_mapped=False,
+    )
+    assert_true(recovered.wal_enabled())
+    assert_equal(recovered.wal_sequence(), 3)
+    assert_equal(recovered.count(), 1)
+    assert_equal(recovered.get_metadata(10).get_string("label"), "updated")
+    assert_equal(recovered.get_metadata(10).get_int("year"), 2030)
+    assert_equal(recovered.get_document(10), "updated document")
+    var nearest = recovered.query(vector(100.0), n_results=1)
+    assert_equal(nearest.ids[0][0], 10)
+    recovered.disable_wal()
+
+
+def test_sync_checkpoint_rotates_wal_after_snapshot() raises:
+    var snapshot_path = "test_wal_checkpoint.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_checkpoint.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    collection.add([1], vector(1.0))
+    collection.checkpoint(snapshot_path)
+    assert_equal(collection.wal_sequence(), 1)
+    collection.add([2], vector(20.0))
+    assert_equal(collection.wal_sequence(), 2)
+    collection.disable_wal()
+
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        durability=WAL_SYNC,
+        memory_mapped=False,
+    )
+    assert_equal(recovered.count(), 2)
+    assert_equal(recovered.wal_sequence(), 2)
+    assert_equal(recovered.query(vector(1.0), n_results=1).ids[0][0], 1)
+    assert_equal(recovered.query(vector(20.0), n_results=1).ids[0][0], 2)
+    recovered.disable_wal()
+
+
+def test_recovery_skips_records_already_in_snapshot() raises:
+    var snapshot_path = "test_wal_idempotent.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_idempotent.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    collection.add([7], vector(7.0))
+    # Simulates a crash after the new snapshot is durable but before WAL
+    # rotation. Recovery must not apply sequence 1 a second time.
+    collection.save(snapshot_path)
+    collection.disable_wal()
+
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        memory_mapped=False,
+    )
+    assert_equal(recovered.count(), 1)
+    assert_equal(recovered.wal_sequence(), 1)
+    assert_equal(recovered.query(vector(7.0), n_results=1).ids[0][0], 7)
+    recovered.disable_wal()
+
+
+def test_recovery_discards_incomplete_tail_before_resuming() raises:
+    var snapshot_path = "test_wal_tail.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_tail.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_ASYNC)
+    collection.add([1], vector(1.0))
+    collection.flush_wal()
+    collection.disable_wal()
+
+    # A process may die while writing the next frame. A short uncommitted
+    # tail is ignored and physically truncated before appends resume.
+    var file = open(wal_path, "a")
+    var incomplete_tail = [UInt8(1), UInt8(2), UInt8(3), UInt8(4), UInt8(5)]
+    file.write_all(incomplete_tail)
+    file.close()
+
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        durability=WAL_ASYNC,
+        memory_mapped=False,
+    )
+    assert_equal(recovered.count(), 1)
+    recovered.add([2], vector(20.0))
+    assert_equal(recovered.wal_sequence(), 2)
+    recovered.flush_wal()
+    recovered.disable_wal()
+
+    var recovered_again = Collection.recover(
+        snapshot_path,
+        wal_path,
+        memory_mapped=False,
+    )
+    assert_equal(recovered_again.count(), 2)
+    assert_equal(recovered_again.wal_sequence(), 2)
+    recovered_again.disable_wal()
+
+
+def test_failed_mutation_does_not_enter_wal() raises:
+    var snapshot_path = "test_wal_validation.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_validation.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    collection.add([1], vector(1.0))
+    var failed = False
+    try:
+        collection.add([1], vector(2.0))
+    except:
+        failed = True
+    assert_true(failed)
+    assert_equal(collection.wal_sequence(), 1)
+    collection.disable_wal()
+
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        memory_mapped=False,
+    )
+    assert_equal(recovered.count(), 1)
+    assert_equal(recovered.wal_sequence(), 1)
+    recovered.disable_wal()
+
+
+def test_sq8_collection_recovers_through_same_wal_api() raises:
+    var snapshot_path = "test_wal_sq8.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_sq8.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path, quantized=True)
+
+    var collection = Collection.load(snapshot_path)
+    assert_true(collection.is_quantized())
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    collection.add([10, 20], vectors(1.0, 20.0))
+    collection.disable_wal()
+
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        memory_mapped=False,
+    )
+    assert_true(recovered.is_quantized())
+    assert_equal(recovered.count(), 2)
+    assert_equal(recovered.wal_sequence(), 1)
+    assert_equal(recovered.query(vector(1.0), n_results=1).ids[0][0], 10)
+    recovered.disable_wal()
+
+
+def test_committed_checksum_corruption_is_rejected() raises:
+    var snapshot_path = "test_wal_checksum.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_checksum.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    collection.add([1], vector(1.0))
+    collection.disable_wal()
+
+    # Header is seven Int fields plus the nine-byte collection name. Change one
+    # payload byte while leaving the final commit marker intact.
+    var payload_offset = 7 * 8 + String("wal-tests").byte_length() + 8 * 8
+    var file = open(wal_path, "rw")
+    _ = file.seek(UInt64(payload_offset), SEEK_SET)
+    var original = file.read_bytes(1)
+    _ = file.seek(UInt64(payload_offset), SEEK_SET)
+    var corrupted = [original[0] ^ UInt8(0xFF)]
+    file.write_all(corrupted)
+    file.close()
+
+    var failed = False
+    try:
+        _ = Collection.recover(
+            snapshot_path,
+            wal_path,
+            memory_mapped=False,
+        )
+    except:
+        failed = True
+    assert_true(failed)
+
+
+def test_wal_is_bound_to_one_collection_incarnation() raises:
+    var first_snapshot = "test_wal_identity_first.mojovec"
+    var second_snapshot = "test_wal_identity_second.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_identity.log"
+    empty_file(wal_path)
+    make_snapshot(first_snapshot)
+    make_snapshot(second_snapshot)
+
+    var first = Collection.load(first_snapshot)
+    first.enable_wal(wal_path, durability=WAL_SYNC)
+    first.add([1], vector(1.0))
+    first.disable_wal()
+
+    # Name, dimension, and storage kind intentionally match. The persistent
+    # collection identity still prevents replaying a valid WAL into another
+    # collection created separately.
+    var failed = False
+    try:
+        _ = Collection.recover(
+            second_snapshot,
+            wal_path,
+            memory_mapped=False,
+        )
+    except:
+        failed = True
+    assert_true(failed)
+
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()

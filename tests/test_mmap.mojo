@@ -1,4 +1,5 @@
 from std.collections import List
+from std.algorithm import parallelize
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -7,6 +8,7 @@ from std.testing import (
 )
 
 from mojovec import Collection, Metadata
+from mojovec.io.atomic_file import atomic_replace
 
 
 comptime DIMENSION = 4
@@ -74,16 +76,10 @@ def check_mapped_round_trip(quantized: Bool, path: String) raises:
 
     var vector_result = mapped.query(vector(1.0), n_results=1)
     assert_equal(vector_result.ids[0][0], 10)
-    assert_equal(
-        vector_result.metadatas[0][0].get_string("category"), "guide"
-    )
-    assert_equal(
-        vector_result.documents[0][0], "Mojo memory mapped index"
-    )
+    assert_equal(vector_result.metadatas[0][0].get_string("category"), "guide")
+    assert_equal(vector_result.documents[0][0], "Mojo memory mapped index")
 
-    var text_result = mapped.query(
-        [String("memory mapped")], n_results=1
-    )
+    var text_result = mapped.query([String("memory mapped")], n_results=1)
     assert_equal(text_result.ids[0][0], 10)
 
     # Runtime scalar tuning and soft deletion do not touch mapped arrays.
@@ -128,10 +124,13 @@ def test_mmap_policy_and_resave() raises:
         "/tmp/mojovec_test_mmap_policy.bin",
         mmap_threshold_bytes=0,
     )
-    mapped.save("/tmp/mojovec_test_mmap_resaved.bin")
+    # Atomic rename keeps the old inode alive, so overwriting the same path is
+    # safe even while this collection continues to query its existing mmap.
+    mapped.save("/tmp/mojovec_test_mmap_policy.bin")
     assert_true(mapped.is_memory_mapped())
+    assert_equal(mapped.query(vector(1.0), n_results=1).ids[0][0], 10)
     var reloaded = Collection.load(
-        "/tmp/mojovec_test_mmap_resaved.bin",
+        "/tmp/mojovec_test_mmap_policy.bin",
         mmap_threshold_bytes=0,
     )
     assert_true(reloaded.is_memory_mapped())
@@ -146,6 +145,94 @@ def test_mmap_policy_and_resave() raises:
     except:
         invalid_threshold = True
     assert_true(invalid_threshold)
+
+
+def test_point_in_time_snapshots_survive_new_publications() raises:
+    var writer = make_collection(False)
+    var first = writer.snapshot(
+        "/tmp/mojovec_test_snapshot.bin",
+        mmap_threshold_bytes=0,
+    )
+    assert_true(first.is_memory_mapped())
+    assert_equal(first.count(), 3)
+    assert_equal(first.query(vector(1.0), n_results=1).ids[0][0], 10)
+
+    writer.upsert([10], vector(100.0), ["updated document"])
+    writer.add([40], vector(40.0), ["new document"])
+    var second = writer.snapshot(
+        "/tmp/mojovec_test_snapshot.bin",
+        mmap_threshold_bytes=0,
+    )
+
+    # The first reader remains pinned to the previous inode and state.
+    assert_true(first.is_memory_mapped())
+    assert_equal(first.count(), 3)
+    assert_equal(first.query(vector(1.0), n_results=1).ids[0][0], 10)
+    assert_equal(first.get_document(10), "Mojo memory mapped index")
+
+    # Newly acquired readers observe the atomically published generation.
+    assert_true(second.is_memory_mapped())
+    assert_equal(second.count(), 4)
+    assert_equal(second.query(vector(40.0), n_results=1).ids[0][0], 40)
+    assert_equal(second.get_document(10), "updated document")
+
+
+def test_queries_continue_during_atomic_publication() raises:
+    var writer = make_collection(False)
+    var reader = writer.snapshot(
+        "/tmp/mojovec_test_concurrent_snapshot.bin",
+        mmap_threshold_bytes=0,
+    )
+    writer.add([40], vector(40.0), ["new document"])
+    var failures = List[Int](length=2, fill=0)
+
+    @parameter
+    def work(worker: Int):
+        try:
+            if worker == 0:
+                for _ in range(100):
+                    var result = reader.query(vector(1.0), n_results=1)
+                    if result.ids[0][0] != 10:
+                        failures[0] = 1
+            else:
+                writer.save("/tmp/mojovec_test_concurrent_snapshot.bin")
+        except:
+            failures[worker] = 1
+
+    parallelize[work](2, 2)
+    assert_equal(failures[0], 0)
+    assert_equal(failures[1], 0)
+    assert_true(reader.is_memory_mapped())
+    assert_equal(reader.count(), 3)
+
+    var latest = Collection.load(
+        "/tmp/mojovec_test_concurrent_snapshot.bin",
+        mmap_threshold_bytes=0,
+    )
+    assert_equal(latest.count(), 4)
+    assert_equal(latest.query(vector(40.0), n_results=1).ids[0][0], 40)
+
+
+def test_failed_atomic_replacement_preserves_destination() raises:
+    var writer = make_collection(False)
+    writer.save("/tmp/mojovec_test_atomic_failure.bin")
+
+    var replacement_failed = False
+    try:
+        atomic_replace(
+            "/tmp/mojovec_missing_atomic_source_for_test",
+            "/tmp/mojovec_test_atomic_failure.bin",
+        )
+    except:
+        replacement_failed = True
+    assert_true(replacement_failed)
+
+    var preserved = Collection.load(
+        "/tmp/mojovec_test_atomic_failure.bin",
+        mmap_threshold_bytes=0,
+    )
+    assert_equal(preserved.count(), 3)
+    assert_equal(preserved.query(vector(1.0), n_results=1).ids[0][0], 10)
 
 
 def check_empty_mapped_collection_can_grow(

@@ -14,5 +14,8 @@ from mojovec.api import (
     Metadata,
     MetadataValue,
     QueryResults,
+    WAL_ASYNC,
+    WAL_SYNC,
+    WalDurability,
     Where,
 )

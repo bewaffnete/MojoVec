@@ -20,7 +20,8 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 - hybrid vector + BM25 search with reciprocal rank fusion (RRF);
 - typed `where` filtering backed by automatic sparse bitmap indexes;
 - compound `and_`, `or_`, `not_`, `in_`, and `not_in` expressions;
-- save/load, collection statistics, and graph compaction;
+- atomic save/load, optional WAL recovery, collection statistics, and graph
+  compaction;
 - IVF-Flat and IVF-PQ lower-level indexes implemented in pure Mojo.
 
 
@@ -325,6 +326,86 @@ candidate list naturally falls back to BM25.
         memory_mapped=False,
     )
 ```
+
+`save()` uses a synchronized temporary file and atomic rename. A crash cannot
+expose a half-written collection at the destination path, and existing mmap
+readers keep using the previous complete file while the new snapshot is
+published.
+
+For one-writer/many-reader workloads, `snapshot()` publishes the writer's
+current state and returns an independent point-in-time collection:
+
+```mojo
+    var reader_v1 = collection.snapshot(
+        "my_database.bin",
+        mmap_threshold_bytes=0,
+    )
+
+    collection.upsert(ids, embeddings)
+
+    # Still observes the state captured before upsert.
+    var old_results = reader_v1.query(query, n_results=10)
+
+    # Newly acquired readers observe the new atomic publication.
+    var reader_v2 = collection.snapshot(
+        "my_database.bin",
+        mmap_threshold_bytes=0,
+    )
+```
+
+Readers do not block the single writer and do not need locks or manual cleanup.
+Without a WAL, writes made after the latest `save()` or `snapshot()` are not
+crash-durable. This is the simplest and fastest mode when another datastore is
+the source of truth.
+
+For standalone durability, enable the optional write-ahead log:
+
+```mojo
+    from mojovec import Collection, WAL_ASYNC, WAL_SYNC
+
+    # Create the recovery base once, then log later mutations.
+    collection.save("my_database.bin")
+    collection.enable_wal(
+        "my_database.wal",
+        durability=WAL_ASYNC,
+    )
+
+    # One public add/upsert/update/delete batch becomes one committed frame.
+    collection.add(ids, embeddings, metadatas, documents)
+
+    # WAL_ASYNC avoids per-batch fsync. Group any number of batches behind one
+    # durability barrier chosen by the application.
+    collection.flush_wal()
+
+    # After restart, replay committed frames and continue using the same WAL.
+    var recovered = Collection.recover(
+        "my_database.bin",
+        "my_database.wal",
+        durability=WAL_ASYNC,
+    )
+
+    # Publish a durable snapshot first, then safely rotate the covered WAL.
+    recovered.checkpoint("my_database.bin")
+```
+
+`WAL_ASYNC` is the high-throughput default: writes are appended immediately,
+but only `flush_wal()` or `checkpoint()` establishes an explicit durability
+boundary. A process or machine failure can lose the unflushed tail. `WAL_SYNC`
+calls `fsync` once after every complete public mutation batch and is intended
+for applications that prefer the smallest loss window over ingestion
+throughput.
+
+WAL is absent from the query path and stores no second in-memory vector copy.
+The writer streams IDs and embeddings directly from the managed input Lists,
+adds a checksum and commit marker, and ignores an incomplete final frame during
+recovery. Checkpoint sequence numbers make recovery idempotent even if a crash
+happens after the new snapshot is published but before WAL rotation. A
+non-empty WAL cannot be silently replaced by `enable_wal()`; use `recover()` so
+committed mutations are not skipped.
+
+`snapshot()` performs the same safe checkpoint when WAL is enabled, then
+returns an independent reader. The returned reader does not append to the
+writer's WAL.
 
 Saved collections omit unused reserved capacity and store populated vector rows
 plus occupied HNSW links in 64-byte-aligned regions. Large Flat and SQ8 indexes

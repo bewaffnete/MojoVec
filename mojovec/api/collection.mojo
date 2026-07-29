@@ -1,4 +1,4 @@
-from std.collections import Dict, List
+from std.collections import Dict, List, Optional
 from std.io.file import FileHandle
 from std.memory import alloc
 from std.memory.span import Span
@@ -35,6 +35,15 @@ from mojovec.core.types import (
 from mojovec.index.index_flat import IndexFlat
 from mojovec.index.index_flat_sq8 import IndexFlatSQ8
 from mojovec.index.index_hnsw import IndexHNSW
+from mojovec.io.wal import (
+    WAL_ASYNC,
+    WAL_OPERATION_DELETE,
+    WAL_OPERATION_WRITE,
+    WAL_SYNC,
+    WalDurability,
+    WalReader,
+    WriteAheadLog,
+)
 
 
 comptime FlatHNSW = IndexHNSW[IndexFlat]
@@ -43,10 +52,11 @@ comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
 
 comptime COLLECTION_MAGIC_V1 = 1129270348
 comptime COLLECTION_MAGIC_V2 = 1129270349
-comptime COLLECTION_FORMAT_VERSION = 5
+comptime COLLECTION_FORMAT_VERSION = 6
 comptime COLLECTION_FORMAT_VERSION_WITH_METADATA = 3
 comptime COLLECTION_FORMAT_VERSION_WITH_DOCUMENTS = 4
 comptime COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX = 5
+comptime COLLECTION_FORMAT_VERSION_WITH_WAL_SEQUENCE = 6
 comptime DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
 comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
 comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
@@ -146,6 +156,10 @@ struct Collection(Movable, Writable):
     var _documents: List[String]
     var _bm25: BM25Index
     var _id_to_internal: Dict[Int, Int]
+    var _identity: Int
+    var _wal: Optional[WriteAheadLog]
+    var _applied_sequence: Int
+    var _replaying_wal: Bool
 
     def __init__(
         out self,
@@ -182,6 +196,10 @@ struct Collection(Movable, Writable):
         self._documents = List[String]()
         self._bm25 = BM25Index()
         self._id_to_internal = Dict[Int, Int]()
+        self._identity = Int(perf_counter_ns())
+        self._wal = None
+        self._applied_sequence = 0
+        self._replaying_wal = False
 
     def __init__(out self, *, deinit take: Self):
         self._name = take._name^
@@ -197,6 +215,10 @@ struct Collection(Movable, Writable):
         self._documents = take._documents^
         self._bm25 = take._bm25^
         self._id_to_internal = take._id_to_internal^
+        self._identity = take._identity
+        self._wal = take._wal^
+        self._applied_sequence = take._applied_sequence
+        self._replaying_wal = take._replaying_wal
 
     def write_to[W: Writer](self, mut writer: W):
         var storage = "sq8" if self.is_quantized() else "flat"
@@ -422,6 +444,10 @@ struct Collection(Movable, Writable):
                 batch_documents,
             )
 
+        rebuilt._identity = self._identity
+        rebuilt._applied_sequence = self._applied_sequence
+        if self._wal:
+            rebuilt._wal = self._wal.take()
         self = rebuilt^
 
         var after = self.stats()
@@ -499,13 +525,27 @@ struct Collection(Movable, Writable):
             raise Error("Documents length must equal len(ids).")
         if len(ids) == 0:
             return
+        if not replace_existing:
+            for i in range(len(ids)):
+                if ids[i] in self._id_to_internal:
+                    raise Error("ID already exists; use upsert or update.")
+
+        var wal_sequence = self._applied_sequence
+        if not self._replaying_wal and self._wal:
+            wal_sequence = self._wal[].append_write(
+                ids,
+                embeddings,
+                replace_existing,
+                metadatas,
+                has_metadatas,
+                documents,
+                has_documents,
+            )
 
         for i in range(len(ids)):
             var record_id = ids[i]
             var previous = -1
             if record_id in self._id_to_internal:
-                if not replace_existing:
-                    raise Error("ID already exists; use upsert or update.")
                 previous = self._id_to_internal[record_id]
                 self._is_deleted[previous] = 1
                 self._bm25.deactivate(previous)
@@ -545,6 +585,8 @@ struct Collection(Movable, Writable):
             self._id_to_internal[record_id] = internal_id
 
         self._add_to_index(embeddings)
+        if not self._replaying_wal and self._wal:
+            self._applied_sequence = wal_sequence
 
     def add(mut self, ids: List[Int], embeddings: List[Float32]) raises:
         """
@@ -802,13 +844,22 @@ struct Collection(Movable, Writable):
             has_documents=True,
         )
 
-    def delete(mut self, ids: List[Int]):
+    def delete(mut self, ids: List[Int]) raises:
         """Soft-deletes active records by ID."""
+        if len(ids) == 0:
+            return
+        var wal_sequence = self._applied_sequence
+        if not self._replaying_wal and self._wal:
+            wal_sequence = self._wal[].append_delete(
+                Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+            )
         for i in range(len(ids)):
             var internal_id = self._id_to_internal.pop(ids[i], -1)
             if internal_id >= 0:
                 self._is_deleted[internal_id] = 1
                 self._bm25.deactivate(internal_id)
+        if not self._replaying_wal and self._wal:
+            self._applied_sequence = wal_sequence
 
     def set_ef_search(mut self, ef: Int) raises:
         if ef <= 0 or ef > 2048:
@@ -1580,8 +1631,62 @@ struct Collection(Movable, Writable):
             self._where_filter(where),
         )
 
-    def save(mut self, path: String) raises:
-        """Saves payloads, storage kind, vectors, and the HNSW graph."""
+    def wal_enabled(self) -> Bool:
+        """Returns whether mutations are appended to a write-ahead log."""
+        return Bool(self._wal)
+
+    def wal_sequence(self) -> Int:
+        """Returns the latest WAL sequence applied to this collection."""
+        return self._applied_sequence
+
+    def enable_wal(
+        mut self,
+        path: String,
+        durability: WalDurability = WAL_ASYNC,
+    ) raises:
+        """
+        Enables an optional append-only WAL for subsequent mutations.
+
+        A non-empty WAL must be opened through `recover()` so committed
+        records cannot be skipped accidentally.
+        """
+        if self._wal:
+            raise Error("WAL is already enabled.")
+        var wal = WriteAheadLog.create(
+            path,
+            self._dimension,
+            self._storage_kind,
+            self._identity,
+            self._name,
+            self._applied_sequence,
+            durability,
+        )
+        self._wal = wal^
+
+    def disable_wal(mut self):
+        """Stops logging new mutations without deleting the WAL file."""
+        if self._wal:
+            _ = self._wal.take()
+
+    def flush_wal(mut self) raises:
+        """Makes all WAL frames written so far durable."""
+        if not self._wal:
+            raise Error("WAL is not enabled.")
+        self._wal[].flush()
+
+    def checkpoint(mut self, path: String) raises:
+        """
+        Atomically saves all applied operations and rotates the WAL.
+
+        The snapshot is durable before old WAL frames are discarded.
+        """
+        self.save(path)
+        if self._wal:
+            self._wal[].reset(self._applied_sequence)
+
+    def _save_direct(mut self, path: String) raises:
+        """Writes and synchronizes one complete collection file."""
+        from mojovec.io.atomic_file import sync_file
         from mojovec.io.serialization import (
             write_index_hnsw_mmap,
             write_index_hnsw_sq8_mmap,
@@ -1594,6 +1699,8 @@ struct Collection(Movable, Writable):
         _write_string(file, self._name)
         write_int(file, self._dimension)
         write_int(file, self._storage_kind)
+        write_int(file, self._identity)
+        write_int(file, self._applied_sequence)
 
         var num_ids = len(self._user_ids)
         write_int(file, num_ids)
@@ -1634,7 +1741,126 @@ struct Collection(Movable, Writable):
             write_index_hnsw_mmap(
                 file, self._hnsw.unsafe_get[FlatHNSW]()
             )
+        sync_file(file)
         file.close()
+
+    def save(mut self, path: String) raises:
+        """
+        Atomically saves a complete collection.
+
+        A synchronized temporary file is renamed over `path`, so readers see
+        either the previous complete snapshot or the new complete snapshot.
+        Existing mmap readers retain their previous file generation.
+        """
+        from mojovec.io.atomic_file import (
+            atomic_replace,
+            atomic_temporary_path,
+            sync_parent_directory,
+        )
+
+        var temporary_path = atomic_temporary_path(path)
+        self._save_direct(temporary_path)
+        atomic_replace(temporary_path, path)
+        sync_parent_directory(path)
+
+    def snapshot(
+        mut self,
+        path: String,
+        memory_mapped: Bool = True,
+        mmap_threshold_bytes: Int = DEFAULT_MMAP_THRESHOLD_BYTES,
+    ) raises -> Collection:
+        """
+        Atomically publishes and returns an independent point-in-time view.
+
+        The returned collection can serve concurrent readers while the
+        original collection continues to receive writes from one writer.
+        """
+        self.checkpoint(path)
+        return Collection.load(
+            path,
+            memory_mapped=memory_mapped,
+            mmap_threshold_bytes=mmap_threshold_bytes,
+        )
+
+    @staticmethod
+    def recover(
+        snapshot_path: String,
+        wal_path: String,
+        durability: WalDurability = WAL_ASYNC,
+        memory_mapped: Bool = True,
+        mmap_threshold_bytes: Int = DEFAULT_MMAP_THRESHOLD_BYTES,
+    ) raises -> Collection:
+        """Loads a snapshot, replays committed WAL frames, and resumes WAL."""
+        var collection = Collection.load(
+            snapshot_path,
+            memory_mapped=memory_mapped,
+            mmap_threshold_bytes=mmap_threshold_bytes,
+        )
+        var reader = WalReader.open(wal_path)
+        if (
+            reader.header.dimension != collection._dimension
+            or reader.header.storage_kind != collection._storage_kind
+            or reader.header.identity != collection._identity
+            or reader.header.name != collection._name
+        ):
+            raise Error("WAL belongs to a different collection.")
+        if reader.header.base_sequence > collection._applied_sequence:
+            raise Error("Snapshot is older than the retained WAL base.")
+
+        var expected_sequence = reader.header.base_sequence + 1
+        var last_sequence = reader.header.base_sequence
+        while True:
+            var optional_record = reader.next()
+            if not optional_record:
+                break
+            var record = optional_record.take()
+            if record.sequence != expected_sequence:
+                raise Error("WAL sequence is not contiguous.")
+            expected_sequence += 1
+            last_sequence = record.sequence
+            if record.sequence <= collection._applied_sequence:
+                continue
+            if record.sequence != collection._applied_sequence + 1:
+                raise Error("WAL does not continue the snapshot sequence.")
+
+            collection._replaying_wal = True
+            if record.operation == WAL_OPERATION_WRITE:
+                collection._append_records(
+                    Span[Int](
+                        ptr=record.ids.unsafe_ptr(),
+                        length=len(record.ids),
+                    ),
+                    Span[Float32](
+                        ptr=record.embeddings.unsafe_ptr(),
+                        length=len(record.embeddings),
+                    ),
+                    record.replace_existing,
+                    record.metadatas,
+                    record.has_metadatas,
+                    record.documents,
+                    record.has_documents,
+                )
+            elif record.operation == WAL_OPERATION_DELETE:
+                collection.delete(record.ids)
+            else:
+                raise Error("Unsupported WAL operation.")
+            collection._replaying_wal = False
+            collection._applied_sequence = record.sequence
+
+        if collection._applied_sequence > last_sequence:
+            raise Error("WAL ends before the snapshot sequence.")
+        var wal = WriteAheadLog.resume(
+            wal_path,
+            collection._dimension,
+            collection._storage_kind,
+            collection._identity,
+            collection._name,
+            durability,
+            last_sequence + 1,
+            reader.valid_bytes,
+        )
+        collection._wal = wal^
+        return collection^
 
     @staticmethod
     def load(
@@ -1642,7 +1868,7 @@ struct Collection(Movable, Writable):
         memory_mapped: Bool = True,
         mmap_threshold_bytes: Int = DEFAULT_MMAP_THRESHOLD_BYTES,
     ) raises -> Collection:
-        """Loads Flat/SQ8, mapping V5 index arrays when the threshold is met.
+        """Loads Flat/SQ8, mapping index arrays when the threshold is met.
         """
         from mojovec.io.serialization import (
             check_size_limit,
@@ -1663,6 +1889,8 @@ struct Collection(Movable, Writable):
         var dimension: Int
         var storage_kind: StorageKind = STORAGE_SQ8
         var version = 1
+        var identity: Int = Int(perf_counter_ns())
+        var applied_sequence = 0
 
         if magic == COLLECTION_MAGIC_V1:
             dimension = read_int(file)
@@ -1675,6 +1903,11 @@ struct Collection(Movable, Writable):
             storage_kind = read_int(file)
             if storage_kind != STORAGE_FLAT and storage_kind != STORAGE_SQ8:
                 raise Error("Invalid Collection storage kind.")
+            if version >= COLLECTION_FORMAT_VERSION_WITH_WAL_SEQUENCE:
+                identity = read_int(file)
+                applied_sequence = read_int(file)
+                if identity <= 0 or applied_sequence < 0:
+                    raise Error("Invalid Collection durability state.")
         else:
             raise Error("Invalid Collection magic.")
 
@@ -1686,6 +1919,8 @@ struct Collection(Movable, Writable):
             quantized=storage_kind == STORAGE_SQ8,
             name=name,
         )
+        collection._identity = identity
+        collection._applied_sequence = applied_sequence
 
         if num_ids > 0:
             var ids_data = file.read_bytes(num_ids * 8)

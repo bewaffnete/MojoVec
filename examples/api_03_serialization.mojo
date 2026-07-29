@@ -11,10 +11,15 @@ Collection.save() persists:
 Collection.load() inspects the file and reconstructs the correct storage type,
 so callers do not need to pass quantized=True/False while loading.
 
-Saved V5 files place vector and HNSW arrays in aligned regions. Large files are
+Saved files place vector and HNSW arrays in aligned regions. Large files are
 memory-mapped automatically; this small example forces mmap with a zero-byte
 threshold so that the behavior is visible without generating a large fixture.
 The Collection owns and releases the mapping automatically.
+
+save() publishes through a synchronized temporary file and atomic rename.
+snapshot() additionally returns an independent point-in-time reader, allowing
+one writer to continue changing its in-memory collection while existing
+readers keep querying the previous mapped file.
 
 The example writes two files under /tmp to avoid polluting the repository.
 """
@@ -122,6 +127,16 @@ def round_trip(
     # add/update/upsert/compaction need writable graph storage. On the first
     # such operation MojoVec copies the mapped arrays to owned memory
     # automatically. No mmap handles, pointers, or free calls reach the API.
+
+    # snapshot() combines atomic save and load. Existing snapshots remain
+    # pinned to their complete point-in-time state when this path is published
+    # again, making them suitable for concurrent read traffic.
+    var snapshot = collection.snapshot(path, mmap_threshold_bytes=0)
+    print("Snapshot reader:")
+    print("  memory mapped:", snapshot.is_memory_mapped())
+    print("  active records:", snapshot.count())
+    var snapshot_results = snapshot.query(query, n_results=3)
+    print_results("Results from point-in-time snapshot:", snapshot_results)
 
     # For deterministic data, returned IDs should match before and after the
     # round trip. Floating-point distances should be compared with a tolerance,

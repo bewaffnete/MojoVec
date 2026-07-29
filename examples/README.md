@@ -112,7 +112,7 @@ The example writes:
 ```
 
 `Collection.load(path)` detects Flat versus SQ8 from the file header. Do not
-create a new collection or pass `quantized` when loading. V5 files store the
+create a new collection or pass `quantized` when loading. Saved files store the
 large vector and HNSW arrays in aligned regions. Files of at least 64 MiB are
 mapped read-only by default; the example uses `mmap_threshold_bytes=0` to force
 that path for its small fixture. Pass `memory_mapped=False` to force a copied
@@ -122,6 +122,14 @@ The mapping belongs to `Collection`; users do not keep a file open or release
 memory manually. Read-only search operations preserve it. The first
 `add`/`update`/`upsert` or compaction transparently detaches the mapped arrays
 into writable owned storage.
+
+`save()` publishes through `fsync` and atomic rename, so an existing destination
+is never replaced by a partially written collection. `snapshot(path)` performs
+that publication and returns an independent point-in-time reader. Existing
+mmap readers keep their previous state while one writer publishes the next
+state. Changes become crash-durable after `save()` or `snapshot()` returns.
+Applications that need to recover mutations made between snapshots can enable
+the optional WAL shown in Example 9.
 
 ## Example 4: statistics and compaction
 
@@ -219,6 +227,29 @@ RRF uses ranks rather than mixing raw vector distances with BM25 scores. A
 record present in both candidate lists receives a contribution from both.
 Hybrid search leaves `distances` empty and returns the fused values through
 `QueryResults.scores`.
+
+## Example 9: optional write-ahead log
+
+File: [`api_09_wal.mojo`](api_09_wal.mojo)
+
+This example demonstrates standalone crash recovery without adding WAL work to
+queries:
+
+- creating an atomic snapshot as the recovery base;
+- enabling the high-throughput `WAL_ASYNC` mode;
+- appending one WAL frame per complete public mutation batch;
+- choosing an explicit durability boundary with `flush_wal()`;
+- restoring vectors, metadata, documents, updates, and deletions with
+  `Collection.recover()`;
+- publishing a new durable snapshot and rotating covered frames with
+  `checkpoint()`;
+- selecting `WAL_SYNC` when every mutation call must perform its own `fsync`.
+
+`WAL_ASYNC` does not mean that a background worker owns the collection. It means
+that appends avoid a per-call `fsync`, allowing several API batches to share one
+`flush_wal()` barrier. `WAL_SYNC` trades ingestion throughput for the smaller
+durability window. Both modes use the same Flat/SQ8 collection API, and neither
+changes query execution.
 
 ## Embedding layout
 
