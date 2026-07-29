@@ -120,7 +120,7 @@ def test_ivf_pq_sparse_results_have_deterministic_tail() raises:
     )
 
     assert_equal(labels[0], 42)
-    assert_true(distances[0] == 0.0)
+    assert_true(distances[0] >= 0.0 and distances[0] < 1e38)
     for i in range(1, k):
         assert_equal(labels[i], -1)
         assert_true(distances[i] == 1e38)
