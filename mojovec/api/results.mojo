@@ -1,13 +1,22 @@
 from std.collections import List
 
+from mojovec.api.metadata import Metadata
+
 
 @fieldwise_init
 struct QueryResults(Movable, Copyable):
     """
-    Contains the IDs and distances resulting from a vector query.
+    Managed values returned by a vector query.
+
+    When a collection contains metadata or documents, those outer Lists align
+    with `ids` and every inner value aligns by rank. A missing per-record value
+    is represented by empty Metadata or an empty String. When the collection
+    contains no values of a kind, its corresponding outer List is empty.
     """
     var ids: List[List[Int]]
     var distances: List[List[Float32]]
+    var metadatas: List[List[Metadata]]
+    var documents: List[List[String]]
 
 
 @fieldwise_init

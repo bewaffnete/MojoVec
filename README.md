@@ -15,6 +15,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 - Flat and SQ8 HNSW collections behind one Chroma-style API;
 - managed `add`, `upsert`, `update`, `delete`, and batched `query`;
 - typed `String`, `Int`, `Float64`, and `Bool` record metadata;
+- record documents returned directly with query results;
 - typed `where` filtering backed by automatic sparse bitmap indexes;
 - compound `and_`, `or_`, `not_`, `in_`, and `not_in` expressions;
 - save/load, collection statistics, and graph compaction;
@@ -120,10 +121,10 @@ IDs are inserted; existing active records are replaced:
 
 A single `add` or `upsert` batch must not contain duplicate IDs.
 
-### 4. Add Metadata
+### 4. Add Metadata and Documents
 
 Metadata is an owned, typed record supporting `String`, `Int`, `Float64`, and
-`Bool` values:
+`Bool` values. Documents are ordinary owned `String` values:
 
 ```mojo
     var document = Metadata()
@@ -137,17 +138,21 @@ Metadata is an owned, typed record supporting `String`, `Int`, `Float64`, and
 
     var metadatas = List[Metadata]()
     metadatas.append(document.copy())
-    collection.add([42], document_embedding, metadatas)
+    var documents = [String("A guide to fast vector search in Mojo.")]
+    collection.add([42], document_embedding, metadatas, documents)
 
     var stored = collection.get_metadata(42)
     print(stored.get_string("title"))
     print(stored.keys())
+    print(collection.get_document(42))
 ```
 
-There must be one metadata object per ID. Vector-only `update` and `upsert`
-preserve the current metadata snapshot; overloads receiving
-`List[Metadata]` replace it completely. Returned metadata is an owned copy.
-Metadata is preserved by save/load and compaction.
+When supplied, there must be one metadata object and one document per ID.
+`add`, `upsert`, and `update` accept vector-only, metadata-only, document-only,
+or metadata-plus-document batches. Vector-only operations preserve both
+payloads. Supplying one payload kind replaces that kind while preserving the
+other. An empty metadata object or document string removes that payload.
+Metadata and documents are owned values preserved by save/load and compaction.
 
 ### 5. Search
 
@@ -163,11 +168,18 @@ Metadata is preserved by save/load and compaction.
         print("Query", i)
         for j in range(len(results.ids[i])):
             print("ID:", results.ids[i][j], "Dist:", results.distances[i][j])
+            if len(results.metadatas) > 0:
+                print("Metadata:", results.metadatas[i][j])
+            if len(results.documents) > 0:
+                print("Document:", results.documents[i][j])
 ```
 
 `query()` returns managed `QueryResults`. Application code never allocates
 output buffers, handles pointers, or calls `free`; result memory is released
-automatically when it is no longer used.
+automatically when it is no longer used. Metadata and document rows align with
+`ids` by query and rank. Missing per-record values use empty placeholders. If
+the collection has no metadata or no documents at all, the corresponding outer
+List is empty and no payload matrix is allocated.
 
 ### 6. Filter by Metadata
 
@@ -214,9 +226,9 @@ expression and can therefore include records with missing fields.
     var loaded = Collection.load("my_database.bin")
 ```
 
-The current versioned collection format stores metadata sparsely. Loading
-legacy V1/V2 collection files remains supported; records loaded from those
-formats have empty metadata.
+The current versioned collection format stores metadata and documents sparsely.
+Loading legacy V1–V3 collection files remains supported; records loaded from
+formats predating a payload type receive empty values for that type.
 
 ### 8. Inspect and Compact
 

@@ -109,7 +109,7 @@ struct MetadataValue(Movable, Copyable, Writable):
             writer.write(self._bool_value)
 
 
-struct Metadata(Movable, Writable):
+struct Metadata(Movable, Copyable, Writable):
     """
     A deterministic string-to-scalar metadata record.
 

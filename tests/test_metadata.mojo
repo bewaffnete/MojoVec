@@ -7,7 +7,7 @@ from std.testing import (
     assert_true,
 )
 
-from mojovec import Collection, Metadata
+from mojovec import Collection, Metadata, Where
 
 
 comptime DIMENSION = 4
@@ -67,6 +67,9 @@ def test_collection_metadata_crud_semantics() raises:
     var metadatas = List[Metadata]()
     metadatas.append(original.copy())
     collection.add([10], vector(1.0), metadatas)
+    var metadata_results = collection.query(vector(1.0), n_results=1)
+    assert_equal(len(metadata_results.metadatas), 1)
+    assert_equal(len(metadata_results.documents), 0)
 
     # The collection owns a copy rather than aliasing the caller's object.
     original.set("label", "mutated outside")
@@ -113,6 +116,123 @@ def test_collection_metadata_crud_semantics() raises:
     assert_equal(collection.count(), 1)
 
 
+def check_query_result_payloads(quantized: Bool) raises:
+    var collection = Collection(
+        DIMENSION,
+        M=8,
+        ef_construction=48,
+        ef_search=24,
+        quantized=quantized,
+    )
+    var first = Metadata()
+    first.set("label", "first")
+    var second = Metadata()
+    var metadatas = List[Metadata]()
+    metadatas.append(first.copy())
+    metadatas.append(second.copy())
+
+    var embeddings = List[Float32]()
+    for value in vector(1.0):
+        embeddings.append(value)
+    for value in vector(10.0):
+        embeddings.append(value)
+    collection.add(
+        [10, 20],
+        embeddings,
+        metadatas,
+        ["first document", ""],
+    )
+
+    # Both payload matrices are aligned with query rows and result ranks.
+    # Missing values remain aligned through empty placeholders.
+    var queries = List[Float32]()
+    for value in vector(1.0):
+        queries.append(value)
+    for value in vector(10.0):
+        queries.append(value)
+    var results = collection.query(queries, n_results=1)
+    assert_equal(len(results.ids), 2)
+    assert_equal(len(results.metadatas), 2)
+    assert_equal(len(results.documents), 2)
+    assert_equal(results.ids[0][0], 10)
+    assert_equal(results.metadatas[0][0].get_string("label"), "first")
+    assert_equal(results.documents[0][0], "first document")
+    assert_equal(results.ids[1][0], 20)
+    assert_equal(results.metadatas[1][0].count(), 0)
+    assert_equal(results.documents[1][0], "")
+
+    # Filtered queries return the same aligned payloads.
+    var filtered = collection.query(
+        vector(1.0),
+        where=Where.eq("label", "first"),
+        n_results=2,
+    )
+    assert_equal(filtered.ids[0][0], 10)
+    assert_equal(filtered.metadatas[0][0].get_string("label"), "first")
+    assert_equal(filtered.documents[0][0], "first document")
+    assert_equal(filtered.ids[0][1], -1)
+    assert_equal(filtered.metadatas[0][1].count(), 0)
+    assert_equal(filtered.documents[0][1], "")
+
+
+def test_flat_query_result_payloads() raises:
+    check_query_result_payloads(False)
+
+
+def test_sq8_query_result_payloads() raises:
+    check_query_result_payloads(True)
+
+
+def test_vector_only_query_results_omit_unused_payload_matrices() raises:
+    var collection = Collection(DIMENSION, quantized=False)
+    collection.add([1], vector(1.0))
+    var results = collection.query(vector(1.0), n_results=1)
+    assert_equal(len(results.metadatas), 0)
+    assert_equal(len(results.documents), 0)
+
+
+def test_document_crud_semantics() raises:
+    var collection = Collection(DIMENSION, quantized=False)
+    collection.add([10], vector(1.0), ["original document"])
+    assert_equal(collection.get_document(10), "original document")
+    var document_results = collection.query(vector(1.0), n_results=1)
+    assert_equal(len(document_results.metadatas), 0)
+    assert_equal(len(document_results.documents), 1)
+    assert_equal(document_results.documents[0][0], "original document")
+
+    # Vector-only and metadata-only replacements preserve the document.
+    collection.update([10], vector(2.0))
+    assert_equal(collection.get_document(10), "original document")
+    var metadata = Metadata()
+    metadata.set("version", 2)
+    var metadatas = List[Metadata]()
+    metadatas.append(metadata.copy())
+    collection.update([10], vector(3.0), metadatas)
+    assert_equal(collection.get_document(10), "original document")
+
+    # Document-only replacement preserves metadata.
+    collection.upsert([10], vector(4.0), ["replacement document"])
+    assert_equal(collection.get_document(10), "replacement document")
+    assert_equal(collection.get_metadata(10).get_int("version"), 2)
+
+    # An explicitly supplied empty document removes the active value.
+    collection.update([10], vector(5.0), [""])
+    var missing_document_failed = False
+    try:
+        _ = collection.get_document(10)
+    except:
+        missing_document_failed = True
+    assert_true(missing_document_failed)
+
+    var mismatched_documents = List[String]()
+    var mismatch_failed = False
+    try:
+        collection.add([20], vector(6.0), mismatched_documents)
+    except:
+        mismatch_failed = True
+    assert_true(mismatch_failed)
+
+
 def check_metadata_round_trip(quantized: Bool, path: String) raises:
     var collection = Collection(
         DIMENSION,
@@ -131,13 +251,17 @@ def check_metadata_round_trip(quantized: Bool, path: String) raises:
     var metadatas = List[Metadata]()
     metadatas.append(first.copy())
     metadatas.append(second.copy())
+    var documents = [
+        String("first persisted document"),
+        String("second persisted document"),
+    ]
 
     var embeddings = List[Float32]()
     for value in vector(1.0):
         embeddings.append(value)
     for value in vector(10.0):
         embeddings.append(value)
-    collection.add([100, 200], embeddings, metadatas)
+    collection.add([100, 200], embeddings, metadatas, documents)
 
     # Creates one historical version whose metadata must also remain aligned
     # in the serialized file. The active replacement inherits metadata.
@@ -156,6 +280,16 @@ def check_metadata_round_trip(quantized: Bool, path: String) raises:
         loaded_metadata.get_float("score"), 0.875, atol=1e-12
     )
     assert_true(loaded_metadata.get_bool("published"))
+    assert_equal(
+        loaded.get_document(100), "first persisted document"
+    )
+    var loaded_results = loaded.query(vector(2.0), n_results=1)
+    assert_equal(
+        loaded_results.metadatas[0][0].get_string("label"), "first"
+    )
+    assert_equal(
+        loaded_results.documents[0][0], "first persisted document"
+    )
 
     var report = loaded.compact()
     assert_true(report.performed)
@@ -164,22 +298,28 @@ def check_metadata_round_trip(quantized: Bool, path: String) raises:
     var compacted_metadata = loaded.get_metadata(100)
     assert_equal(compacted_metadata.get_string("label"), "first")
     assert_equal(compacted_metadata.get_int("year"), 2025)
+    assert_equal(
+        loaded.get_document(100), "first persisted document"
+    )
 
     loaded.save(path + ".compacted")
     var reloaded = Collection.load(path + ".compacted")
     assert_equal(reloaded.get_metadata(100).get_string("label"), "first")
+    assert_equal(
+        reloaded.get_document(100), "first persisted document"
+    )
     assert_equal(reloaded.count_deleted(), 0)
 
 
 def test_flat_metadata_serialization() raises:
     check_metadata_round_trip(
-        False, "/tmp/mojovec_metadata_flat_v3.mojovec"
+        False, "/tmp/mojovec_metadata_flat_v4.mojovec"
     )
 
 
 def test_sq8_metadata_serialization() raises:
     check_metadata_round_trip(
-        True, "/tmp/mojovec_metadata_sq8_v3.mojovec"
+        True, "/tmp/mojovec_metadata_sq8_v4.mojovec"
     )
 
 

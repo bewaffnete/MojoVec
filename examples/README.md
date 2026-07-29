@@ -135,16 +135,18 @@ This example covers:
 
 - `Metadata` values of type `String`, `Int`, `Float64`, and `Bool`;
 - adding one metadata object per vector;
+- adding one document string per vector in the same batch;
 - retrieving an owned metadata copy by application ID;
 - metadata inheritance during vector-only `update` and `upsert`;
 - complete replacement when metadata is supplied explicitly;
-- reading metadata for IDs returned by `query`;
+- reading aligned metadata and documents directly from `QueryResults`;
 - preservation through save/load and compaction.
 
-Metadata is stored as a snapshot alongside every internal vector version.
-Calling `get_metadata(id)` for a missing or deleted ID raises an error. Metadata
-is not embedded into every `QueryResults` object; fetch it only for returned
-IDs that the application needs.
+Metadata and documents are stored as snapshots alongside every internal vector
+version. Calling `get_metadata(id)` or `get_document(id)` for a missing or
+deleted ID raises an error. `QueryResults.metadatas` and
+`QueryResults.documents` are aligned with result IDs; missing per-record
+payloads use empty placeholders.
 
 ## Example 6: typed `where` filters and bitmap indexes
 
@@ -220,11 +222,14 @@ It returns `QueryResults` containing managed nested `List`s:
 ```text
 results.ids[query_index][rank]
 results.distances[query_index][rank]
+results.metadatas[query_index][rank]
+results.documents[query_index][rank]
 ```
 
 MojoVec owns all temporary search buffers and transfers the result Lists to the
 caller. User code does not call `alloc`, work with pointers, or call `free`.
-Dropping `QueryResults` releases its storage automatically.
+Dropping `QueryResults` releases its storage automatically. If the collection
+does not store a payload kind, its corresponding outer List is empty.
 
 ## Distance interpretation
 

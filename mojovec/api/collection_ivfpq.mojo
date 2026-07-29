@@ -4,6 +4,7 @@ from mojovec.core.types import METRIC_L2
 from std.memory import OwnedPointer
 from std.collections import List
 from std.memory.span import Span
+from mojovec.api.metadata import Metadata
 from .results import QueryResults
 
 struct CollectionIVFPQ(Movable):
@@ -154,7 +155,12 @@ struct CollectionIVFPQ(Movable):
             raise Error("Query embeddings length must be a multiple of dimension.")
             
         if num_queries == 0:
-            return QueryResults(List[List[Int]](), List[List[Float32]]())
+            return QueryResults(
+                List[List[Int]](),
+                List[List[Float32]](),
+                List[List[Metadata]](),
+                List[List[String]](),
+            )
 
         var output_size = num_queries * n_results
         var distances_storage = List[Float32](
@@ -185,4 +191,9 @@ struct CollectionIVFPQ(Movable):
             all_ids.append(q_ids^)
             all_distances.append(q_dists^)
 
-        return QueryResults(all_ids^, all_distances^)
+        return QueryResults(
+            all_ids^,
+            all_distances^,
+            List[List[Metadata]](),
+            List[List[String]](),
+        )

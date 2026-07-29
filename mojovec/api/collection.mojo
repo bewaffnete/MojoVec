@@ -36,8 +36,9 @@ comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
 
 comptime COLLECTION_MAGIC_V1 = 1129270348
 comptime COLLECTION_MAGIC_V2 = 1129270349
-comptime COLLECTION_FORMAT_VERSION = 3
+comptime COLLECTION_FORMAT_VERSION = 4
 comptime COLLECTION_FORMAT_VERSION_WITH_METADATA = 3
+comptime COLLECTION_FORMAT_VERSION_WITH_DOCUMENTS = 4
 comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
 comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
 
@@ -132,6 +133,8 @@ struct Collection(Movable, Writable):
     var _metadata_by_internal: Dict[Int, Int]
     var _metadatas: List[Metadata]
     var _metadata_index: MetadataBitmapIndex
+    var _document_by_internal: Dict[Int, Int]
+    var _documents: List[String]
     var _id_to_internal: Dict[Int, Int]
 
     def __init__(
@@ -165,6 +168,8 @@ struct Collection(Movable, Writable):
         self._metadata_by_internal = Dict[Int, Int]()
         self._metadatas = List[Metadata]()
         self._metadata_index = MetadataBitmapIndex()
+        self._document_by_internal = Dict[Int, Int]()
+        self._documents = List[String]()
         self._id_to_internal = Dict[Int, Int]()
 
     def __init__(out self, *, deinit take: Self):
@@ -177,6 +182,8 @@ struct Collection(Movable, Writable):
         self._metadata_by_internal = take._metadata_by_internal^
         self._metadatas = take._metadatas^
         self._metadata_index = take._metadata_index^
+        self._document_by_internal = take._document_by_internal^
+        self._documents = take._documents^
         self._id_to_internal = take._id_to_internal^
 
     def write_to[W: Writer](self, mut writer: W):
@@ -233,6 +240,34 @@ struct Collection(Movable, Writable):
         self._metadata_by_internal[internal_id] = len(self._metadatas)
         self._metadatas.append(metadata.copy())
         self._metadata_index.add(internal_id, metadata)
+
+    def get_document(self, record_id: Int) raises -> String:
+        """Returns an owned copy of an active record's document."""
+        if record_id not in self._id_to_internal:
+            raise Error("Cannot get document for an ID that does not exist.")
+        var internal_id = self._id_to_internal[record_id]
+        if internal_id not in self._document_by_internal:
+            raise Error("Record does not have a document.")
+        return self._documents[
+            self._document_by_internal[internal_id]
+        ].copy()
+
+    def _document_for_internal(self, internal_id: Int) raises -> String:
+        if internal_id in self._document_by_internal:
+            return self._documents[
+                self._document_by_internal[internal_id]
+            ].copy()
+        return String("")
+
+    def _store_document(
+        mut self, internal_id: Int, document: String
+    ):
+        # Empty strings represent an absent document in managed results and
+        # allow update/upsert to remove a previous document explicitly.
+        if document.byte_length() == 0:
+            return
+        self._document_by_internal[internal_id] = len(self._documents)
+        self._documents.append(document.copy())
 
     def stats(self) -> CollectionStats:
         """Returns active/deleted counts and the current HNSW configuration."""
@@ -321,6 +356,7 @@ struct Collection(Movable, Writable):
             capacity=batch_size * self._dimension
         )
         var batch_metadatas = List[Metadata](capacity=batch_size)
+        var batch_documents = List[String](capacity=batch_size)
 
         for internal_id in range(len(self._user_ids)):
             if self._is_deleted[internal_id] > 0:
@@ -330,18 +366,32 @@ struct Collection(Movable, Writable):
             batch_metadatas.append(
                 self._metadata_for_internal(internal_id)
             )
+            batch_documents.append(
+                self._document_for_internal(internal_id)
+            )
             var vector = self._get_vector(internal_id)
             for dim in range(self._dimension):
                 batch_embeddings.append(vector[dim])
 
             if len(batch_ids) == batch_size:
-                rebuilt.add(batch_ids, batch_embeddings, batch_metadatas)
+                rebuilt.add(
+                    batch_ids,
+                    batch_embeddings,
+                    batch_metadatas,
+                    batch_documents,
+                )
                 batch_ids.clear()
                 batch_embeddings.clear()
                 batch_metadatas.clear()
+                batch_documents.clear()
 
         if len(batch_ids) > 0:
-            rebuilt.add(batch_ids, batch_embeddings, batch_metadatas)
+            rebuilt.add(
+                batch_ids,
+                batch_embeddings,
+                batch_metadatas,
+                batch_documents,
+            )
 
         self = rebuilt^
 
@@ -409,11 +459,15 @@ struct Collection(Movable, Writable):
         replace_existing: Bool,
         metadatas: List[Metadata],
         has_metadatas: Bool,
+        documents: List[String],
+        has_documents: Bool,
     ) raises:
         self._validate_shape(ids, embeddings)
         self._validate_unique_batch(ids)
         if has_metadatas and len(metadatas) != len(ids):
             raise Error("Metadata length must equal len(ids).")
+        if has_documents and len(documents) != len(ids):
+            raise Error("Documents length must equal len(ids).")
         if len(ids) == 0:
             return
 
@@ -442,6 +496,22 @@ struct Collection(Movable, Writable):
                     self._metadatas[previous_metadata_index].copy()
                 )
                 self._store_metadata(internal_id, inherited_metadata)
+            if has_documents:
+                self._store_document(internal_id, documents[i])
+            elif (
+                previous >= 0
+                and previous in self._document_by_internal
+            ):
+                var previous_document_index = (
+                    self._document_by_internal[previous]
+                )
+                var inherited_document = (
+                    self._documents[previous_document_index].copy()
+                )
+                self._store_document(
+                    internal_id,
+                    inherited_document,
+                )
             self._id_to_internal[record_id] = internal_id
 
         self._add_to_index(embeddings)
@@ -471,6 +541,43 @@ struct Collection(Movable, Writable):
             replace_existing=False,
             metadatas=metadatas,
             has_metadatas=True,
+            documents=List[String](),
+            has_documents=False,
+        )
+
+    def add(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        documents: List[String],
+    ) raises:
+        """Adds records together with one document per ID."""
+        self._append_records(
+            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            replace_existing=False,
+            metadatas=List[Metadata](),
+            has_metadatas=False,
+            documents=documents,
+            has_documents=True,
+        )
+
+    def add(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        metadatas: List[Metadata],
+        documents: List[String],
+    ) raises:
+        """Adds records with aligned metadata and documents."""
+        self._append_records(
+            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            replace_existing=False,
+            metadatas=metadatas,
+            has_metadatas=True,
+            documents=documents,
+            has_documents=True,
         )
 
     def _add_from_spans(
@@ -485,6 +592,8 @@ struct Collection(Movable, Writable):
             replace_existing=False,
             metadatas=List[Metadata](),
             has_metadatas=False,
+            documents=List[String](),
+            has_documents=False,
         )
 
     def upsert(mut self, ids: List[Int], embeddings: List[Float32]) raises:
@@ -511,6 +620,43 @@ struct Collection(Movable, Writable):
             replace_existing=True,
             metadatas=metadatas,
             has_metadatas=True,
+            documents=List[String](),
+            has_documents=False,
+        )
+
+    def upsert(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        documents: List[String],
+    ) raises:
+        """Inserts or replaces records and explicitly replaces documents."""
+        self._append_records(
+            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            replace_existing=True,
+            metadatas=List[Metadata](),
+            has_metadatas=False,
+            documents=documents,
+            has_documents=True,
+        )
+
+    def upsert(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        metadatas: List[Metadata],
+        documents: List[String],
+    ) raises:
+        """Inserts or replaces records with metadata and documents."""
+        self._append_records(
+            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            replace_existing=True,
+            metadatas=metadatas,
+            has_metadatas=True,
+            documents=documents,
+            has_documents=True,
         )
 
     def _upsert_from_spans(
@@ -525,6 +671,8 @@ struct Collection(Movable, Writable):
             replace_existing=True,
             metadatas=List[Metadata](),
             has_metadatas=False,
+            documents=List[String](),
+            has_documents=False,
         )
 
     def _validate_existing_ids(self, ids: Span[Int, _]) raises:
@@ -547,6 +695,8 @@ struct Collection(Movable, Writable):
             replace_existing=True,
             metadatas=List[Metadata](),
             has_metadatas=False,
+            documents=List[String](),
+            has_documents=False,
         )
 
     def update(
@@ -569,6 +719,57 @@ struct Collection(Movable, Writable):
             replace_existing=True,
             metadatas=metadatas,
             has_metadatas=True,
+            documents=List[String](),
+            has_documents=False,
+        )
+
+    def update(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        documents: List[String],
+    ) raises:
+        """Updates existing records and explicitly replaces documents."""
+        var ids_span = Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+        var embeddings_span = Span[Float32](
+            ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+        )
+        self._validate_shape(ids_span, embeddings_span)
+        self._validate_unique_batch(ids_span)
+        self._validate_existing_ids(ids_span)
+        self._append_records(
+            ids_span,
+            embeddings_span,
+            replace_existing=True,
+            metadatas=List[Metadata](),
+            has_metadatas=False,
+            documents=documents,
+            has_documents=True,
+        )
+
+    def update(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        metadatas: List[Metadata],
+        documents: List[String],
+    ) raises:
+        """Updates existing records with metadata and documents."""
+        var ids_span = Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+        var embeddings_span = Span[Float32](
+            ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+        )
+        self._validate_shape(ids_span, embeddings_span)
+        self._validate_unique_batch(ids_span)
+        self._validate_existing_ids(ids_span)
+        self._append_records(
+            ids_span,
+            embeddings_span,
+            replace_existing=True,
+            metadatas=metadatas,
+            has_metadatas=True,
+            documents=documents,
+            has_documents=True,
         )
 
     def delete(mut self, ids: List[Int]):
@@ -840,6 +1041,105 @@ struct Collection(Movable, Writable):
             else:
                 ids[index] = -1
 
+    def _build_query_results(
+        self,
+        ids_storage: List[Int],
+        distances_storage: List[Float32],
+        num_queries: Int,
+        n_results: Int,
+    ) raises -> QueryResults:
+        """
+        Materializes aligned managed result rows.
+
+        Metadata and document rows are omitted entirely when the collection
+        has no values of that kind, preserving the lightweight vector-only
+        query path.
+        """
+        var include_metadatas = len(self._metadatas) > 0
+        var include_documents = len(self._documents) > 0
+
+        # Preserve the original vector-only materialization path exactly:
+        # no ID-map lookup and no payload branch for every returned neighbor.
+        if not include_metadatas and not include_documents:
+            var vector_ids = List[List[Int]](capacity=num_queries)
+            var vector_distances = List[List[Float32]](
+                capacity=num_queries
+            )
+            for query_index in range(num_queries):
+                var row_ids = List[Int](capacity=n_results)
+                var row_distances = List[Float32](capacity=n_results)
+                for rank in range(n_results):
+                    var offset = query_index * n_results + rank
+                    row_ids.append(ids_storage[offset])
+                    row_distances.append(distances_storage[offset])
+                vector_ids.append(row_ids^)
+                vector_distances.append(row_distances^)
+            return QueryResults(
+                vector_ids^,
+                vector_distances^,
+                List[List[Metadata]](),
+                List[List[String]](),
+            )
+
+        var all_ids = List[List[Int]](capacity=num_queries)
+        var all_distances = List[List[Float32]](capacity=num_queries)
+        var all_metadatas = List[List[Metadata]]()
+        var all_documents = List[List[String]]()
+        if include_metadatas:
+            all_metadatas = List[List[Metadata]](capacity=num_queries)
+        if include_documents:
+            all_documents = List[List[String]](capacity=num_queries)
+
+        for query_index in range(num_queries):
+            var row_ids = List[Int](capacity=n_results)
+            var row_distances = List[Float32](capacity=n_results)
+            var row_metadatas = List[Metadata]()
+            var row_documents = List[String]()
+            if include_metadatas:
+                row_metadatas = List[Metadata](capacity=n_results)
+            if include_documents:
+                row_documents = List[String](capacity=n_results)
+
+            for rank in range(n_results):
+                var offset = query_index * n_results + rank
+                var record_id = ids_storage[offset]
+                row_ids.append(record_id)
+                row_distances.append(distances_storage[offset])
+
+                var internal_id = -1
+                if record_id >= 0 and record_id in self._id_to_internal:
+                    internal_id = self._id_to_internal[record_id]
+
+                if include_metadatas:
+                    if internal_id >= 0:
+                        row_metadatas.append(
+                            self._metadata_for_internal(internal_id)
+                        )
+                    else:
+                        row_metadatas.append(Metadata())
+
+                if include_documents:
+                    if internal_id >= 0:
+                        row_documents.append(
+                            self._document_for_internal(internal_id)
+                        )
+                    else:
+                        row_documents.append("")
+
+            all_ids.append(row_ids^)
+            all_distances.append(row_distances^)
+            if include_metadatas:
+                all_metadatas.append(row_metadatas^)
+            if include_documents:
+                all_documents.append(row_documents^)
+
+        return QueryResults(
+            all_ids^,
+            all_distances^,
+            all_metadatas^,
+            all_documents^,
+        )
+
     def query(
         mut self,
         query_embeddings: List[Float32],
@@ -848,8 +1148,8 @@ struct Collection(Movable, Writable):
         """
         Runs embedding queries and returns automatically managed results.
 
-        QueryResults owns its ID and distance Lists. Callers do not allocate
-        output buffers and never need to release result memory manually.
+        QueryResults owns aligned ID, distance, metadata, and document Lists.
+        Callers do not allocate output buffers or release result memory.
         """
         if self._dimension <= 0:
             raise Error("Collection dimension must be positive.")
@@ -862,7 +1162,12 @@ struct Collection(Movable, Writable):
 
         var num_queries = len(query_embeddings) // self._dimension
         if num_queries == 0:
-            return QueryResults(List[List[Int]](), List[List[Float32]]())
+            return QueryResults(
+                List[List[Int]](),
+                List[List[Float32]](),
+                List[List[Metadata]](),
+                List[List[String]](),
+            )
 
         var output_size = num_queries * n_results
         var ids_storage = List[Int](unsafe_uninit_length=output_size)
@@ -877,19 +1182,12 @@ struct Collection(Movable, Writable):
         var distances = Span[mut=True, Float32](distances_storage)
         self._query_into(queries, n_results, ids, distances)
 
-        var all_ids = List[List[Int]](capacity=num_queries)
-        var all_distances = List[List[Float32]](capacity=num_queries)
-        for i in range(num_queries):
-            var row_ids = List[Int](capacity=n_results)
-            var row_distances = List[Float32](capacity=n_results)
-            for j in range(n_results):
-                var offset = i * n_results + j
-                row_ids.append(ids_storage[offset])
-                row_distances.append(distances_storage[offset])
-            all_ids.append(row_ids^)
-            all_distances.append(row_distances^)
-
-        return QueryResults(all_ids^, all_distances^)
+        return self._build_query_results(
+            ids_storage,
+            distances_storage,
+            num_queries,
+            n_results,
+        )
 
     def query(
         mut self,
@@ -909,7 +1207,12 @@ struct Collection(Movable, Writable):
 
         var num_queries = len(query_embeddings) // self._dimension
         if num_queries == 0:
-            return QueryResults(List[List[Int]](), List[List[Float32]]())
+            return QueryResults(
+                List[List[Int]](),
+                List[List[Float32]](),
+                List[List[Metadata]](),
+                List[List[String]](),
+            )
 
         var output_size = num_queries * n_results
         var ids_storage = List[Int](unsafe_uninit_length=output_size)
@@ -932,22 +1235,15 @@ struct Collection(Movable, Writable):
             exclusion,
         )
 
-        var all_ids = List[List[Int]](capacity=num_queries)
-        var all_distances = List[List[Float32]](capacity=num_queries)
-        for i in range(num_queries):
-            var row_ids = List[Int](capacity=n_results)
-            var row_distances = List[Float32](capacity=n_results)
-            for j in range(n_results):
-                var offset = i * n_results + j
-                row_ids.append(ids_storage[offset])
-                row_distances.append(distances_storage[offset])
-            all_ids.append(row_ids^)
-            all_distances.append(row_distances^)
-
-        return QueryResults(all_ids^, all_distances^)
+        return self._build_query_results(
+            ids_storage,
+            distances_storage,
+            num_queries,
+            n_results,
+        )
 
     def save(mut self, path: String) raises:
-        """Saves metadata, storage kind, vectors, and HNSW graph."""
+        """Saves payloads, storage kind, vectors, and the HNSW graph."""
         from mojovec.io.serialization import (
             write_index_hnsw,
             write_index_hnsw_sq8,
@@ -982,6 +1278,15 @@ struct Collection(Movable, Writable):
                 write_int(file, internal_id)
                 var metadata_index = self._metadata_by_internal[internal_id]
                 _write_metadata(file, self._metadatas[metadata_index])
+
+        # Documents use the same sparse representation as metadata. Empty
+        # strings are reserved for a missing document and are never persisted.
+        write_int(file, len(self._documents))
+        for internal_id in range(num_ids):
+            if internal_id in self._document_by_internal:
+                write_int(file, internal_id)
+                var document_index = self._document_by_internal[internal_id]
+                _write_string(file, self._documents[document_index])
 
         if self._storage_kind == STORAGE_SQ8:
             write_index_hnsw_sq8(file, self._hnsw.unsafe_get[SQ8HNSW]())
@@ -1060,6 +1365,22 @@ struct Collection(Movable, Writable):
                 if metadata.count() == 0:
                     raise Error("Sparse metadata entries cannot be empty.")
                 collection._store_metadata(internal_id, metadata)
+
+        if version >= COLLECTION_FORMAT_VERSION_WITH_DOCUMENTS:
+            var document_count = read_int(file)
+            check_size_limit(document_count, num_ids)
+            for _ in range(document_count):
+                var internal_id = read_int(file)
+                if (
+                    internal_id < 0
+                    or internal_id >= num_ids
+                    or internal_id in collection._document_by_internal
+                ):
+                    raise Error("Invalid document internal ID.")
+                var document = _read_string(file)
+                if document.byte_length() == 0:
+                    raise Error("Sparse document entries cannot be empty.")
+                collection._store_document(internal_id, document)
 
         if storage_kind == STORAGE_SQ8:
             var index = read_index_hnsw_sq8(file)

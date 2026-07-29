@@ -1,5 +1,5 @@
 """
-Storing typed record metadata and persisting it with a collection.
+Storing typed metadata and documents, then receiving both from queries.
 
 Metadata is an owned string-to-scalar record. Its supported value types are:
 
@@ -8,9 +8,9 @@ Metadata is an owned string-to-scalar record. Its supported value types are:
 - Float64
 - Bool
 
-Every active vector has one metadata snapshot. A vector-only update or upsert
-inherits the current snapshot. Passing metadata explicitly replaces the whole
-snapshot. Metadata follows records through save/load and compaction.
+Metadata and document batches align with IDs. A vector-only update or upsert
+inherits both current snapshots. Passing either payload explicitly replaces
+that payload. Both follow records through save/load and compaction.
 
 The next tutorial, api_06_where_filters.mojo, uses the same metadata snapshots
 for typed `where` queries backed by automatic bitmap indexes.
@@ -38,13 +38,14 @@ def append_vector(
     embeddings.append(x3)
 
 
-def print_document(collection: Collection, record_id: Int) raises:
+def print_record(collection: Collection, record_id: Int) raises:
     var metadata = collection.get_metadata(record_id)
     print("ID:", record_id)
     print("  title:", metadata.get_string("title"))
     print("  year:", metadata.get_int("year"))
     print("  score:", metadata.get_float("score"))
     print("  published:", metadata.get_bool("published"))
+    print("  document:", collection.get_document(record_id))
 
 
 def main() raises:
@@ -80,14 +81,18 @@ def main() raises:
     append_vector(embeddings, 1.0, 0.0, 0.0, 0.0)
     append_vector(embeddings, 0.0, 1.0, 0.0, 0.0)
 
-    # There must be exactly one Metadata object for every ID.
+    # There must be exactly one Metadata and one document String for every ID
+    # when both payload batches are supplied.
     var metadatas = List[Metadata]()
     metadatas.append(first.copy())
     metadatas.append(second.copy())
-    collection.add(ids, embeddings, metadatas)
+    var documents = List[String]()
+    documents.append("A practical guide to vector search written in Mojo.")
+    documents.append("An explanation of HNSW layers, links, and traversal.")
+    collection.add(ids, embeddings, metadatas, documents)
 
     print("After add")
-    print_document(collection, 101)
+    print_record(collection, 101)
 
     # The returned value is an owned copy. Mutating it does not mutate the
     # collection. To replace stored metadata, pass it to update or upsert.
@@ -98,11 +103,15 @@ def main() raises:
         collection.get_metadata(101).get_string("title"),
     )
 
-    # A vector-only update preserves the active metadata snapshot.
+    # A vector-only update preserves both active payload snapshots.
     collection.update([101], [0.9, 0.1, 0.0, 0.0])
     print(
         "Title after vector-only update:",
         collection.get_metadata(101).get_string("title"),
+    )
+    print(
+        "Document after vector-only update:",
+        collection.get_document(101),
     )
 
     # Supplying metadata replaces the complete object. Fields omitted from the
@@ -116,12 +125,15 @@ def main() raises:
     replacements.append(replacement.copy())
     collection.update([101], [1.0, 0.1, 0.0, 0.0], replacements)
 
-    # QueryResults stays compact and contains IDs plus distances. Fetch record
-    # metadata for the returned IDs only when the application needs it.
+    # QueryResults owns four aligned matrices. Metadata and documents are
+    # available directly at the same query/rank coordinates as the nearest ID.
     var results = collection.query([1.0, 0.0, 0.0, 0.0], n_results=1)
     var nearest_id = results.ids[0][0]
     print("\nNearest document")
-    print_document(collection, nearest_id)
+    print("  ID:", nearest_id)
+    print("  distance:", results.distances[0][0])
+    print("  title:", results.metadatas[0][0].get_string("title"))
+    print("  document:", results.documents[0][0])
 
     # Stored fields are immediately available to the typed filter API. Bitmap
     # indexes are maintained automatically; applications do not create them.
@@ -140,11 +152,11 @@ def main() raises:
     collection.save(DATABASE_PATH)
     var loaded = Collection.load(DATABASE_PATH)
     print("\nLoaded from disk")
-    print_document(loaded, 101)
+    print_record(loaded, 101)
 
     # Both active metadata snapshots survive a rebuild; deleted historical
     # snapshots are discarded with their vectors.
     var report = loaded.compact()
     print("\nCompaction performed:", report.performed)
     print("Reclaimed historical rows:", report.reclaimed_records)
-    print_document(loaded, 101)
+    print_record(loaded, 101)
