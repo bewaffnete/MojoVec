@@ -254,6 +254,12 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
             var res_dist_ptr = distances_ptr + i * k
             var res_labels_ptr = labels_ptr + i * k
             var heap_size = 0
+
+            # A probed IVF subset may contain fewer than k candidates. Keep the
+            # unused result tail deterministic instead of exposing allocator data.
+            for j in range(k):
+                res_dist_ptr[j] = 1e38
+                res_labels_ptr[j] = -1
             
             if not self.by_residual:
                 self.pq.compute_distance_table(
@@ -307,6 +313,6 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                         
             # Un-negate inner product distances
             if self.metric_type == METRIC_INNER_PRODUCT:
-                for j in range(k):
+                for j in range(current_k):
                     res_dist_ptr[j] = -res_dist_ptr[j]
                         

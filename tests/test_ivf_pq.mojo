@@ -79,5 +79,58 @@ def test_ivf_pq_crud() raises:
     dists.free()
     labels.free()
 
+
+def test_ivf_pq_sparse_results_have_deterministic_tail() raises:
+    comptime d = 4
+    comptime k = 5
+    var data = alloc[Float32](d)
+    for i in range(d):
+        data[i] = 0.0
+    var ids = alloc[Int](1)
+    ids[0] = 42
+
+    var quantizer = alloc[IndexFlat](1)
+    quantizer.init_pointee_move(IndexFlat(d))
+    var index = IndexIVFPQ[IndexFlat](quantizer, d, 1, 2)
+    var data_span = Span[Float32, MutUntrackedOrigin](
+        ptr=data, length=d
+    )
+    index.train(data_span)
+    index.add_with_ids(
+        data_span,
+        Span[Int, MutUntrackedOrigin](ptr=ids, length=1),
+    )
+
+    var distances = alloc[Float32](k)
+    var labels = alloc[Int](k)
+    for i in range(k):
+        distances[i] = -7.0
+        labels[i] = -7
+    var distance_span = Span[mut=True, Float32, MutUntrackedOrigin](
+        ptr=distances, length=k
+    )
+    var label_span = Span[mut=True, Int, MutUntrackedOrigin](
+        ptr=labels, length=k
+    )
+    index.search(
+        data_span,
+        k,
+        distance_span,
+        label_span,
+    )
+
+    assert_equal(labels[0], 42)
+    assert_true(distances[0] == 0.0)
+    for i in range(1, k):
+        assert_equal(labels[i], -1)
+        assert_true(distances[i] == 1e38)
+
+    index.quantizer.free()
+    data.free()
+    ids.free()
+    distances.free()
+    labels.free()
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

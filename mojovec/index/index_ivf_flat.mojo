@@ -186,6 +186,12 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
             var res_dist_ptr = distances_ptr + i * k
             var res_labels_ptr = labels_ptr + i * k
             var heap_size = 0
+
+            # A probed IVF subset may contain fewer than k candidates. Keep the
+            # unused result tail deterministic instead of exposing allocator data.
+            for j in range(k):
+                res_dist_ptr[j] = 1e38
+                res_labels_ptr[j] = -1
             
             for p in range(nprobe):
                 var list_no = q_labels_ptr[i * nprobe + p]
@@ -225,6 +231,6 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
                 res_labels_ptr[idx] = popped.label
                         
             if self.metric_type == METRIC_INNER_PRODUCT:
-                for j in range(k):
+                for j in range(current_k):
                     res_dist_ptr[j] = -res_dist_ptr[j]
                     
