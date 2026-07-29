@@ -617,7 +617,6 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         parallelize[search_worker](num_workers, num_workers)
 
 
-@export
 def mojovec_hnsw_pthread_worker(context_address: Int) abi("C") -> Int:
     """Runs one strided HNSW query range on a native CPU thread."""
     var context = UnsafePointer[

@@ -13,7 +13,7 @@ from ..storage.inverted_lists import ArrayInvertedLists
 from ..quantization.pq import ProductQuantizer
 from ..index.index_hnsw import IndexHNSW
 from ..index.hnsw_graph import HNSWGraph
-from .memory_map import FileMemoryMap
+from mojovec.io.memory_map import FileMemoryMap
 comptime MAGIC_FLAT: Int = 0x4d4a4f46
 comptime MAGIC_HNSW: Int = 0x4d4a4f48
 comptime MAGIC_IVF_FLAT: Int = 0x4d4a4f49
