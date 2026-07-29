@@ -1,6 +1,8 @@
 from std.io.file import FileHandle
+from std.collections import List
 from std.memory.span import Span
 from std.memory import alloc
+from std.os import SEEK_CUR, SEEK_SET
 from ..core.index import Index
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..index.index_flat import IndexFlat, _alloc_aligned, _free_aligned
@@ -11,6 +13,7 @@ from ..storage.inverted_lists import ArrayInvertedLists
 from ..quantization.pq import ProductQuantizer
 from ..index.index_hnsw import IndexHNSW
 from ..index.hnsw_graph import HNSWGraph
+from .memory_map import FileMemoryMap
 comptime MAGIC_FLAT: Int = 0x4d4a4f46
 comptime MAGIC_HNSW: Int = 0x4d4a4f48
 comptime MAGIC_IVF_FLAT: Int = 0x4d4a4f49
@@ -19,6 +22,12 @@ comptime MAGIC_INVLISTS: Int = 0x4d4a4f4c
 comptime MAGIC_PQ: Int = 0x4d4a4f51
 comptime MAGIC_FLAT_SQ8: Int = 0x4d4a4f52
 comptime MAGIC_HNSW_SQ8: Int = 0x4d4a4f53
+comptime MAGIC_FLAT_MMAP: Int = 0x4d4a4f54
+comptime MAGIC_FLAT_SQ8_MMAP: Int = 0x4d4a4f55
+comptime MAGIC_HNSW_GRAPH_MMAP: Int = 0x4d4a4f56
+comptime MAGIC_HNSW_MMAP: Int = 0x4d4a4f57
+comptime MAGIC_HNSW_SQ8_MMAP: Int = 0x4d4a4f58
+comptime MMAP_DATA_ALIGNMENT = 64
 
 # --- Primitive I/O ---
 
@@ -41,6 +50,42 @@ def read_int(mut f: FileHandle) raises -> Int:
     var val = ptr[0]
     _ = len(read_data)
     return val
+
+
+def _align_mmap_offset(offset: Int) -> Int:
+    return (
+        (offset + MMAP_DATA_ALIGNMENT - 1)
+        // MMAP_DATA_ALIGNMENT
+        * MMAP_DATA_ALIGNMENT
+    )
+
+
+def _write_padding_to(mut f: FileHandle, target: Int) raises:
+    var current = Int(f.seek(0, SEEK_CUR))
+    if target < current:
+        raise Error("Invalid memory-mapped serialization offset.")
+    var count = target - current
+    if count == 0:
+        return
+    var padding = List[UInt8](unsafe_uninit_length=count)
+    for index in range(count):
+        padding[index] = 0
+    f.write_bytes(padding)
+
+
+def _validate_mmap_region(
+    byte_offset: Int,
+    byte_count: Int,
+    file_size: Int,
+) raises:
+    if (
+        byte_offset < 0
+        or byte_count < 0
+        or byte_offset % MMAP_DATA_ALIGNMENT != 0
+        or byte_offset > file_size
+        or byte_count > file_size - byte_offset
+    ):
+        raise Error("Invalid memory-mapped index region.")
 
 def write_bool(mut f: FileHandle, val: Bool) raises:
     var ptr = alloc[Bool](1)
@@ -238,11 +283,24 @@ def read_hnsw_graph(mut f: FileHandle, mut graph: HNSWGraph) raises:
     graph.efSearch = read_int(f)
     check_size_limit(graph.efSearch, 2048)
     graph.max_level = read_int(f)
-    check_size_limit(graph.max_level, 32)
+    if graph.max_level < -1 or graph.max_level > 32:
+        raise Error("Invalid HNSW maximum level.")
     graph.entry_point = read_int(f)
-    check_size_limit(graph.entry_point, 1_000_000_000)
+    if graph.entry_point < -1 or graph.entry_point > 1_000_000_000:
+        raise Error("Invalid HNSW entry point.")
     graph.ntotal = read_int(f)
     check_size_limit(graph.ntotal, 1_000_000_000)
+    if (
+        (
+            graph.ntotal == 0
+            and (graph.max_level != -1 or graph.entry_point != -1)
+        )
+        or (
+            graph.ntotal > 0
+            and (graph.max_level < 0 or graph.entry_point >= graph.ntotal)
+        )
+    ):
+        raise Error("HNSW graph entry point does not match its size.")
     
     var capacity = read_int(f)
     check_size_limit(capacity, 1_000_000_000)
@@ -338,6 +396,423 @@ def read_index_hnsw_sq8(mut f: FileHandle) raises -> IndexHNSW[IndexFlatSQ8]:
     index.ntotal = ntotal
     index.is_trained = is_trained
     read_hnsw_graph(f, index.hnsw)
+    index.vt_pool.grow(index.hnsw.capacity)
+    return index^
+
+
+# --- Memory-mappable Flat/SQ8 HNSW (Collection format V5+) ---
+
+def write_index_flat_mmap(mut f: FileHandle, index: IndexFlat) raises:
+    var start = Int(f.seek(0, SEEK_CUR))
+    # Persist only live values. Heap capacity is an implementation detail and
+    # may contain an uninitialized tail that must not leak into the file.
+    var serialized_capacity = index.ntotal
+    var codes_count = serialized_capacity * index.d
+    var codes_offset = _align_mmap_offset(start + 7 * 8)
+    write_int(f, MAGIC_FLAT_MMAP)
+    write_int(f, index.d)
+    write_int(f, index.ntotal)
+    write_int(f, serialized_capacity)
+    write_int(f, 1 if index.metric_type == METRIC_INNER_PRODUCT else 0)
+    write_int(f, codes_offset)
+    write_int(f, codes_count)
+    _write_padding_to(f, codes_offset)
+    write_unsafe_pointer_float32(f, index.codes, codes_count)
+
+
+def read_index_flat_mmap(
+    mut f: FileHandle,
+    file_size: Int,
+) raises -> IndexFlat:
+    if read_int(f) != MAGIC_FLAT_MMAP:
+        raise Error("Invalid magic for memory-mapped IndexFlat.")
+    var d = read_int(f)
+    check_size_limit(d, 65_536)
+    var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
+    var capacity = read_int(f)
+    check_size_limit(capacity, 1_000_000_000)
+    if ntotal != capacity:
+        raise Error("Memory-mapped IndexFlat must omit unused capacity.")
+    var metric_int = read_int(f)
+    if metric_int != 0 and metric_int != 1:
+        raise Error("Invalid IndexFlat metric.")
+    var codes_offset = read_int(f)
+    var codes_count = read_int(f)
+    if codes_count != capacity * d:
+        raise Error("Invalid memory-mapped IndexFlat code count.")
+    _validate_mmap_region(codes_offset, codes_count * 4, file_size)
+    _ = f.seek(UInt64(codes_offset + codes_count * 4), SEEK_SET)
+
+    var metric = (
+        METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
+    )
+    var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
+    var codes_address = mapping.address + codes_offset
+    var index = IndexFlat(d, metric)
+    _free_aligned(index.codes)
+    index.ntotal = ntotal
+    index.capacity = capacity
+    index.codes = UnsafePointer[Float32, MutUntrackedOrigin](
+        unsafe_from_address=codes_address
+    )
+    index._mapping = mapping^
+    return index^
+
+
+def write_index_flat_sq8_mmap(
+    mut f: FileHandle,
+    index: IndexFlatSQ8,
+) raises:
+    var start = Int(f.seek(0, SEEK_CUR))
+    var serialized_capacity = index.ntotal
+    var f32_count = serialized_capacity * index.d
+    var u8_count = serialized_capacity * index.d
+    var norms_count = serialized_capacity
+    var f32_offset = _align_mmap_offset(start + 100)
+    var u8_offset = _align_mmap_offset(f32_offset + f32_count * 4)
+    var norms_offset = _align_mmap_offset(u8_offset + u8_count)
+
+    write_int(f, MAGIC_FLAT_SQ8_MMAP)
+    write_int(f, index.d)
+    write_int(f, index.ntotal)
+    write_int(f, serialized_capacity)
+    write_int(f, 1 if index.metric_type == METRIC_INNER_PRODUCT else 0)
+    var parameters = alloc[Float32](3)
+    parameters[0] = index.global_min
+    parameters[1] = index.global_max
+    parameters[2] = index.scale
+    write_unsafe_pointer_float32(f, parameters, 3)
+    parameters.free()
+    write_int(f, f32_offset)
+    write_int(f, f32_count)
+    write_int(f, u8_offset)
+    write_int(f, u8_count)
+    write_int(f, norms_offset)
+    write_int(f, norms_count)
+
+    _write_padding_to(f, f32_offset)
+    write_unsafe_pointer_float32(f, index.codes_f32, f32_count)
+    _write_padding_to(f, u8_offset)
+    write_unsafe_pointer_uint8(f, index.codes_u8, u8_count)
+    _write_padding_to(f, norms_offset)
+    write_unsafe_pointer_uint32(f, index.norms_u32, norms_count)
+
+
+def read_index_flat_sq8_mmap(
+    mut f: FileHandle,
+    file_size: Int,
+) raises -> IndexFlatSQ8:
+    if read_int(f) != MAGIC_FLAT_SQ8_MMAP:
+        raise Error("Invalid magic for memory-mapped IndexFlatSQ8.")
+    var d = read_int(f)
+    check_size_limit(d, 65_536)
+    var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
+    var capacity = read_int(f)
+    check_size_limit(capacity, 1_000_000_000)
+    if ntotal != capacity:
+        raise Error("Memory-mapped IndexFlatSQ8 must omit unused capacity.")
+    var metric_int = read_int(f)
+    if metric_int != 0 and metric_int != 1:
+        raise Error("Invalid IndexFlatSQ8 metric.")
+    var parameters = alloc[Float32](3)
+    read_unsafe_pointer_float32(f, parameters, 3)
+    var global_min = parameters[0]
+    var global_max = parameters[1]
+    var scale = parameters[2]
+    parameters.free()
+    var f32_offset = read_int(f)
+    var f32_count = read_int(f)
+    var u8_offset = read_int(f)
+    var u8_count = read_int(f)
+    var norms_offset = read_int(f)
+    var norms_count = read_int(f)
+    if (
+        f32_count != capacity * d
+        or u8_count != capacity * d
+        or norms_count != capacity
+    ):
+        raise Error("Invalid memory-mapped IndexFlatSQ8 array sizes.")
+    _validate_mmap_region(f32_offset, f32_count * 4, file_size)
+    _validate_mmap_region(u8_offset, u8_count, file_size)
+    _validate_mmap_region(norms_offset, norms_count * 4, file_size)
+    _ = f.seek(UInt64(norms_offset + norms_count * 4), SEEK_SET)
+
+    var metric = (
+        METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
+    )
+    var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
+    var base = mapping.address
+    var index = IndexFlatSQ8(d, metric)
+    index.codes_f32.free()
+    index.codes_u8.free()
+    index.norms_u32.free()
+    index.ntotal = ntotal
+    index.capacity = capacity
+    index.global_min = global_min
+    index.global_max = global_max
+    index.scale = scale
+    index.codes_f32 = UnsafePointer[Float32, MutUntrackedOrigin](
+        unsafe_from_address=base + f32_offset
+    )
+    index.codes_u8 = UnsafePointer[UInt8, MutUntrackedOrigin](
+        unsafe_from_address=base + u8_offset
+    )
+    index.norms_u32 = UnsafePointer[UInt32, MutUntrackedOrigin](
+        unsafe_from_address=base + norms_offset
+    )
+    index._mapping = mapping^
+    return index^
+
+
+def write_hnsw_graph_mmap(
+    mut f: FileHandle,
+    graph: HNSWGraph,
+) raises:
+    var start = Int(f.seek(0, SEEK_CUR))
+    var serialized_capacity = graph.ntotal
+    var levels_count = serialized_capacity
+    var offsets_count = serialized_capacity + 1
+    var neighbors_count = 0
+    if graph.ntotal > 0:
+        var last_node = graph.ntotal - 1
+        neighbors_count = (
+            graph.offsets[last_node]
+            + graph.cum_nneighbor_per_level[graph.levels[last_node] + 1]
+        )
+    var cumulative_count = 33
+    var levels_offset = _align_mmap_offset(start + 17 * 8)
+    var offsets_offset = _align_mmap_offset(
+        levels_offset + levels_count * 8
+    )
+    var neighbors_offset = _align_mmap_offset(
+        offsets_offset + offsets_count * 8
+    )
+    var cumulative_offset = _align_mmap_offset(
+        neighbors_offset + neighbors_count * 4
+    )
+
+    write_int(f, MAGIC_HNSW_GRAPH_MMAP)
+    write_int(f, graph.M)
+    write_int(f, graph.efConstruction)
+    write_int(f, graph.efSearch)
+    write_int(f, graph.max_level)
+    write_int(f, graph.entry_point)
+    write_int(f, graph.ntotal)
+    write_int(f, serialized_capacity)
+    write_int(f, neighbors_count)
+    write_int(f, levels_offset)
+    write_int(f, levels_count)
+    write_int(f, offsets_offset)
+    write_int(f, offsets_count)
+    write_int(f, neighbors_offset)
+    write_int(f, neighbors_count)
+    write_int(f, cumulative_offset)
+    write_int(f, cumulative_count)
+
+    _write_padding_to(f, levels_offset)
+    write_unsafe_pointer_int(f, graph.levels, levels_count)
+    _write_padding_to(f, offsets_offset)
+    write_unsafe_pointer_int(f, graph.offsets, serialized_capacity)
+    # The runtime graph does not use offsets[ntotal], but serializing this
+    # sentinel makes the mapped offsets region complete and safe to detach.
+    write_int(f, neighbors_count)
+    _write_padding_to(f, neighbors_offset)
+    if neighbors_count > 0:
+        f.write_bytes(
+            Span[UInt8](
+                ptr=graph.neighbors.bitcast[UInt8](),
+                length=neighbors_count * 4,
+            )
+        )
+    _write_padding_to(f, cumulative_offset)
+    write_unsafe_pointer_int(
+        f,
+        graph.cum_nneighbor_per_level,
+        cumulative_count,
+    )
+
+
+def read_hnsw_graph_mmap(
+    mut f: FileHandle,
+    mut graph: HNSWGraph,
+    file_size: Int,
+) raises:
+    if read_int(f) != MAGIC_HNSW_GRAPH_MMAP:
+        raise Error("Invalid magic for memory-mapped HNSW graph.")
+    var M = read_int(f)
+    check_size_limit(M, 1024)
+    var ef_construction = read_int(f)
+    check_size_limit(ef_construction, 2048)
+    var ef_search = read_int(f)
+    check_size_limit(ef_search, 2048)
+    var max_level = read_int(f)
+    if max_level < -1 or max_level > 32:
+        raise Error("Invalid HNSW maximum level.")
+    var entry_point = read_int(f)
+    if entry_point < -1 or entry_point > 1_000_000_000:
+        raise Error("Invalid HNSW entry point.")
+    var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
+    var capacity = read_int(f)
+    check_size_limit(capacity, 1_000_000_000)
+    var neighbors_capacity = read_int(f)
+    check_size_limit(neighbors_capacity, 2_000_000_000)
+    if ntotal != capacity:
+        raise Error("Memory-mapped HNSW graph must omit unused capacity.")
+    if (
+        (ntotal == 0 and (max_level != -1 or entry_point != -1))
+        or (ntotal > 0 and (max_level < 0 or entry_point >= ntotal))
+    ):
+        raise Error("HNSW graph entry point does not match its size.")
+
+    var levels_offset = read_int(f)
+    var levels_count = read_int(f)
+    var offsets_offset = read_int(f)
+    var offsets_count = read_int(f)
+    var neighbors_offset = read_int(f)
+    var neighbors_count = read_int(f)
+    var cumulative_offset = read_int(f)
+    var cumulative_count = read_int(f)
+    if (
+        levels_count != capacity
+        or offsets_count != capacity + 1
+        or neighbors_count != neighbors_capacity
+        or cumulative_count != 33
+    ):
+        raise Error("Invalid memory-mapped HNSW graph array sizes.")
+    _validate_mmap_region(levels_offset, levels_count * 8, file_size)
+    _validate_mmap_region(offsets_offset, offsets_count * 8, file_size)
+    _validate_mmap_region(
+        neighbors_offset, neighbors_count * 4, file_size
+    )
+    _validate_mmap_region(
+        cumulative_offset, cumulative_count * 8, file_size
+    )
+    _ = f.seek(
+        UInt64(cumulative_offset + cumulative_count * 8), SEEK_SET
+    )
+
+    var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
+    var base = mapping.address
+    graph.levels.free()
+    graph.offsets.free()
+    graph.neighbors.free()
+    graph.cum_nneighbor_per_level.free()
+    graph.M = M
+    graph.efConstruction = ef_construction
+    graph.efSearch = ef_search
+    graph.max_level = max_level
+    graph.entry_point = entry_point
+    graph.ntotal = ntotal
+    graph.capacity = capacity
+    graph.neighbors_capacity = neighbors_capacity
+    graph.levels = UnsafePointer[Int, MutUntrackedOrigin](
+        unsafe_from_address=base + levels_offset
+    )
+    graph.offsets = UnsafePointer[Int, MutUntrackedOrigin](
+        unsafe_from_address=base + offsets_offset
+    )
+    graph.neighbors = UnsafePointer[Int32, MutUntrackedOrigin](
+        unsafe_from_address=base + neighbors_offset
+    )
+    graph.cum_nneighbor_per_level = UnsafePointer[
+        Int, MutUntrackedOrigin
+    ](unsafe_from_address=base + cumulative_offset)
+    graph._mapping = mapping^
+
+
+def write_index_hnsw_mmap(
+    mut f: FileHandle,
+    index: IndexHNSW[IndexFlat],
+) raises:
+    write_int(f, MAGIC_HNSW_MMAP)
+    write_int(f, index.d)
+    write_int(f, index.ntotal)
+    write_bool(f, index.is_trained)
+    write_int(f, 1 if index.metric_type == METRIC_INNER_PRODUCT else 0)
+    write_index_flat_mmap(f, index.storage)
+    write_hnsw_graph_mmap(f, index.hnsw)
+
+
+def read_index_hnsw_mmap(
+    mut f: FileHandle,
+    file_size: Int,
+) raises -> IndexHNSW[IndexFlat]:
+    if read_int(f) != MAGIC_HNSW_MMAP:
+        raise Error("Invalid magic for memory-mapped IndexHNSW.")
+    var d = read_int(f)
+    check_size_limit(d, 65_536)
+    var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
+    var is_trained = read_bool(f)
+    var metric_int = read_int(f)
+    if metric_int != 0 and metric_int != 1:
+        raise Error("Invalid IndexHNSW metric.")
+    var metric = (
+        METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
+    )
+    var storage = read_index_flat_mmap(f, file_size)
+    if (
+        storage.d != d
+        or storage.ntotal != ntotal
+        or storage.metric_type != metric
+    ):
+        raise Error("HNSW and Flat storage headers differ.")
+    var index = IndexHNSW[IndexFlat](storage^, d, metric, M=32)
+    index.ntotal = ntotal
+    index.is_trained = is_trained
+    read_hnsw_graph_mmap(f, index.hnsw, file_size)
+    if index.hnsw.ntotal != ntotal:
+        raise Error("HNSW graph and index sizes differ.")
+    index.vt_pool.grow(index.hnsw.capacity)
+    return index^
+
+
+def write_index_hnsw_sq8_mmap(
+    mut f: FileHandle,
+    index: IndexHNSW[IndexFlatSQ8],
+) raises:
+    write_int(f, MAGIC_HNSW_SQ8_MMAP)
+    write_int(f, index.d)
+    write_int(f, index.ntotal)
+    write_bool(f, index.is_trained)
+    write_int(f, 1 if index.metric_type == METRIC_INNER_PRODUCT else 0)
+    write_index_flat_sq8_mmap(f, index.storage)
+    write_hnsw_graph_mmap(f, index.hnsw)
+
+
+def read_index_hnsw_sq8_mmap(
+    mut f: FileHandle,
+    file_size: Int,
+) raises -> IndexHNSW[IndexFlatSQ8]:
+    if read_int(f) != MAGIC_HNSW_SQ8_MMAP:
+        raise Error("Invalid magic for memory-mapped IndexHNSW SQ8.")
+    var d = read_int(f)
+    check_size_limit(d, 65_536)
+    var ntotal = read_int(f)
+    check_size_limit(ntotal, 1_000_000_000)
+    var is_trained = read_bool(f)
+    var metric_int = read_int(f)
+    if metric_int != 0 and metric_int != 1:
+        raise Error("Invalid IndexHNSW SQ8 metric.")
+    var metric = (
+        METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
+    )
+    var storage = read_index_flat_sq8_mmap(f, file_size)
+    if (
+        storage.d != d
+        or storage.ntotal != ntotal
+        or storage.metric_type != metric
+    ):
+        raise Error("HNSW and SQ8 storage headers differ.")
+    var index = IndexHNSW[IndexFlatSQ8](storage^, d, metric, M=32)
+    index.ntotal = ntotal
+    index.is_trained = is_trained
+    read_hnsw_graph_mmap(f, index.hnsw, file_size)
+    if index.hnsw.ntotal != ntotal:
+        raise Error("HNSW graph and index sizes differ.")
     index.vt_pool.grow(index.hnsw.capacity)
     return index^
 

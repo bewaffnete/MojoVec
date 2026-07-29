@@ -2,6 +2,7 @@ from std.collections import Dict, List
 from std.io.file import FileHandle
 from std.memory import alloc
 from std.memory.span import Span
+from std.os import SEEK_END, SEEK_SET
 from std.time import perf_counter_ns
 from std.utils import Variant
 
@@ -42,9 +43,11 @@ comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
 
 comptime COLLECTION_MAGIC_V1 = 1129270348
 comptime COLLECTION_MAGIC_V2 = 1129270349
-comptime COLLECTION_FORMAT_VERSION = 4
+comptime COLLECTION_FORMAT_VERSION = 5
 comptime COLLECTION_FORMAT_VERSION_WITH_METADATA = 3
 comptime COLLECTION_FORMAT_VERSION_WITH_DOCUMENTS = 4
+comptime COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX = 5
+comptime DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
 comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
 comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
 
@@ -318,6 +321,18 @@ struct Collection(Movable, Writable):
             M,
             ef_construction,
             ef_search,
+        )
+
+    def is_memory_mapped(self) -> Bool:
+        """Returns whether vector and graph arrays currently use file mappings."""
+        if self._storage_kind == STORAGE_SQ8:
+            return (
+                self._hnsw.unsafe_get[SQ8HNSW]().storage.is_memory_mapped()
+                and self._hnsw.unsafe_get[SQ8HNSW]().hnsw.is_memory_mapped()
+            )
+        return (
+            self._hnsw.unsafe_get[FlatHNSW]().storage.is_memory_mapped()
+            and self._hnsw.unsafe_get[FlatHNSW]().hnsw.is_memory_mapped()
         )
 
     def _get_vector(
@@ -1568,8 +1583,8 @@ struct Collection(Movable, Writable):
     def save(mut self, path: String) raises:
         """Saves payloads, storage kind, vectors, and the HNSW graph."""
         from mojovec.io.serialization import (
-            write_index_hnsw,
-            write_index_hnsw_sq8,
+            write_index_hnsw_mmap,
+            write_index_hnsw_sq8_mmap,
             write_int,
         )
 
@@ -1612,23 +1627,37 @@ struct Collection(Movable, Writable):
                 _write_string(file, self._documents[document_index])
 
         if self._storage_kind == STORAGE_SQ8:
-            write_index_hnsw_sq8(file, self._hnsw.unsafe_get[SQ8HNSW]())
+            write_index_hnsw_sq8_mmap(
+                file, self._hnsw.unsafe_get[SQ8HNSW]()
+            )
         else:
-            write_index_hnsw(file, self._hnsw.unsafe_get[FlatHNSW]())
+            write_index_hnsw_mmap(
+                file, self._hnsw.unsafe_get[FlatHNSW]()
+            )
         file.close()
 
     @staticmethod
-    def load(path: String) raises -> Collection:
-        """Loads both the legacy SQ8 format and the versioned Flat/SQ8 format.
+    def load(
+        path: String,
+        memory_mapped: Bool = True,
+        mmap_threshold_bytes: Int = DEFAULT_MMAP_THRESHOLD_BYTES,
+    ) raises -> Collection:
+        """Loads Flat/SQ8, mapping V5 index arrays when the threshold is met.
         """
         from mojovec.io.serialization import (
             check_size_limit,
             read_index_hnsw,
+            read_index_hnsw_mmap,
             read_index_hnsw_sq8,
+            read_index_hnsw_sq8_mmap,
             read_int,
         )
 
+        if mmap_threshold_bytes < 0:
+            raise Error("mmap_threshold_bytes cannot be negative.")
         var file = open(path, "r")
+        var file_size = Int(file.seek(0, SEEK_END))
+        _ = file.seek(0, SEEK_SET)
         var magic = read_int(file)
         var name = String("")
         var dimension: Int
@@ -1705,13 +1734,32 @@ struct Collection(Movable, Writable):
                     raise Error("Sparse document entries cannot be empty.")
                 collection._store_document(internal_id, document)
 
+        var use_mmap = (
+            memory_mapped
+            and version >= COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX
+            and file_size >= mmap_threshold_bytes
+        )
         if storage_kind == STORAGE_SQ8:
-            var index = read_index_hnsw_sq8(file)
+            var index: SQ8HNSW
+            if version >= COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX:
+                index = read_index_hnsw_sq8_mmap(file, file_size)
+                if not use_mmap:
+                    index.storage._detach_mapped()
+                    index.hnsw._detach_mapped()
+            else:
+                index = read_index_hnsw_sq8(file)
             if index.ntotal != num_ids:
                 raise Error("Collection metadata and SQ8 index size differ.")
             collection._hnsw.set[SQ8HNSW](index^)
         else:
-            var index = read_index_hnsw(file)
+            var index: FlatHNSW
+            if version >= COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX:
+                index = read_index_hnsw_mmap(file, file_size)
+                if not use_mmap:
+                    index.storage._detach_mapped()
+                    index.hnsw._detach_mapped()
+            else:
+                index = read_index_hnsw(file)
             if index.ntotal != num_ids:
                 raise Error("Collection metadata and Flat index size differ.")
             collection._hnsw.set[FlatHNSW](index^)

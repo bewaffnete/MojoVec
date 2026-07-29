@@ -11,6 +11,11 @@ Collection.save() persists:
 Collection.load() inspects the file and reconstructs the correct storage type,
 so callers do not need to pass quantized=True/False while loading.
 
+Saved V5 files place vector and HNSW arrays in aligned regions. Large files are
+memory-mapped automatically; this small example forces mmap with a zero-byte
+threshold so that the behavior is visible without generating a large fixture.
+The Collection owns and releases the mapping automatically.
+
 The example writes two files under /tmp to avoid polluting the repository.
 """
 
@@ -95,18 +100,28 @@ def round_trip(
 
     # load() is a static factory. The file header determines whether MojoVec
     # reconstructs IndexHNSW[IndexFlat] or IndexHNSW[IndexFlatSQ8].
-    var loaded = Collection.load(path)
+    #
+    # Production code can normally omit mmap_threshold_bytes. The default
+    # maps files >= 64 MiB and copies smaller files to owned heap memory.
+    var loaded = Collection.load(path, mmap_threshold_bytes=0)
     print("Loaded collection:")
     print("  name:", loaded.name())
     print("  dimension:", loaded.dimension())
     print("  quantized:", loaded.is_quantized())
+    print("  memory mapped:", loaded.is_memory_mapped())
     print("  active records:", loaded.count())
     print("  deleted/internal historical records:", loaded.count_deleted())
 
-    # ef_search remains a runtime tuning control after loading.
+    # ef_search is scalar runtime state, so tuning it does not detach the
+    # read-only mapped arrays.
     loaded.set_ef_search(64)
+    print("  mapped after set_ef_search:", loaded.is_memory_mapped())
     var after = loaded.query(query, n_results=3)
     print_results("Results after load:", after)
+
+    # add/update/upsert/compaction need writable graph storage. On the first
+    # such operation MojoVec copies the mapped arrays to owned memory
+    # automatically. No mmap handles, pointers, or free calls reach the API.
 
     # For deterministic data, returned IDs should match before and after the
     # round trip. Floating-point distances should be compared with a tolerance,

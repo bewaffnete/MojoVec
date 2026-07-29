@@ -130,6 +130,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         if n == 0:
             return
 
+        self.hnsw._detach_mapped()
         self.storage.add(x)
         var x_ptr = x.unsafe_ptr()
 

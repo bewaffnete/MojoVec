@@ -11,6 +11,7 @@ from std.sys.intrinsics import prefetch, PrefetchOptions
 from std.memory import memcpy
 from std.memory.span import Span
 import std.math as math
+from mojovec.io.memory_map import FileMemoryMap
 
 struct SQ8DistanceComputer(DistanceComputerTrait):
     """Computes distances between a query vector and SQ8 quantized database vectors."""
@@ -157,6 +158,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
     var global_min: Float32
     var global_max: Float32
     var scale: Float32
+    var _mapping: FileMemoryMap
     
     def __init__(out self, d: Int, metric: MetricType = METRIC_L2):
         """Initializes the SQ8 index.
@@ -175,15 +177,18 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         self.global_min = Float32.MAX
         self.global_max = -Float32.MAX
         self.scale = 1.0
+        self._mapping = FileMemoryMap()
 
     def __del__(deinit self):
         """Frees the allocated memory for the index."""
-        if Int(self.codes_f32) != 0:
-            self.codes_f32.free()
-        if Int(self.codes_u8) != 0:
-            self.codes_u8.free()
-        if Int(self.norms_u32) != 0:
-            self.norms_u32.free()
+        if not self._mapping.is_active():
+            if Int(self.codes_f32) != 0:
+                self.codes_f32.free()
+            if Int(self.codes_u8) != 0:
+                self.codes_u8.free()
+            if Int(self.norms_u32) != 0:
+                self.norms_u32.free()
+        self._mapping.close()
             
     def __init__(out self, *, deinit move: Self):
         """Moves the index from another instance.
@@ -201,6 +206,27 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         self.global_min = move.global_min
         self.global_max = move.global_max
         self.scale = move.scale
+        self._mapping = move._mapping^
+
+    @always_inline
+    def is_memory_mapped(self) -> Bool:
+        return self._mapping.is_active()
+
+    def _detach_mapped(mut self):
+        if not self._mapping.is_active():
+            return
+        var new_f32 = alloc[Float32](max(self.capacity * self.d, 1))
+        var new_u8 = alloc[UInt8](max(self.capacity * self.d, 1))
+        var new_norms = alloc[UInt32](max(self.capacity, 1))
+        for i in range(self.ntotal * self.d):
+            new_f32[i] = self.codes_f32[i]
+            new_u8[i] = self.codes_u8[i]
+        for i in range(self.ntotal):
+            new_norms[i] = self.norms_u32[i]
+        self._mapping.close()
+        self.codes_f32 = new_f32
+        self.codes_u8 = new_u8
+        self.norms_u32 = new_norms
 
     def add(mut self, x: Span[Float32, _]):
         """Adds new vectors to the index, maintaining dynamic quantization bounds.
@@ -210,6 +236,9 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         """
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()
+        if n == 0:
+            return
+        self._detach_mapped()
         if self.ntotal + n > self.capacity:
             var new_cap = math.max(self.capacity * 2, self.ntotal + n)
             var new_f32 = alloc[Float32](new_cap * self.d)

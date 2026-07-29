@@ -27,6 +27,7 @@ faiss/
 !benchmarks/cold_bench/README.md
 !benchmarks/cold_bench/RESULTS.md
 *.bin
+*.mojovec
 .venv/
 __pycache__/
 bench_mojovec

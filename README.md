@@ -309,14 +309,39 @@ candidate list naturally falls back to BM25.
     # Save to disk
     collection.save("my_database.bin")
     
-    # Reload anywhere
+    # Files of at least 64 MiB use read-only memory-mapped vector and graph
+    # arrays by default. Smaller files are copied to owned heap memory.
     from mojovec import Collection
     var loaded = Collection.load("my_database.bin")
+    print("memory mapped:", loaded.is_memory_mapped())
+
+    # Force mmap regardless of file size, or disable it explicitly.
+    var forced = Collection.load(
+        "my_database.bin",
+        mmap_threshold_bytes=0,
+    )
+    var copied = Collection.load(
+        "my_database.bin",
+        memory_mapped=False,
+    )
 ```
 
-The current versioned collection format stores metadata and documents sparsely.
-Loading legacy V1–V3 collection files remains supported; records loaded from
-formats predating a payload type receive empty values for that type.
+The V5 collection format omits unused reserved capacity and stores populated
+vector rows plus occupied HNSW links in 64-byte-aligned regions. Large Flat and
+SQ8 indexes can therefore start without copying those arrays into a second heap
+allocation. IDs, metadata, documents, deletion flags, and the BM25 index remain
+managed by the collection.
+
+Mappings are read-only and owned by the loaded collection; the caller does not
+manage file handles or release memory. Queries, filtering, BM25, hybrid search,
+soft deletion, and `set_ef_search()` keep the mapping active. The first
+operation that extends or rebuilds the graph (`add`, `update`, `upsert`, or
+compaction) transparently materializes owned writable arrays, after which
+`is_memory_mapped()` returns `False`.
+
+Loading legacy V1–V4 collection files remains supported through the copying
+loader. Records loaded from formats predating a payload type receive empty
+values for that type.
 
 ### 10. Inspect and Compact
 

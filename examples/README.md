@@ -99,6 +99,7 @@ collection state visible after loading:
 
 - collection name;
 - dimension and storage kind;
+- memory-mapped ownership state;
 - user-provided IDs;
 - active and soft-deleted state;
 - vectors and HNSW graph.
@@ -111,7 +112,16 @@ The example writes:
 ```
 
 `Collection.load(path)` detects Flat versus SQ8 from the file header. Do not
-create a new collection or pass `quantized` when loading.
+create a new collection or pass `quantized` when loading. V5 files store the
+large vector and HNSW arrays in aligned regions. Files of at least 64 MiB are
+mapped read-only by default; the example uses `mmap_threshold_bytes=0` to force
+that path for its small fixture. Pass `memory_mapped=False` to force a copied
+heap load.
+
+The mapping belongs to `Collection`; users do not keep a file open or release
+memory manually. Read-only search operations preserve it. The first
+`add`/`update`/`upsert` or compaction transparently detaches the mapped arrays
+into writable owned storage.
 
 ## Example 4: statistics and compaction
 

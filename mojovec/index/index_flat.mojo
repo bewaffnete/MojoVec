@@ -18,6 +18,7 @@ from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from std.sys.intrinsics import prefetch, PrefetchOptions
 from std.ffi import external_call
+from mojovec.io.memory_map import FileMemoryMap
 
 @always_inline
 def _alloc_aligned(count: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:
@@ -123,6 +124,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
     var codes: UnsafePointer[Float32, MutUntrackedOrigin]
     # Capacity allocated for codes
     var capacity: Int
+    var _mapping: FileMemoryMap
 
     def __init__(out self, d: Int, metric: MetricType = METRIC_L2):
         """Initializes the flat index."""
@@ -131,10 +133,13 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         self.metric_type = metric
         self.capacity = 1024  # Initial capacity for 1024 vectors
         self.codes = _alloc_aligned(self.capacity * d)
+        self._mapping = FileMemoryMap()
 
     def __del__(deinit self):
         """Frees the allocated memory for the index."""
-        _free_aligned(self.codes)
+        if not self._mapping.is_active():
+            _free_aligned(self.codes)
+        self._mapping.close()
 
     def __init__(out self, *, deinit move: Self):
         """Moves the index from another instance."""
@@ -143,6 +148,24 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         self.metric_type = move.metric_type
         self.capacity = move.capacity
         self.codes = move.codes
+        self._mapping = move._mapping^
+
+    @always_inline
+    def is_memory_mapped(self) -> Bool:
+        return self._mapping.is_active()
+
+    def _detach_mapped(mut self):
+        if not self._mapping.is_active():
+            return
+        var new_codes = _alloc_aligned(max(self.capacity * self.d, 1))
+        if self.ntotal > 0:
+            memcpy(
+                dest=new_codes,
+                src=self.codes,
+                count=self.ntotal * self.d,
+            )
+        self._mapping.close()
+        self.codes = new_codes
 
     def add(mut self, x: Span[Float32, _]):
         """Adds new vectors to the index.
@@ -153,6 +176,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         var n = len(x) // self.d
         if n == 0:
             return
+        self._detach_mapped()
             
         var x_ptr = x.unsafe_ptr()
             

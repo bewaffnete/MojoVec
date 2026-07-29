@@ -11,6 +11,7 @@ from mojovec.utils.heap import (
 )
 from ..utils.distance_computer import DistanceComputerTrait
 from .hnsw_visited import VisitedTable
+from mojovec.io.memory_map import FileMemoryMap
 
 
 struct NeighborsInfo:
@@ -47,6 +48,7 @@ struct HNSWGraph(Movable):
     var next_tickets: UnsafePointer[UInt32, MutUntrackedOrigin]
     var now_serving: UnsafePointer[UInt32, MutUntrackedOrigin]
     var num_locks: Int
+    var _mapping: FileMemoryMap
 
     def __init__(
         out self, M: Int = 32, efConstruction: Int = 40, efSearch: Int = 16
@@ -91,17 +93,20 @@ struct HNSWGraph(Movable):
         for i in range(self.num_locks):
             self.next_tickets[i] = 0
             self.now_serving[i] = 0
+        self._mapping = FileMemoryMap()
 
     def __del__(deinit self):
         """Frees the underlying memory of the HNSW graph."""
-        if Int(self.levels) != 0:
-            self.levels.free()
-        if Int(self.offsets) != 0:
-            self.offsets.free()
-        if Int(self.neighbors) != 0:
-            self.neighbors.free()
-        if Int(self.cum_nneighbor_per_level) != 0:
-            self.cum_nneighbor_per_level.free()
+        if not self._mapping.is_active():
+            if Int(self.levels) != 0:
+                self.levels.free()
+            if Int(self.offsets) != 0:
+                self.offsets.free()
+            if Int(self.neighbors) != 0:
+                self.neighbors.free()
+            if Int(self.cum_nneighbor_per_level) != 0:
+                self.cum_nneighbor_per_level.free()
+        self._mapping.close()
         if Int(self.next_tickets) != 0:
             self.next_tickets.free()
         if Int(self.now_serving) != 0:
@@ -124,6 +129,32 @@ struct HNSWGraph(Movable):
         self.next_tickets = move.next_tickets
         self.now_serving = move.now_serving
         self.num_locks = move.num_locks
+        self._mapping = move._mapping^
+
+    @always_inline
+    def is_memory_mapped(self) -> Bool:
+        return self._mapping.is_active()
+
+    def _detach_mapped(mut self):
+        if not self._mapping.is_active():
+            return
+        var new_levels = alloc[Int](max(self.capacity, 1))
+        var new_offsets = alloc[Int](max(self.capacity + 1, 1))
+        var new_neighbors = alloc[Int32](max(self.neighbors_capacity, 1))
+        var new_cumulative = alloc[Int](33)
+        for i in range(self.capacity):
+            new_levels[i] = self.levels[i]
+        for i in range(self.capacity + 1):
+            new_offsets[i] = self.offsets[i]
+        for i in range(self.neighbors_capacity):
+            new_neighbors[i] = self.neighbors[i]
+        for i in range(33):
+            new_cumulative[i] = self.cum_nneighbor_per_level[i]
+        self._mapping.close()
+        self.levels = new_levels
+        self.offsets = new_offsets
+        self.neighbors = new_neighbors
+        self.cum_nneighbor_per_level = new_cumulative
 
     def random_level(self) -> Int:
         """Generates a random level for a new node based on the graph's M parameter."""
@@ -173,7 +204,8 @@ struct HNSWGraph(Movable):
 
     def _grow(mut self):
         """Doubles the capacity of the node level and offset arrays."""
-        var new_capacity = self.capacity * 2
+        self._detach_mapped()
+        var new_capacity = max(self.capacity * 2, 1)
 
         var new_levels = alloc[Int](new_capacity)
         for i in range(self.capacity):
@@ -191,6 +223,7 @@ struct HNSWGraph(Movable):
 
     def grow_neighbors(mut self, required_capacity: Int, current_offset: Int):
         """Grows the neighbor links array to accommodate more links."""
+        self._detach_mapped()
         var new_capacity = max(self.neighbors_capacity * 2, required_capacity)
         var new_neighbors = alloc[Int32](new_capacity)
         for i in range(new_capacity):
