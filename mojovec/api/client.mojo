@@ -22,7 +22,7 @@ struct Client:
         quantized: Bool = True,
     ) -> Collection:
         """
-        Creates a Flat or SQ8 HNSW collection with automatic document BM25.
+        Creates a Flat or SQ8 HNSW collection with BM25 and hybrid RRF search.
         """
         return Collection(
             dimension,

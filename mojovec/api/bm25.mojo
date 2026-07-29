@@ -56,16 +56,17 @@ def _bm25_sift_up(
 def _bm25_sift_down(
     mut ids: List[Int],
     mut scores: List[Float64],
+    heap_size: Int,
 ):
     """Restores the worst-candidate root after replacing it."""
     var parent = 0
     while True:
         var left = parent * 2 + 1
-        if left >= len(ids):
+        if left >= heap_size:
             return
         var right = left + 1
         var worse_child = left
-        if right < len(ids) and _bm25_is_worse(
+        if right < heap_size and _bm25_is_worse(
             scores[right],
             ids[right],
             scores[left],
@@ -330,20 +331,17 @@ struct BM25Index(Movable):
             ):
                 top_ids[0] = internal_id
                 top_scores[0] = score
-                _bm25_sift_down(top_ids, top_scores)
+                _bm25_sift_down(
+                    top_ids, top_scores, len(top_ids)
+                )
 
-        # Sort descending by score and then ascending by internal ID so ties
-        # are deterministic regardless of Dict iteration order.
-        for left in range(len(top_ids)):
-            var best = left
-            for right in range(left + 1, len(top_ids)):
-                if top_scores[right] > top_scores[best] or (
-                    top_scores[right] == top_scores[best]
-                    and top_ids[right] < top_ids[best]
-                ):
-                    best = right
-            if best != left:
-                _bm25_swap(top_ids, top_scores, left, best)
+        # The root is the worst candidate. In-place heapsort therefore emits
+        # descending scores with ascending internal IDs in O(k log(k)).
+        var heap_size = len(top_ids)
+        while heap_size > 1:
+            _bm25_swap(top_ids, top_scores, 0, heap_size - 1)
+            heap_size -= 1
+            _bm25_sift_down(top_ids, top_scores, heap_size)
 
         var result_ids = List[Int](capacity=n_results)
         var result_scores = List[Float32](capacity=n_results)

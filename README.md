@@ -17,6 +17,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 - typed `String`, `Int`, `Float64`, and `Bool` record metadata;
 - record documents returned directly with query results;
 - native BM25 full-text search over collection documents;
+- hybrid vector + BM25 search with reciprocal rank fusion (RRF);
 - typed `where` filtering backed by automatic sparse bitmap indexes;
 - compound `and_`, `or_`, `not_`, `in_`, and `not_in` expressions;
 - save/load, collection statistics, and graph compaction;
@@ -259,7 +260,50 @@ as `rock'n'roll` and `model_v2` stay intact. Stemming is intentionally not
 applied: `run` and `running` remain different terms. A query containing only
 stopwords returns the normal padded no-match result.
 
-### 8. Disk Persistence
+### 8. Hybrid Search with RRF
+
+`query_hybrid` combines vector and BM25 rankings without comparing their
+incompatible raw distance and relevance scales:
+
+```mojo
+    var hybrid = collection.query_hybrid(
+        query_embeddings,
+        [String("fast vector search")],
+        n_results=5,
+    )
+```
+
+The embedding batch and text batch must contain the same number of queries.
+For each pair, MojoVec retrieves candidates independently from HNSW and BM25,
+then adds an equal-weight reciprocal-rank contribution from each list:
+
+```text
+RRF score(document) = Σ 1 / (rrf_k + one_based_rank)
+```
+
+Defaults are `rrf_k=60` and `candidate_multiplier=4`, so each source supplies
+up to `4 * n_results` candidates before fusion. The candidate pool is capped at
+2048. Larger `scores` are better; `distances` is empty because raw vector
+distances are not meaningful after rank fusion.
+
+The same typed metadata filter is applied to both candidate sources:
+
+```mojo
+    var filtered_hybrid = collection.query_hybrid(
+        query_embeddings,
+        [String("vector database")],
+        where=Where.eq("published", True),
+        n_results=5,
+        rrf_k=60,
+        candidate_multiplier=4,
+    )
+```
+
+Results that occur in both lists receive both contributions. A text query with
+no indexed terms naturally falls back to the vector ranking; an empty vector
+candidate list naturally falls back to BM25.
+
+### 9. Disk Persistence
 
 ```mojo
     # Save to disk
@@ -274,7 +318,7 @@ The current versioned collection format stores metadata and documents sparsely.
 Loading legacy V1–V3 collection files remains supported; records loaded from
 formats predating a payload type receive empty values for that type.
 
-### 9. Inspect and Compact
+### 10. Inspect and Compact
 
 `update`, `upsert`, and `delete` use soft deletion so searches can continue
 without mutating HNSW links in place. Inspect accumulated historical rows and

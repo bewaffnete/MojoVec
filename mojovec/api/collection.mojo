@@ -19,6 +19,11 @@ from mojovec.api.metadata_bitmap import (
     MetadataBitmapIndex,
 )
 from mojovec.api.results import CollectionStats, CompactReport, QueryResults
+from mojovec.api.rrf import (
+    RRF_DEFAULT_CANDIDATE_MULTIPLIER,
+    RRF_DEFAULT_K,
+    reciprocal_rank_fusion,
+)
 from mojovec.api.where import Where, WhereNode
 from mojovec.core.types import (
     METRIC_L2,
@@ -1162,8 +1167,8 @@ struct Collection(Movable, Writable):
         Runs embedding queries and returns automatically managed results.
 
         QueryResults owns aligned ID, distance, metadata, and document Lists;
-        its BM25-only `scores` field is empty. Callers do not allocate output
-        buffers or release result memory.
+        its ranked-search `scores` field is empty. Callers do not allocate
+        output buffers or release result memory.
         """
         if self._dimension <= 0:
             raise Error("Collection dimension must be positive.")
@@ -1258,14 +1263,14 @@ struct Collection(Movable, Writable):
             n_results,
         )
 
-    def _build_bm25_query_results(
+    def _build_scored_query_results(
         self,
         internal_ids_storage: List[Int],
         scores_storage: List[Float32],
         num_queries: Int,
         n_results: Int,
     ) raises -> QueryResults:
-        """Materializes BM25 scores and aligned collection payloads."""
+        """Materializes ranked scores and aligned collection payloads."""
         var include_metadatas = len(self._metadatas) > 0
         var include_documents = len(self._documents) > 0
         var all_ids = List[List[Int]](capacity=num_queries)
@@ -1361,7 +1366,7 @@ struct Collection(Movable, Writable):
                 ids_storage.append(result.internal_ids[rank])
                 scores_storage.append(result.scores[rank])
 
-        return self._build_bm25_query_results(
+        return self._build_scored_query_results(
             ids_storage,
             scores_storage,
             len(query_texts),
@@ -1396,6 +1401,167 @@ struct Collection(Movable, Writable):
         return self._query_bm25(
             query_texts,
             n_results,
+            self._where_filter(where),
+        )
+
+    def _query_hybrid(
+        mut self,
+        query_embeddings: List[Float32],
+        query_texts: List[String],
+        n_results: Int,
+        rrf_k: Int,
+        candidate_multiplier: Int,
+        exclusion: List[UInt8],
+    ) raises -> QueryResults:
+        if self._dimension <= 0:
+            raise Error("Collection dimension must be positive.")
+        if len(query_embeddings) % self._dimension != 0:
+            raise Error(
+                "Query embeddings length must be a multiple of dimension."
+            )
+        if n_results <= 0 or n_results > 2048:
+            raise Error("n_results must be between 1 and 2048.")
+        if rrf_k <= 0:
+            raise Error("rrf_k must be positive.")
+        if candidate_multiplier <= 0 or candidate_multiplier > 2048:
+            raise Error("candidate_multiplier must be between 1 and 2048.")
+
+        var num_queries = len(query_embeddings) // self._dimension
+        if num_queries != len(query_texts):
+            raise Error(
+                "Hybrid query embedding and text batch sizes must match."
+            )
+        if num_queries == 0:
+            return QueryResults(
+                List[List[Int]](),
+                List[List[Float32]](),
+                List[List[Metadata]](),
+                List[List[String]](),
+                List[List[Float32]](),
+            )
+        if len(exclusion) > 0 and len(exclusion) != len(self._user_ids):
+            raise Error("Where filter size does not match collection size.")
+
+        var candidate_count = n_results * candidate_multiplier
+        if candidate_count > 2048:
+            candidate_count = 2048
+        var candidate_storage_size = num_queries * candidate_count
+        var vector_ids = List[Int](
+            unsafe_uninit_length=candidate_storage_size
+        )
+        var vector_distances = List[Float32](
+            unsafe_uninit_length=candidate_storage_size
+        )
+        var queries = Span[Float32](
+            ptr=query_embeddings.unsafe_ptr(),
+            length=len(query_embeddings),
+        )
+        var vector_id_span = Span[mut=True, Int](vector_ids)
+        var vector_distance_span = Span[mut=True, Float32](
+            vector_distances
+        )
+
+        if len(exclusion) > 0:
+            var filter_span = Span[UInt8](exclusion)
+            self._search_index(
+                queries,
+                candidate_count,
+                vector_distance_span,
+                vector_id_span,
+                filter_span,
+            )
+        elif self.count_deleted() > 0:
+            var deleted_span = Span[mut=False, UInt8](self._is_deleted)
+            self._search_index(
+                queries,
+                candidate_count,
+                vector_distance_span,
+                vector_id_span,
+                deleted_span,
+            )
+        else:
+            var empty_filter = Span[UInt8, MutUntrackedOrigin]()
+            self._search_index(
+                queries,
+                candidate_count,
+                vector_distance_span,
+                vector_id_span,
+                empty_filter,
+            )
+
+        var fused_ids = List[Int](
+            capacity=num_queries * n_results
+        )
+        var fused_scores = List[Float32](
+            capacity=num_queries * n_results
+        )
+        for query_index in range(num_queries):
+            var vector_row = List[Int](capacity=candidate_count)
+            var vector_offset = query_index * candidate_count
+            for rank in range(candidate_count):
+                vector_row.append(vector_ids[vector_offset + rank])
+
+            var text_row = self._bm25.search(
+                query_texts[query_index],
+                candidate_count,
+                exclusion,
+            )
+            var fused = reciprocal_rank_fusion(
+                vector_row,
+                text_row.internal_ids,
+                n_results,
+                rrf_k,
+            )
+            for rank in range(n_results):
+                fused_ids.append(fused.internal_ids[rank])
+                fused_scores.append(fused.scores[rank])
+
+        return self._build_scored_query_results(
+            fused_ids,
+            fused_scores,
+            num_queries,
+            n_results,
+        )
+
+    def query_hybrid(
+        mut self,
+        query_embeddings: List[Float32],
+        query_texts: List[String],
+        n_results: Int = 10,
+        rrf_k: Int = RRF_DEFAULT_K,
+        candidate_multiplier: Int = RRF_DEFAULT_CANDIDATE_MULTIPLIER,
+    ) raises -> QueryResults:
+        """
+        Fuses matching vector and BM25 query batches with reciprocal rank fusion.
+
+        Each source contributes `1 / (rrf_k + rank)` using one-based ranks.
+        The result `scores` contain the fused score; `distances` is empty.
+        """
+        return self._query_hybrid(
+            query_embeddings,
+            query_texts,
+            n_results,
+            rrf_k,
+            candidate_multiplier,
+            List[UInt8](),
+        )
+
+    def query_hybrid(
+        mut self,
+        query_embeddings: List[Float32],
+        query_texts: List[String],
+        where: Where,
+        n_results: Int = 10,
+        rrf_k: Int = RRF_DEFAULT_K,
+        candidate_multiplier: Int = RRF_DEFAULT_CANDIDATE_MULTIPLIER,
+    ) raises -> QueryResults:
+        """Runs RRF hybrid search restricted by a typed metadata filter."""
+        return self._query_hybrid(
+            query_embeddings,
+            query_texts,
+            n_results,
+            rrf_k,
+            candidate_multiplier,
             self._where_filter(where),
         )
 

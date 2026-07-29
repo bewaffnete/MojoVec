@@ -17,6 +17,7 @@ mojo run -I . examples/api_04_compaction.mojo
 mojo run -I . examples/api_05_metadata.mojo
 mojo run -I . examples/api_06_where_filters.mojo
 mojo run -I . examples/api_07_bm25.mojo
+mojo run -I . examples/api_08_hybrid_rrf.mojo
 ```
 
 To compile without executing:
@@ -29,6 +30,7 @@ mojo build -I . examples/api_04_compaction.mojo
 mojo build -I . examples/api_05_metadata.mojo
 mojo build -I . examples/api_06_where_filters.mojo
 mojo build -I . examples/api_07_bm25.mojo
+mojo build -I . examples/api_08_hybrid_rrf.mojo
 ```
 
 ## Which collection should I use?
@@ -190,6 +192,24 @@ Compaction discards their stale postings, while load deterministically rebuilds
 the index from stored documents. There is no separate text-index file or manual
 index-maintenance API.
 
+## Example 8: hybrid vector + BM25 search with RRF
+
+File: [`api_08_hybrid_rrf.mojo`](api_08_hybrid_rrf.mojo)
+
+This example covers:
+
+- aligned embedding and text query batches;
+- reciprocal rank fusion of HNSW and BM25 candidates;
+- the `rrf_k` and `candidate_multiplier` controls;
+- typed metadata filtering applied to both candidate sources;
+- hybrid `scores`, padded results, metadata, and documents;
+- natural vector-only fallback for a stopword-only text query.
+
+RRF uses ranks rather than mixing raw vector distances with BM25 scores. A
+record present in both candidate lists receives a contribution from both.
+Hybrid search leaves `distances` empty and returns the fused values through
+`QueryResults.scores`.
+
 ## Embedding layout
 
 Every public high-level method receives one flattened `List[Float32]`. For
@@ -254,7 +274,7 @@ MojoVec owns all temporary search buffers and transfers the result Lists to the
 caller. User code does not call `alloc`, work with pointers, or call `free`.
 Dropping `QueryResults` releases its storage automatically. If the collection
 does not store a payload kind, its corresponding outer List is empty. Vector
-queries populate `distances`; BM25 queries populate `scores`.
+queries populate `distances`; BM25 and hybrid queries populate `scores`.
 
 ## Distance interpretation
 
