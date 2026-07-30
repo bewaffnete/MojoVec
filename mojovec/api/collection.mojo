@@ -28,7 +28,6 @@ from mojovec.api.rrf import (
 )
 from mojovec.api.where import Where, WhereNode
 from mojovec.core.types import (
-    METRIC_COSINE,
     METRIC_INNER_PRODUCT,
     METRIC_L2,
     MetricType,
@@ -50,6 +49,7 @@ from mojovec.io.wal import (
 )
 
 
+comptime METRIC_COSINE = 2
 comptime FlatHNSW = IndexHNSW[IndexFlat]
 comptime SQ8HNSW = IndexHNSW[IndexFlatSQ8]
 comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
