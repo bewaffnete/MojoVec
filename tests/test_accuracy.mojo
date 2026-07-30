@@ -1,6 +1,6 @@
 from std.memory.span import Span
 from std.testing import assert_true, TestSuite
-from std.random import random_float64, seed
+from std.random.philox import Random
 from std.memory import alloc
 
 from mojovec.core.types import METRIC_L2, QT_8bit
@@ -20,14 +20,20 @@ struct Dataset:
     var queries: UnsafePointer[Float32, MutUntrackedOrigin]
 
     def __init__(out self):
-        seed(42)
+        var generator = Random(seed=UInt64(42))
         self.db = alloc[Float32](nb * d)
-        for i in range(nb * d): 
-            self.db[i] = Float32(random_float64(-1.0, 1.0))
+        var values = generator.step_uniform()
+        for i in range(nb * d):
+            if i != 0 and i % 4 == 0:
+                values = generator.step_uniform()
+            self.db[i] = values[i % 4] * 2.0 - 1.0
             
         self.queries = alloc[Float32](nq * d)
-        for i in range(nq * d): 
-            self.queries[i] = Float32(random_float64(-1.0, 1.0))
+        values = generator.step_uniform()
+        for i in range(nq * d):
+            if i != 0 and i % 4 == 0:
+                values = generator.step_uniform()
+            self.queries[i] = values[i % 4] * 2.0 - 1.0
 
     def free(self):
         self.db.free()

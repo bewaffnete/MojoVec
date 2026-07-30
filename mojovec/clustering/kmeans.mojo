@@ -2,7 +2,7 @@ from std.algorithm import parallelize
 from std.collections import List
 from std.memory import alloc
 from std.memory.span import Span
-from std.random import random_si64
+from std.random.philox import Random
 from ..utils.distances import l2_distance_simd
 from std.math import min
 
@@ -53,9 +53,15 @@ struct KMeans:
         if Int(self.assignments) != 0: self.assignments.free()
         self.assignments = alloc[Int](n)
         
-        # 1. Initialize centroids (random subsampling)
+        # 1. Initialize centroids from a private deterministic PRNG. The
+        # package-level std.random state is shared across threads, so using it
+        # here makes concurrent index training race and platform-dependent.
+        var generator = Random(seed=UInt64(0x4D4F4A4F564543))
+        var random_words = generator.step()
         for i in range(self.k):
-            var src_idx = Int(random_si64(0, Int64(n - 1)))
+            if i != 0 and i % 4 == 0:
+                random_words = generator.step()
+            var src_idx = Int(random_words[i % 4]) % n
             var src_ptr = data_ptr + src_idx * self.d
             var dst_ptr = self.centroids + i * self.d
             for j in range(self.d):
