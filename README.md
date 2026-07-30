@@ -330,7 +330,9 @@ candidate list naturally falls back to BM25.
 `save()` uses a synchronized temporary file and atomic rename. A crash cannot
 expose a half-written collection at the destination path, and existing mmap
 readers keep using the previous complete file while the new snapshot is
-published.
+published. Every snapshot includes a checksum trailer. `load()` validates the
+complete payload before parsing metadata or exposing memory-mapped arrays, so
+truncation and on-disk corruption fail closed.
 
 For one-writer/many-reader workloads, `snapshot()` publishes the writer's
 current state and returns an independent point-in-time collection:

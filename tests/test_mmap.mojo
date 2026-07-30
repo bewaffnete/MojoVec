@@ -1,5 +1,6 @@
 from std.collections import List
 from std.algorithm import parallelize
+from std.os import SEEK_END, SEEK_SET
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -9,6 +10,12 @@ from std.testing import (
 
 from mojovec import Collection, Metadata
 from mojovec.io.atomic_file import atomic_replace
+from mojovec.io.fault_injection import (
+    SNAPSHOT_FAULT_AFTER_HEADER,
+    SNAPSHOT_FAULT_AFTER_PAYLOAD,
+    SNAPSHOT_FAULT_AFTER_PUBLISH,
+    SNAPSHOT_FAULT_BEFORE_PUBLISH,
+)
 
 
 comptime DIMENSION = 4
@@ -233,6 +240,92 @@ def test_failed_atomic_replacement_preserves_destination() raises:
     )
     assert_equal(preserved.count(), 3)
     assert_equal(preserved.query(vector(1.0), n_results=1).ids[0][0], 10)
+
+
+def test_snapshot_checksum_rejects_payload_and_trailer_corruption() raises:
+    var path = "/tmp/mojovec_test_snapshot_checksum.bin"
+    var writer = make_collection(False)
+    writer.save(path)
+
+    # A valid checksummed snapshot remains eligible for mmap.
+    var valid = Collection.load(path, mmap_threshold_bytes=0)
+    assert_true(valid.is_memory_mapped())
+    assert_equal(valid.count(), 3)
+
+    # Corrupt a payload byte. Validation happens before parsing or mapping it.
+    var payload_file = open(path, "rw")
+    _ = payload_file.seek(32, SEEK_SET)
+    var original_payload = payload_file.read_bytes(1)
+    _ = payload_file.seek(32, SEEK_SET)
+    var corrupted_payload = [original_payload[0] ^ UInt8(0xFF)]
+    payload_file.write_all(corrupted_payload)
+    payload_file.close()
+
+    var payload_failed = False
+    try:
+        _ = Collection.load(path, mmap_threshold_bytes=0)
+    except:
+        payload_failed = True
+    assert_true(payload_failed)
+
+    writer.save(path)
+    var trailer_file = open(path, "rw")
+    var file_size = Int(trailer_file.seek(0, SEEK_END))
+    _ = trailer_file.seek(UInt64(file_size - 1), SEEK_SET)
+    var original_trailer = trailer_file.read_bytes(1)
+    _ = trailer_file.seek(UInt64(file_size - 1), SEEK_SET)
+    var corrupted_trailer = [original_trailer[0] ^ UInt8(0xFF)]
+    trailer_file.write_all(corrupted_trailer)
+    trailer_file.close()
+
+    var trailer_failed = False
+    try:
+        _ = Collection.load(path, mmap_threshold_bytes=0)
+    except:
+        trailer_failed = True
+    assert_true(trailer_failed)
+
+
+def test_snapshot_fault_injection_preserves_atomic_generations() raises:
+    var path = "/tmp/mojovec_test_snapshot_faults.bin"
+    var writer = make_collection(False)
+    writer.save(path)
+    writer.add([40], vector(40.0))
+
+    for fault_point in [
+        SNAPSHOT_FAULT_AFTER_HEADER,
+        SNAPSHOT_FAULT_AFTER_PAYLOAD,
+        SNAPSHOT_FAULT_BEFORE_PUBLISH,
+    ]:
+        var failed = False
+        try:
+            writer._save_with_fault(path, fault_point)
+        except:
+            failed = True
+        assert_true(failed)
+
+        # Every pre-publication failure leaves the prior complete generation.
+        var preserved = Collection.load(path, mmap_threshold_bytes=0)
+        assert_equal(preserved.count(), 3)
+        assert_equal(
+            preserved.query(vector(1.0), n_results=1).ids[0][0],
+            10,
+        )
+
+    var post_publish_failed = False
+    try:
+        writer._save_with_fault(path, SNAPSHOT_FAULT_AFTER_PUBLISH)
+    except:
+        post_publish_failed = True
+    assert_true(post_publish_failed)
+
+    # Rename installs only a complete checksummed generation.
+    var published = Collection.load(path, mmap_threshold_bytes=0)
+    assert_equal(published.count(), 4)
+    assert_equal(
+        published.query(vector(40.0), n_results=1).ids[0][0],
+        40,
+    )
 
 
 def check_empty_mapped_collection_can_grow(

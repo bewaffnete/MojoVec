@@ -17,6 +17,8 @@ threshold so that the behavior is visible without generating a large fixture.
 The Collection owns and releases the mapping automatically.
 
 save() publishes through a synchronized temporary file and atomic rename.
+The completed snapshot includes a checksum that load() validates before
+parsing metadata or exposing memory-mapped arrays.
 snapshot() additionally returns an independent point-in-time reader, allowing
 one writer to continue changing its in-memory collection while existing
 readers keep querying the previous mapped file.

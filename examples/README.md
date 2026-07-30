@@ -127,7 +127,9 @@ into writable owned storage.
 is never replaced by a partially written collection. `snapshot(path)` performs
 that publication and returns an independent point-in-time reader. Existing
 mmap readers keep their previous state while one writer publishes the next
-state. Changes become crash-durable after `save()` or `snapshot()` returns.
+state. Each snapshot carries a checksum that `load()` verifies before parsing
+or mmap, so truncated and corrupted files are rejected. Changes become
+crash-durable after `save()` or `snapshot()` returns.
 Applications that need to recover mutations made between snapshots can enable
 the optional WAL shown in Example 9.
 

@@ -50,13 +50,8 @@ comptime FlatHNSW = IndexHNSW[IndexFlat]
 comptime SQ8HNSW = IndexHNSW[IndexFlatSQ8]
 comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
 
-comptime COLLECTION_MAGIC_V1 = 1129270348
 comptime COLLECTION_MAGIC_V2 = 1129270349
-comptime COLLECTION_FORMAT_VERSION = 6
-comptime COLLECTION_FORMAT_VERSION_WITH_METADATA = 3
-comptime COLLECTION_FORMAT_VERSION_WITH_DOCUMENTS = 4
-comptime COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX = 5
-comptime COLLECTION_FORMAT_VERSION_WITH_WAL_SEQUENCE = 6
+comptime COLLECTION_FORMAT_VERSION = 7
 comptime DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
 comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
 comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
@@ -1680,13 +1675,40 @@ struct Collection(Movable, Writable):
 
         The snapshot is durable before old WAL frames are discarded.
         """
-        self.save(path)
+        from mojovec.io.fault_injection import SNAPSHOT_FAULT_NONE
+
+        self._checkpoint_with_fault(path, SNAPSHOT_FAULT_NONE)
+
+    def _checkpoint_with_fault(
+        mut self,
+        path: String,
+        fault_point: Int,
+    ) raises:
+        """Checkpoint implementation with deterministic durability faults."""
+        from mojovec.io.fault_injection import (
+            SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT,
+            inject_snapshot_fault,
+        )
+
+        self._save_with_fault(path, fault_point)
+        inject_snapshot_fault(
+            fault_point,
+            SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT,
+        )
         if self._wal:
             self._wal[].reset(self._applied_sequence)
 
-    def _save_direct(mut self, path: String) raises:
-        """Writes and synchronizes one complete collection file."""
-        from mojovec.io.atomic_file import sync_file
+    def _save_direct(
+        mut self,
+        path: String,
+        fault_point: Int,
+    ) raises:
+        """Writes one complete collection payload before its checksum."""
+        from mojovec.io.fault_injection import (
+            SNAPSHOT_FAULT_AFTER_HEADER,
+            SNAPSHOT_FAULT_AFTER_PAYLOAD,
+            inject_snapshot_fault,
+        )
         from mojovec.io.serialization import (
             write_index_hnsw_mmap,
             write_index_hnsw_sq8_mmap,
@@ -1701,6 +1723,7 @@ struct Collection(Movable, Writable):
         write_int(file, self._storage_kind)
         write_int(file, self._identity)
         write_int(file, self._applied_sequence)
+        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_HEADER)
 
         var num_ids = len(self._user_ids)
         write_int(file, num_ids)
@@ -1741,7 +1764,7 @@ struct Collection(Movable, Writable):
             write_index_hnsw_mmap(
                 file, self._hnsw.unsafe_get[FlatHNSW]()
             )
-        sync_file(file)
+        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_PAYLOAD)
         file.close()
 
     def save(mut self, path: String) raises:
@@ -1752,15 +1775,34 @@ struct Collection(Movable, Writable):
         either the previous complete snapshot or the new complete snapshot.
         Existing mmap readers retain their previous file generation.
         """
+        from mojovec.io.fault_injection import SNAPSHOT_FAULT_NONE
+
+        self._save_with_fault(path, SNAPSHOT_FAULT_NONE)
+
+    def _save_with_fault(
+        mut self,
+        path: String,
+        fault_point: Int,
+    ) raises:
+        """Atomic save implementation with deterministic durability faults."""
         from mojovec.io.atomic_file import (
             atomic_replace,
             atomic_temporary_path,
             sync_parent_directory,
         )
+        from mojovec.io.fault_injection import (
+            SNAPSHOT_FAULT_AFTER_PUBLISH,
+            SNAPSHOT_FAULT_BEFORE_PUBLISH,
+            inject_snapshot_fault,
+        )
+        from mojovec.io.snapshot_file import append_snapshot_checksum
 
         var temporary_path = atomic_temporary_path(path)
-        self._save_direct(temporary_path)
+        self._save_direct(temporary_path, fault_point)
+        append_snapshot_checksum(temporary_path)
+        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_BEFORE_PUBLISH)
         atomic_replace(temporary_path, path)
+        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_PUBLISH)
         sync_parent_directory(path)
 
     def snapshot(
@@ -1872,44 +1914,34 @@ struct Collection(Movable, Writable):
         """
         from mojovec.io.serialization import (
             check_size_limit,
-            read_index_hnsw,
             read_index_hnsw_mmap,
-            read_index_hnsw_sq8,
             read_index_hnsw_sq8_mmap,
             read_int,
         )
+        from mojovec.io.snapshot_file import validate_snapshot_checksum
 
         if mmap_threshold_bytes < 0:
             raise Error("mmap_threshold_bytes cannot be negative.")
         var file = open(path, "r")
         var file_size = Int(file.seek(0, SEEK_END))
+        file_size = validate_snapshot_checksum(file, file_size)
         _ = file.seek(0, SEEK_SET)
         var magic = read_int(file)
-        var name = String("")
-        var dimension: Int
-        var storage_kind: StorageKind = STORAGE_SQ8
-        var version = 1
-        var identity: Int = Int(perf_counter_ns())
-        var applied_sequence = 0
-
-        if magic == COLLECTION_MAGIC_V1:
-            dimension = read_int(file)
-        elif magic == COLLECTION_MAGIC_V2:
-            version = read_int(file)
-            if version < 2 or version > COLLECTION_FORMAT_VERSION:
-                raise Error("Unsupported Collection format version.")
-            name = _read_string(file)
-            dimension = read_int(file)
-            storage_kind = read_int(file)
-            if storage_kind != STORAGE_FLAT and storage_kind != STORAGE_SQ8:
-                raise Error("Invalid Collection storage kind.")
-            if version >= COLLECTION_FORMAT_VERSION_WITH_WAL_SEQUENCE:
-                identity = read_int(file)
-                applied_sequence = read_int(file)
-                if identity <= 0 or applied_sequence < 0:
-                    raise Error("Invalid Collection durability state.")
-        else:
+        if magic != COLLECTION_MAGIC_V2:
             raise Error("Invalid Collection magic.")
+        var version = read_int(file)
+        if version != COLLECTION_FORMAT_VERSION:
+            raise Error("Unsupported Collection format version.")
+
+        var name = _read_string(file)
+        var dimension = read_int(file)
+        var storage_kind: StorageKind = read_int(file)
+        if storage_kind != STORAGE_FLAT and storage_kind != STORAGE_SQ8:
+            raise Error("Invalid Collection storage kind.")
+        var identity = read_int(file)
+        var applied_sequence = read_int(file)
+        if identity <= 0 or applied_sequence < 0:
+            raise Error("Invalid Collection durability state.")
 
         check_size_limit(dimension, 65_536)
         var num_ids = read_int(file)
@@ -1937,64 +1969,53 @@ struct Collection(Movable, Writable):
             _ = len(ids_data)
             _ = len(deleted_data)
 
-        if version >= COLLECTION_FORMAT_VERSION_WITH_METADATA:
-            var metadata_count = read_int(file)
-            check_size_limit(metadata_count, num_ids)
-            for _ in range(metadata_count):
-                var internal_id = read_int(file)
-                if (
-                    internal_id < 0
-                    or internal_id >= num_ids
-                    or internal_id in collection._metadata_by_internal
-                ):
-                    raise Error("Invalid metadata internal ID.")
-                var metadata = _read_metadata(file)
-                if metadata.count() == 0:
-                    raise Error("Sparse metadata entries cannot be empty.")
-                collection._store_metadata(internal_id, metadata)
+        var metadata_count = read_int(file)
+        check_size_limit(metadata_count, num_ids)
+        for _ in range(metadata_count):
+            var internal_id = read_int(file)
+            if (
+                internal_id < 0
+                or internal_id >= num_ids
+                or internal_id in collection._metadata_by_internal
+            ):
+                raise Error("Invalid metadata internal ID.")
+            var metadata = _read_metadata(file)
+            if metadata.count() == 0:
+                raise Error("Sparse metadata entries cannot be empty.")
+            collection._store_metadata(internal_id, metadata)
 
-        if version >= COLLECTION_FORMAT_VERSION_WITH_DOCUMENTS:
-            var document_count = read_int(file)
-            check_size_limit(document_count, num_ids)
-            for _ in range(document_count):
-                var internal_id = read_int(file)
-                if (
-                    internal_id < 0
-                    or internal_id >= num_ids
-                    or internal_id in collection._document_by_internal
-                ):
-                    raise Error("Invalid document internal ID.")
-                var document = _read_string(file)
-                if document.byte_length() == 0:
-                    raise Error("Sparse document entries cannot be empty.")
-                collection._store_document(internal_id, document)
+        var document_count = read_int(file)
+        check_size_limit(document_count, num_ids)
+        for _ in range(document_count):
+            var internal_id = read_int(file)
+            if (
+                internal_id < 0
+                or internal_id >= num_ids
+                or internal_id in collection._document_by_internal
+            ):
+                raise Error("Invalid document internal ID.")
+            var document = _read_string(file)
+            if document.byte_length() == 0:
+                raise Error("Sparse document entries cannot be empty.")
+            collection._store_document(internal_id, document)
 
         var use_mmap = (
             memory_mapped
-            and version >= COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX
             and file_size >= mmap_threshold_bytes
         )
         if storage_kind == STORAGE_SQ8:
-            var index: SQ8HNSW
-            if version >= COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX:
-                index = read_index_hnsw_sq8_mmap(file, file_size)
-                if not use_mmap:
-                    index.storage._detach_mapped()
-                    index.hnsw._detach_mapped()
-            else:
-                index = read_index_hnsw_sq8(file)
+            var index = read_index_hnsw_sq8_mmap(file, file_size)
+            if not use_mmap:
+                index.storage._detach_mapped()
+                index.hnsw._detach_mapped()
             if index.ntotal != num_ids:
                 raise Error("Collection metadata and SQ8 index size differ.")
             collection._hnsw.set[SQ8HNSW](index^)
         else:
-            var index: FlatHNSW
-            if version >= COLLECTION_FORMAT_VERSION_WITH_MMAP_INDEX:
-                index = read_index_hnsw_mmap(file, file_size)
-                if not use_mmap:
-                    index.storage._detach_mapped()
-                    index.hnsw._detach_mapped()
-            else:
-                index = read_index_hnsw(file)
+            var index = read_index_hnsw_mmap(file, file_size)
+            if not use_mmap:
+                index.storage._detach_mapped()
+                index.hnsw._detach_mapped()
             if index.ntotal != num_ids:
                 raise Error("Collection metadata and Flat index size differ.")
             collection._hnsw.set[FlatHNSW](index^)

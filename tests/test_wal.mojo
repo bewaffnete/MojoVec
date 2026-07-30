@@ -13,6 +13,9 @@ from mojovec import (
     WAL_ASYNC,
     WAL_SYNC,
 )
+from mojovec.io.fault_injection import (
+    SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT,
+)
 
 
 comptime DIMENSION = 4
@@ -134,6 +137,41 @@ def test_sync_checkpoint_rotates_wal_after_snapshot() raises:
     assert_equal(recovered.wal_sequence(), 2)
     assert_equal(recovered.query(vector(1.0), n_results=1).ids[0][0], 1)
     assert_equal(recovered.query(vector(20.0), n_results=1).ids[0][0], 2)
+    recovered.disable_wal()
+
+
+def test_checkpoint_fault_after_snapshot_keeps_wal_recoverable() raises:
+    var snapshot_path = "test_wal_checkpoint_fault.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_checkpoint_fault.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    collection.add([1], vector(1.0))
+
+    var checkpoint_failed = False
+    try:
+        collection._checkpoint_with_fault(
+            snapshot_path,
+            SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT,
+        )
+    except:
+        checkpoint_failed = True
+    assert_true(checkpoint_failed)
+    collection.disable_wal()
+
+    # The snapshot covers sequence 1 and the unrotated WAL still contains it.
+    # Recovery must skip that frame instead of applying it twice.
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        durability=WAL_SYNC,
+        memory_mapped=False,
+    )
+    assert_equal(recovered.count(), 1)
+    assert_equal(recovered.wal_sequence(), 1)
+    assert_equal(recovered.query(vector(1.0), n_results=1).ids[0][0], 1)
     recovered.disable_wal()
 
 
