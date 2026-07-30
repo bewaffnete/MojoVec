@@ -1,43 +1,90 @@
 # MojoVec examples
 
-These examples are executable tutorials for the current high-level MojoVec API.
-They use deterministic, locally generated vectors and require no downloaded
-datasets.
+The examples are split by language:
+
+- [`mojo/`](mojo/) contains ten executable tutorials for the native Mojo API;
+- [`python/`](python/) contains seven executable tutorials for the managed
+  Python API.
+
+Both tracks use deterministic, locally generated vectors and require no
+downloaded datasets.
 
 ## Before you start
 
-Run every command from the repository root so `-I .` can resolve the local
-`mojovec` package:
+Run every command from the repository root.
+
+Build the Python extension once before running the Python track:
 
 ```bash
-mojo run -I . examples/api_01_hnsw_fast_search.mojo
-mojo run -I . examples/api_02_ivfpq_compression.mojo
-mojo run -I . examples/api_03_serialization.mojo
-mojo run -I . examples/api_04_compaction.mojo
-mojo run -I . examples/api_05_metadata.mojo
-mojo run -I . examples/api_06_where_filters.mojo
-mojo run -I . examples/api_07_bm25.mojo
-mojo run -I . examples/api_08_hybrid_rrf.mojo
-mojo run -I . examples/api_09_wal.mojo
-mojo run -I . examples/api_10_distance_metrics.mojo
+cd python
+python setup.py build_ext --inplace
+cd ..
+```
+
+Then run:
+
+```bash
+PYTHONPATH=python python examples/python/api_01_collection_crud.py
+PYTHONPATH=python python examples/python/api_02_metadata_where.py
+PYTHONPATH=python python examples/python/api_03_bm25_hybrid.py
+PYTHONPATH=python python examples/python/api_04_persistence_compaction.py
+PYTHONPATH=python python examples/python/api_05_wal_recovery.py
+PYTHONPATH=python python examples/python/api_06_numpy_fast_path.py
+PYTHONPATH=python python examples/python/api_07_distance_metrics.py
+```
+
+The NumPy fast-path example is optional and requires `numpy`. The other Python
+examples use only MojoVec and the Python standard library.
+
+For the Mojo track, `-I .` resolves the local `mojovec` package:
+
+```bash
+mojo run -I . examples/mojo/api_01_hnsw_fast_search.mojo
+mojo run -I . examples/mojo/api_02_ivfpq_compression.mojo
+mojo run -I . examples/mojo/api_03_serialization.mojo
+mojo run -I . examples/mojo/api_04_compaction.mojo
+mojo run -I . examples/mojo/api_05_metadata.mojo
+mojo run -I . examples/mojo/api_06_where_filters.mojo
+mojo run -I . examples/mojo/api_07_bm25.mojo
+mojo run -I . examples/mojo/api_08_hybrid_rrf.mojo
+mojo run -I . examples/mojo/api_09_wal.mojo
+mojo run -I . examples/mojo/api_10_distance_metrics.mojo
 ```
 
 To compile without executing:
 
 ```bash
-mojo build -I . examples/api_01_hnsw_fast_search.mojo
-mojo build -I . examples/api_02_ivfpq_compression.mojo
-mojo build -I . examples/api_03_serialization.mojo
-mojo build -I . examples/api_04_compaction.mojo
-mojo build -I . examples/api_05_metadata.mojo
-mojo build -I . examples/api_06_where_filters.mojo
-mojo build -I . examples/api_07_bm25.mojo
-mojo build -I . examples/api_08_hybrid_rrf.mojo
-mojo build -I . examples/api_09_wal.mojo
-mojo build -I . examples/api_10_distance_metrics.mojo
+mojo build -I . examples/mojo/api_01_hnsw_fast_search.mojo
+mojo build -I . examples/mojo/api_02_ivfpq_compression.mojo
+mojo build -I . examples/mojo/api_03_serialization.mojo
+mojo build -I . examples/mojo/api_04_compaction.mojo
+mojo build -I . examples/mojo/api_05_metadata.mojo
+mojo build -I . examples/mojo/api_06_where_filters.mojo
+mojo build -I . examples/mojo/api_07_bm25.mojo
+mojo build -I . examples/mojo/api_08_hybrid_rrf.mojo
+mojo build -I . examples/mojo/api_09_wal.mojo
+mojo build -I . examples/mojo/api_10_distance_metrics.mojo
 ```
 
-## Which collection should I use?
+## Python tutorial track
+
+Run the Python examples in numeric order:
+
+| Example | Topic | Important API |
+| --- | --- | --- |
+| [`api_01_collection_crud.py`](python/api_01_collection_crud.py) | Flat/SQ8 construction, nested vectors, CRUD, batching, stats | `Collection`, `add`, `upsert`, `update`, `delete`, `query` |
+| [`api_02_metadata_where.py`](python/api_02_metadata_where.py) | Batch payloads and nested Chroma-style filters | `metadatas`, `documents`, `where`, `get_metadata`, `get_document` |
+| [`api_03_bm25_hybrid.py`](python/api_03_bm25_hybrid.py) | Unicode BM25 and reciprocal-rank fusion | `query_texts`, `query_hybrid`, `scores` |
+| [`api_04_persistence_compaction.py`](python/api_04_persistence_compaction.py) | Atomic save, mmap ownership, point-in-time readers, garbage reclamation | `save`, `load`, `snapshot`, `is_memory_mapped`, `compact_if_needed` |
+| [`api_05_wal_recovery.py`](python/api_05_wal_recovery.py) | Optional async/sync durability and restart recovery | `enable_wal`, `flush_wal`, `recover`, `checkpoint` |
+| [`api_06_numpy_fast_path.py`](python/api_06_numpy_fast_path.py) | Contiguous zero-copy vector buffers | `upsert_numpy`, `query_numpy` |
+| [`api_07_distance_metrics.py`](python/api_07_distance_metrics.py) | L2, cosine, and inner-product ordering | `metric`, `storage_kind` |
+
+The managed Python methods return ordinary Python values and own all native
+resources. No example opens an index file manually, releases a query buffer, or
+calls a native `free`.
+
+## Mojo collection selection
 
 | Collection | Creation | Vector representation | Strength | Main trade-off |
 | --- | --- | --- | --- | --- |
@@ -51,7 +98,7 @@ level. “Flat” here means that HNSW evaluates candidates against unquantized
 
 ## Example 1: complete HNSW lifecycle
 
-File: [`api_01_hnsw_fast_search.mojo`](api_01_hnsw_fast_search.mojo)
+File: [`api_01_hnsw_fast_search.mojo`](mojo/api_01_hnsw_fast_search.mojo)
 
 This is the recommended first example. It covers:
 
@@ -80,7 +127,7 @@ Use `stats()` to inspect that storage and `compact()` or
 
 ## Example 2: IVF-PQ training and compression
 
-File: [`api_02_ivfpq_compression.mojo`](api_02_ivfpq_compression.mojo)
+File: [`api_02_ivfpq_compression.mojo`](mojo/api_02_ivfpq_compression.mojo)
 
 This example explains:
 
@@ -96,7 +143,7 @@ biased first ingestion batch usually reduces recall.
 
 ## Example 3: serialization and recovery
 
-File: [`api_03_serialization.mojo`](api_03_serialization.mojo)
+File: [`api_03_serialization.mojo`](mojo/api_03_serialization.mojo)
 
 This example round-trips both SQ8 and Flat HNSW collections and verifies the
 collection state visible after loading:
@@ -139,7 +186,7 @@ the optional WAL shown in Example 9.
 
 ## Example 4: statistics and compaction
 
-File: [`api_04_compaction.mojo`](api_04_compaction.mojo)
+File: [`api_04_compaction.mojo`](mojo/api_04_compaction.mojo)
 
 This example creates historical rows through updates and deletion, then shows:
 
@@ -157,7 +204,7 @@ compaction call is running.
 
 ## Example 5: typed record metadata
 
-File: [`api_05_metadata.mojo`](api_05_metadata.mojo)
+File: [`api_05_metadata.mojo`](mojo/api_05_metadata.mojo)
 
 This example covers:
 
@@ -178,7 +225,7 @@ payloads use empty placeholders.
 
 ## Example 6: typed `where` filters and bitmap indexes
 
-File: [`api_06_where_filters.mojo`](api_06_where_filters.mojo)
+File: [`api_06_where_filters.mojo`](mojo/api_06_where_filters.mojo)
 
 This example covers:
 
@@ -197,7 +244,7 @@ per-value bitmap overhead.
 
 ## Example 7: native BM25 document search
 
-File: [`api_07_bm25.mojo`](api_07_bm25.mojo)
+File: [`api_07_bm25.mojo`](mojo/api_07_bm25.mojo)
 
 This example covers:
 
@@ -218,7 +265,7 @@ index-maintenance API.
 
 ## Example 8: hybrid vector + BM25 search with RRF
 
-File: [`api_08_hybrid_rrf.mojo`](api_08_hybrid_rrf.mojo)
+File: [`api_08_hybrid_rrf.mojo`](mojo/api_08_hybrid_rrf.mojo)
 
 This example covers:
 
@@ -236,7 +283,7 @@ Hybrid search leaves `distances` empty and returns the fused values through
 
 ## Example 9: optional write-ahead log
 
-File: [`api_09_wal.mojo`](api_09_wal.mojo)
+File: [`api_09_wal.mojo`](mojo/api_09_wal.mojo)
 
 This example demonstrates standalone crash recovery without adding WAL work to
 queries:
@@ -339,7 +386,7 @@ is greater than one. Metric selection is independent of `quantized=True` SQ8
 versus `quantized=False` Flat storage and is preserved by save/load, mmap,
 compaction, filtering, hybrid search, and WAL recovery.
 
-See [`api_10_distance_metrics.mojo`](api_10_distance_metrics.mojo) for a
+See [`api_10_distance_metrics.mojo`](mojo/api_10_distance_metrics.mojo) for a
 complete executable comparison. SQ8 and IVF-PQ distances are approximate;
 validate production quality with recall@k, not distance equality alone.
 

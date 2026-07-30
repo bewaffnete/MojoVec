@@ -12,7 +12,7 @@ This example demonstrates:
 
 Run from the repository root:
 
-    mojo run -I . examples/api_06_where_filters.mojo
+    mojo run -I . examples/mojo/api_06_where_filters.mojo
 """
 
 from std.collections import List

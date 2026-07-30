@@ -461,7 +461,9 @@ successful rebuild. Collection name, storage kind, metric, `M`,
 
 ## Python API
 
-MojoVec now includes high-performance native Python bindings. You can install the package directly from PyPI (Linux x86_64 and macOS Apple Silicon are supported):
+MojoVec includes a managed Python API backed by the same native Mojo
+collection implementation. Install it from PyPI (Linux x86-64 and macOS Apple
+Silicon are supported):
 
 ```bash
 pip install mojovec
@@ -470,44 +472,129 @@ pip install mojovec
 ```python
 import mojovec
 
-# dimension, M, ef_construction, ef_search, quantized, metric
-collection = mojovec.Collection(128, 32, 200, 40, True, "cosine")
-print(collection.metric())  # cosine
-
-# Add vectors
-ids = [1, 2, 3]
-embeddings = [0.1] * (128 * 3) # Flattened 1D list
-collection.upsert(ids, embeddings)
-
-# Add records with scalar metadata.
-collection.add_with_metadata(
-    [4],
-    [0.2] * 128,
-    [{"title": "Mojo vector search", "year": 2026, "published": True}],
+collection = mojovec.Collection(
+    dimension=3,
+    M=32,
+    ef_construction=96,
+    ef_search=96,
+    quantized=True,
+    name="articles",
+    metric="cosine",  # "l2", "cosine", or "ip"
 )
-print(collection.get_metadata(4))
 
-# Search
-res = collection.query(embeddings[:128], 3)
-print("IDs:", res["ids"])             # [[2, 3, 1]]
-print("Distances:", res["distances"]) # [[0.0, 0.0, 0.0]]
+# Nested vectors, metadata, and documents can be inserted in one batch.
+collection.add(
+    ids=[1, 2, 3],
+    embeddings=[
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.8, 0.2, 0.0],
+    ],
+    metadatas=[
+        {"kind": "guide", "year": 2024},
+        {"kind": "reference", "year": 2026},
+        {"kind": "guide", "year": 2027},
+    ],
+    documents=[
+        "Mojo vector search guide",
+        "Python API reference",
+        "Hybrid search with reciprocal rank fusion",
+    ],
+)
 
-# Inspect soft-deleted historical rows and compact at a 20% threshold.
-print(collection.stats())
-report = collection.compact_if_needed(0.20)
-print(report)
+# add rejects an existing ID. upsert inserts or replaces; update requires the
+# ID to exist. Omitting metadata/documents preserves the active payload.
+collection.upsert(
+    ids=[2],
+    embeddings=[[0.1, 0.9, 0.0]],
+    documents=["Updated Python API reference"],
+)
 
-# Save to disk
-collection.save("my_database.bin")
+# Vector query with a Chroma-style typed metadata filter.
+vector = collection.query(
+    query_embeddings=[[1.0, 0.0, 0.0]],
+    n_results=2,
+    where={
+        "$and": [
+            {"kind": {"$in": ["guide", "reference"]}},
+            {"year": {"$gte": 2024}},
+        ]
+    },
+)
+print(vector["ids"])
+print(vector["distances"])
+print(vector["metadatas"])
+print(vector["documents"])
 
-# Load from disk
-loaded_collection = mojovec.load("my_database.bin")
+# BM25 and hybrid RRF use the same result shape and populate scores instead
+# of distances.
+text = collection.query(query_texts=["python api"], n_results=2)
+hybrid = collection.query_hybrid(
+    query_embeddings=[[0.0, 1.0, 0.0]],
+    query_texts=["python api"],
+    n_results=2,
+    rrf_k=60,
+    candidate_multiplier=4,
+)
+print(text["scores"], hybrid["scores"])
 ```
 
 Python metadata accepts dictionaries with string keys and scalar `str`, `int`,
-`float`, or `bool` values. Use `add_with_metadata`,
-`upsert_with_metadata`, or `update_with_metadata` when replacing metadata;
-vector-only operations retain an existing record's metadata.
+`float`, or `bool` values. `where` supports `$eq`, `$ne`, `$gt`, `$gte`, `$lt`,
+`$lte`, `$in`, `$nin`, `$and`, `$or`, and `$not`. Every managed query returns
+the five aligned keys `ids`, `distances`, `metadatas`, `documents`, and
+`scores`.
+
+Persistence, mmap loading, compaction, snapshots, and the optional WAL are
+available from Python as well:
+
+```python
+collection.save("articles.mojovec")
+loaded = mojovec.load(
+    "articles.mojovec",
+    memory_mapped=True,
+    mmap_threshold_bytes=64 * 1024 * 1024,
+)
+
+print(loaded.stats())
+print(loaded.is_memory_mapped())
+loaded.set_ef_search(128)
+loaded.compact_if_needed()  # default deleted ratio: 0.25
+
+loaded.enable_wal("articles.wal", durability=mojovec.WAL_ASYNC)
+loaded.upsert([4], [[0.0, 0.0, 1.0]], documents=["Durable record"])
+loaded.flush_wal()
+
+# Recover committed WAL records on top of an earlier snapshot.
+recovered = mojovec.recover(
+    "articles.mojovec",
+    "articles.wal",
+    durability=mojovec.WAL_SYNC,
+)
+
+# Publish an independent point-in-time view and rotate the active WAL.
+snapshot = loaded.snapshot("checkpoint.mojovec")
+```
+
+For NumPy-heavy ingestion, `upsert_numpy()` and `query_numpy()` keep the
+zero-copy pointer fast path. They require contiguous `int64` IDs and `float32`
+embeddings; the managed list API accepts either flattened or nested vectors.
+
+---
+
+## Examples
+
+Executable tutorials are organized by language:
+
+- [`examples/mojo/`](examples/mojo/) — native Mojo lifecycle, IVF-PQ,
+  persistence, compaction, metadata, filters, BM25, hybrid RRF, WAL, and
+  distance metrics;
+- [`examples/python/`](examples/python/) — managed Python CRUD,
+  metadata/documents, Chroma-style filters, BM25, hybrid RRF, mmap,
+  compaction, WAL recovery, NumPy fast paths, and distance metrics.
+
+See [`examples/README.md`](examples/README.md) for the recommended order and
+commands.
 
 ---
 

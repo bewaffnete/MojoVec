@@ -1,9 +1,20 @@
-import os
 import subprocess
 from setuptools import setup, Distribution
 
+
 print("Building mojovec_python.mojo...")
-subprocess.check_call(["mojo", "build", "-I", "..", "--emit", "shared-lib", "mojovec_python.mojo", "-o", "mojovec.so"])
+subprocess.check_call([
+    "mojo",
+    "build",
+    "-I",
+    "..",
+    "--emit",
+    "shared-lib",
+    "mojovec_python.mojo",
+    "-o",
+    "mojovec/_native.so",
+])
+
 
 class BinaryDistribution(Distribution):
     """Distribution which always forces a binary package with platform name"""
@@ -14,7 +25,7 @@ setup(
     name="mojovec",
     version="0.5.0",
     description="Python bindings for MojoVec",
-    packages=[],
-    data_files=[(".", ["mojovec.so"])],
+    packages=["mojovec"],
+    package_data={"mojovec": ["_native.so", "py.typed"]},
     distclass=BinaryDistribution,
 )
