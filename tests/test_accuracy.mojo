@@ -1,5 +1,5 @@
 from std.memory.span import Span
-from std.testing import assert_true, TestSuite
+from std.testing import assert_true
 from std.random.philox import Random
 from std.memory import alloc
 
@@ -186,4 +186,12 @@ def test_accuracy_sq8() raises:
     test_labels.free()
 
 def main() raises:
-    TestSuite.discover_tests[__functions_in_module()]().run()
+    # These cases each use the runtime worker pool internally. Running them
+    # concurrently through TestSuite can overlap independent `parallelize`
+    # regions and has produced corrupted IVF training on Linux. Keep the
+    # accuracy checks sequential while every individual index still uses its
+    # normal parallel implementation.
+    test_accuracy_hnsw()
+    test_accuracy_ivf_flat()
+    test_accuracy_ivf_pq()
+    test_accuracy_sq8()
