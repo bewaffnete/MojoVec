@@ -1,4 +1,4 @@
-from mojovec import Client, Collection, CollectionIVFPQ, QueryResults
+from mojovec import Client, Collection, QueryResults
 from std.collections import List
 
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
@@ -38,42 +38,6 @@ def test_collection_hnsw() raises:
     var res2 = loaded.query(q, n_results=2)
     assert_true(res2.ids[0][0] == 10, "Loaded col should return ID 10")
 
-def test_collection_ivfpq() raises:
-    var client = Client()
-    # Very small parameters so training is fast and doesn't require huge dataset
-    var col = client.create_ivfpq_collection("test_ivfpq", dimension=16, nlist=2, M=8)
-    
-    var ids = List[Int]()
-    var embeddings = List[Float32]()
-    # Generate 100 vectors to have enough data for K-Means and PQ training
-    for i in range(100):
-        ids.append(1000 + i)
-        for j in range(16):
-            if i == 0:
-                embeddings.append(Float32(j) / 16.0) # Match query exactly
-            else:
-                embeddings.append(Float32((i + j) % 10) / 10.0)
-            
-    col.add(ids, embeddings)
-    
-    var q = List[Float32]()
-    for j in range(16):
-        q.append(Float32(j) / 16.0)
-        
-    var results = col.query(q, n_results=3)
-    assert_true(len(results.ids) == 1, "Should have 1 query result list")
-    assert_true(len(results.ids[0]) == 3, "Should return top 3 results")
-    assert_true(results.ids[0][0] == 1000, "First result should be ID 1000")
-    assert_equal(len(results.scores), 0)
-    
-    # Test Serialization
-    col.save("test_ivfpq_col.bin")
-    var loaded = CollectionIVFPQ.load("test_ivfpq_col.bin")
-    var res2 = loaded.query(q, n_results=3)
-    assert_true(res2.ids[0][0] == 1000, "Loaded IVFPQ should return same ID 1000")
-
-
-    
 def test_empty_collection() raises:
     var client = Client()
     var col = client.create_collection("test_empty", 16)

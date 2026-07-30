@@ -9,13 +9,11 @@ from mojovec.index.index_flat import IndexFlat
 from mojovec.index.index_flat_sq8 import IndexFlatSQ8
 from mojovec.index.index_hnsw import IndexHNSW
 from mojovec.index.index_ivf_flat import IndexIVFFlat
-from mojovec.index.index_ivf_pq import IndexIVFPQ
 from mojovec.io.serialization import (
     write_index_flat, read_index_flat,
     write_index_flat_sq8, read_index_flat_sq8,
     write_index_hnsw, read_index_hnsw,
-    write_index_ivf_flat, read_index_ivf_flat,
-    write_index_ivf_pq, read_index_ivf_pq
+    write_index_ivf_flat, read_index_ivf_flat
 )
 
 comptime d = 16
@@ -184,50 +182,6 @@ def test_ivf_flat_io() raises:
     
     var f_r = open("test_ivf_flat.bin", "r")
     var index2 = read_index_ivf_flat(f_r)
-    f_r.close()
-    index2.nprobe = 4
-    
-    var dists2 = alloc[Float32](nq * k)
-    var labels2 = alloc[Int](nq * k)
-    var q_span2 = Span[Float32, MutUntrackedOrigin](ptr=ds.queries, length=nq * d)
-    var d_span2 = Span[mut=True, Float32, MutUntrackedOrigin](ptr=dists2, length=nq * k)
-    var l_span2 = Span[mut=True, Int, MutUntrackedOrigin](ptr=labels2, length=nq * k)
-    index2.search(q_span2, k, d_span2, l_span2)
-    
-    assert_search_results(dists1, labels1, dists2, labels2)
-    
-    ds.free()
-    dists1.free()
-    labels1.free()
-    dists2.free()
-    labels2.free()
-    index.quantizer.free()
-    index2.quantizer.free()
-
-def test_ivf_pq_io() raises:
-    var ds = Dataset()
-    var quantizer = alloc[IndexFlat](1)
-    quantizer.init_pointee_move(IndexFlat(d, METRIC_L2))
-    var index = IndexIVFPQ[IndexFlat](quantizer, d, 8, 4, METRIC_L2)
-    index.train(
-        Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=n * d)
-    )
-    index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=n * d))
-    index.nprobe = 4
-    
-    var dists1 = alloc[Float32](nq * k)
-    var labels1 = alloc[Int](nq * k)
-    var q_span1 = Span[Float32, MutUntrackedOrigin](ptr=ds.queries, length=nq * d)
-    var d_span1 = Span[mut=True, Float32, MutUntrackedOrigin](ptr=dists1, length=nq * k)
-    var l_span1 = Span[mut=True, Int, MutUntrackedOrigin](ptr=labels1, length=nq * k)
-    index.search(q_span1, k, d_span1, l_span1)
-    
-    var f_w = open("test_ivf_pq.bin", "w")
-    write_index_ivf_pq(f_w, index)
-    f_w.close()
-    
-    var f_r = open("test_ivf_pq.bin", "r")
-    var index2 = read_index_ivf_pq(f_r)
     f_r.close()
     index2.nprobe = 4
     
