@@ -2,6 +2,7 @@ from std.collections import Dict, List, Optional
 from std.io.file import FileHandle
 from std.memory import alloc
 from std.memory.span import Span
+from std.math import sqrt
 from std.os import SEEK_END, SEEK_SET
 from std.time import perf_counter_ns
 from std.utils import Variant
@@ -27,7 +28,10 @@ from mojovec.api.rrf import (
 )
 from mojovec.api.where import Where, WhereNode
 from mojovec.core.types import (
+    METRIC_COSINE,
+    METRIC_INNER_PRODUCT,
     METRIC_L2,
+    MetricType,
     STORAGE_FLAT,
     STORAGE_SQ8,
     StorageKind,
@@ -51,10 +55,35 @@ comptime SQ8HNSW = IndexHNSW[IndexFlatSQ8]
 comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
 
 comptime COLLECTION_MAGIC_V2 = 1129270349
-comptime COLLECTION_FORMAT_VERSION = 7
+comptime COLLECTION_FORMAT_VERSION = 8
 comptime DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
 comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
 comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
+
+
+def _parse_metric(value: String) raises -> MetricType:
+    if value == "l2":
+        return METRIC_L2
+    if value == "cosine":
+        return METRIC_COSINE
+    if value == "ip":
+        return METRIC_INNER_PRODUCT
+    raise Error('metric must be "l2", "cosine", or "ip".')
+
+
+def _metric_name(metric: MetricType) -> String:
+    if metric == METRIC_COSINE:
+        return "cosine"
+    if metric == METRIC_INNER_PRODUCT:
+        return "ip"
+    return "l2"
+
+
+def _index_metric(metric: MetricType) -> MetricType:
+    # Cosine similarity is inner product over unit-normalized vectors.
+    if metric == METRIC_COSINE:
+        return METRIC_INNER_PRODUCT
+    return metric
 
 
 def _write_string(mut file: FileHandle, value: String) raises:
@@ -141,6 +170,7 @@ struct Collection(Movable, Writable):
     var _name: String
     var _dimension: Int
     var _storage_kind: StorageKind
+    var _metric_type: MetricType
     var _hnsw: HNSWStorage
     var _user_ids: List[Int]
     var _is_deleted: List[UInt8]
@@ -164,20 +194,27 @@ struct Collection(Movable, Writable):
         ef_search: Int = 16,
         quantized: Bool = True,
         name: String = "",
-    ):
+        metric: String = "l2",
+    ) raises:
         self._name = name.copy()
         self._dimension = dimension
         self._storage_kind = STORAGE_SQ8 if quantized else STORAGE_FLAT
+        self._metric_type = _parse_metric(metric)
+        var storage_metric = _index_metric(self._metric_type)
 
         if quantized:
-            var storage = IndexFlatSQ8(dimension, METRIC_L2)
-            var index = SQ8HNSW(storage^, dimension, METRIC_L2, M=M)
+            var storage = IndexFlatSQ8(dimension, storage_metric)
+            var index = SQ8HNSW(
+                storage^, dimension, storage_metric, M=M
+            )
             index.hnsw.efConstruction = ef_construction
             index.hnsw.efSearch = ef_search
             self._hnsw = HNSWStorage(index^)
         else:
-            var storage = IndexFlat(dimension, METRIC_L2)
-            var index = FlatHNSW(storage^, dimension, METRIC_L2, M=M)
+            var storage = IndexFlat(dimension, storage_metric)
+            var index = FlatHNSW(
+                storage^, dimension, storage_metric, M=M
+            )
             index.hnsw.efConstruction = ef_construction
             index.hnsw.efSearch = ef_search
             self._hnsw = HNSWStorage(index^)
@@ -200,6 +237,7 @@ struct Collection(Movable, Writable):
         self._name = take._name^
         self._dimension = take._dimension
         self._storage_kind = take._storage_kind
+        self._metric_type = take._metric_type
         self._hnsw = take._hnsw^
         self._user_ids = take._user_ids^
         self._is_deleted = take._is_deleted^
@@ -224,6 +262,8 @@ struct Collection(Movable, Writable):
             self._dimension,
             ", storage=",
             storage,
+            ", metric=",
+            _metric_name(self._metric_type),
             ", count=",
             self.count(),
             ")",
@@ -237,6 +277,10 @@ struct Collection(Movable, Writable):
 
     def storage_kind(self) -> StorageKind:
         return self._storage_kind
+
+    def metric(self) -> String:
+        """Returns `"l2"`, `"cosine"`, or `"ip"`."""
+        return _metric_name(self._metric_type)
 
     def is_quantized(self) -> Bool:
         return self._storage_kind == STORAGE_SQ8
@@ -389,6 +433,7 @@ struct Collection(Movable, Writable):
             ef_search=before.ef_search,
             quantized=before.quantized,
             name=self._name,
+            metric=self.metric(),
         )
         var batch_size = max(
             1,
@@ -496,7 +541,39 @@ struct Collection(Movable, Writable):
                 raise Error("Duplicate IDs are not allowed in one operation.")
             seen[record_id] = True
 
-    def _add_to_index(mut self, embeddings: Span[Float32, _]):
+    def _normalize_vectors(
+        self,
+        vectors: Span[Float32, _],
+    ) raises -> List[Float32]:
+        """Returns row-wise L2-normalized vectors for cosine search."""
+        var normalized = List[Float32](
+            unsafe_uninit_length=len(vectors)
+        )
+        var vector_count = len(vectors) // self._dimension
+        for vector_index in range(vector_count):
+            var offset = vector_index * self._dimension
+            var squared_norm: Float64 = 0.0
+            for component in range(self._dimension):
+                var value = Float64(vectors[offset + component])
+                squared_norm += value * value
+            if not (
+                squared_norm > 0.0
+                and squared_norm <= Float64.MAX
+            ):
+                raise Error(
+                    "Cosine embeddings must be finite non-zero vectors."
+                )
+            var inverse_norm = 1.0 / sqrt(squared_norm)
+            for component in range(self._dimension):
+                normalized[offset + component] = Float32(
+                    Float64(vectors[offset + component]) * inverse_norm
+                )
+        return normalized^
+
+    def _add_prepared_to_index(
+        mut self,
+        embeddings: Span[Float32, _],
+    ):
         if self._storage_kind == STORAGE_SQ8:
             self._hnsw.unsafe_get[SQ8HNSW]().add(embeddings)
         else:
@@ -524,6 +601,12 @@ struct Collection(Movable, Writable):
             for i in range(len(ids)):
                 if ids[i] in self._id_to_internal:
                     raise Error("ID already exists; use upsert or update.")
+
+        # Validate and normalize cosine rows before WAL or managed state is
+        # changed. The caller's managed List remains untouched.
+        var normalized_embeddings = List[Float32]()
+        if self._metric_type == METRIC_COSINE:
+            normalized_embeddings = self._normalize_vectors(embeddings)
 
         var wal_sequence = self._applied_sequence
         if not self._replaying_wal and self._wal:
@@ -579,7 +662,12 @@ struct Collection(Movable, Writable):
                 )
             self._id_to_internal[record_id] = internal_id
 
-        self._add_to_index(embeddings)
+        if self._metric_type == METRIC_COSINE:
+            self._add_prepared_to_index(
+                Span[Float32](normalized_embeddings)
+            )
+        else:
+            self._add_prepared_to_index(embeddings)
         if not self._replaying_wal and self._wal:
             self._applied_sequence = wal_sequence
 
@@ -864,7 +952,7 @@ struct Collection(Movable, Writable):
         else:
             self._hnsw.unsafe_get[FlatHNSW]().hnsw.efSearch = ef
 
-    def _search_index(
+    def _search_index_raw(
         self,
         queries: Span[Float32, _],
         n_results: Int,
@@ -880,6 +968,44 @@ struct Collection(Movable, Writable):
             self._hnsw.unsafe_get[FlatHNSW]().search(
                 queries, n_results, distances, labels, deleted
             )
+
+    def _search_index(
+        self,
+        queries: Span[Float32, _],
+        n_results: Int,
+        mut distances: Span[mut=True, Float32, _],
+        mut labels: Span[mut=True, Int, _],
+        deleted: Span[UInt8, _],
+    ) raises:
+        if self._metric_type == METRIC_COSINE:
+            var normalized = self._normalize_vectors(queries)
+            self._search_index_raw(
+                Span[Float32](normalized),
+                n_results,
+                distances,
+                labels,
+                deleted,
+            )
+            return
+        self._search_index_raw(
+            queries,
+            n_results,
+            distances,
+            labels,
+            deleted,
+        )
+
+    def _convert_similarity_distances(
+        self,
+        labels: Span[Int, _],
+        mut distances: Span[mut=True, Float32, _],
+        count: Int,
+    ):
+        if self._metric_type == METRIC_L2:
+            return
+        for index in range(count):
+            if labels[index] >= 0:
+                distances[index] = 1.0 - distances[index]
 
     def _query_into(
         self,
@@ -929,6 +1055,7 @@ struct Collection(Movable, Writable):
                 deleted,
             )
 
+        self._convert_similarity_distances(ids, distances, output_size)
         for i in range(output_size):
             var internal_id = ids[i]
             if internal_id >= 0 and internal_id < len(self._user_ids):
@@ -1111,6 +1238,7 @@ struct Collection(Movable, Writable):
             ids,
             exclusion,
         )
+        self._convert_similarity_distances(ids, distances, output_size)
         for index in range(output_size):
             var internal_id = ids[index]
             if internal_id >= 0 and internal_id < len(self._user_ids):
@@ -1721,6 +1849,7 @@ struct Collection(Movable, Writable):
         _write_string(file, self._name)
         write_int(file, self._dimension)
         write_int(file, self._storage_kind)
+        write_int(file, self._metric_type)
         write_int(file, self._identity)
         write_int(file, self._applied_sequence)
         inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_HEADER)
@@ -1938,6 +2067,13 @@ struct Collection(Movable, Writable):
         var storage_kind: StorageKind = read_int(file)
         if storage_kind != STORAGE_FLAT and storage_kind != STORAGE_SQ8:
             raise Error("Invalid Collection storage kind.")
+        var metric_type: MetricType = read_int(file)
+        if (
+            metric_type != METRIC_L2
+            and metric_type != METRIC_COSINE
+            and metric_type != METRIC_INNER_PRODUCT
+        ):
+            raise Error("Invalid Collection metric.")
         var identity = read_int(file)
         var applied_sequence = read_int(file)
         if identity <= 0 or applied_sequence < 0:
@@ -1950,6 +2086,7 @@ struct Collection(Movable, Writable):
             dimension,
             quantized=storage_kind == STORAGE_SQ8,
             name=name,
+            metric=_metric_name(metric_type),
         )
         collection._identity = identity
         collection._applied_sequence = applied_sequence
@@ -2005,6 +2142,11 @@ struct Collection(Movable, Writable):
         )
         if storage_kind == STORAGE_SQ8:
             var index = read_index_hnsw_sq8_mmap(file, file_size)
+            if (
+                index.metric_type != _index_metric(metric_type)
+                or index.storage.metric_type != _index_metric(metric_type)
+            ):
+                raise Error("Collection and SQ8 index metrics differ.")
             if not use_mmap:
                 index.storage._detach_mapped()
                 index.hnsw._detach_mapped()
@@ -2013,6 +2155,11 @@ struct Collection(Movable, Writable):
             collection._hnsw.set[SQ8HNSW](index^)
         else:
             var index = read_index_hnsw_mmap(file, file_size)
+            if (
+                index.metric_type != _index_metric(metric_type)
+                or index.storage.metric_type != _index_metric(metric_type)
+            ):
+                raise Error("Collection and Flat index metrics differ.")
             if not use_mmap:
                 index.storage._detach_mapped()
                 index.hnsw._detach_mapped()

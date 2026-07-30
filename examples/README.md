@@ -18,6 +18,8 @@ mojo run -I . examples/api_05_metadata.mojo
 mojo run -I . examples/api_06_where_filters.mojo
 mojo run -I . examples/api_07_bm25.mojo
 mojo run -I . examples/api_08_hybrid_rrf.mojo
+mojo run -I . examples/api_09_wal.mojo
+mojo run -I . examples/api_10_distance_metrics.mojo
 ```
 
 To compile without executing:
@@ -31,6 +33,8 @@ mojo build -I . examples/api_05_metadata.mojo
 mojo build -I . examples/api_06_where_filters.mojo
 mojo build -I . examples/api_07_bm25.mojo
 mojo build -I . examples/api_08_hybrid_rrf.mojo
+mojo build -I . examples/api_09_wal.mojo
+mojo build -I . examples/api_10_distance_metrics.mojo
 ```
 
 ## Which collection should I use?
@@ -321,13 +325,23 @@ queries populate `distances`; BM25 and hybrid queries populate `scores`.
 
 ## Distance interpretation
 
-Current high-level examples use squared L2 distance:
+`create_collection(..., metric=...)` accepts three Chroma-style metrics:
 
-- smaller is closer;
-- `0.0` means identical vectors;
-- the value is squared distance, so MojoVec does not apply a final square root;
-- SQ8 and IVF-PQ distances are approximate;
-- validate quality with recall@k, not distance equality alone.
+| `metric` | Stored/query preprocessing | Returned distance |
+| --- | --- | --- |
+| `"l2"` | Unchanged | Squared Euclidean distance |
+| `"cosine"` | Automatic row-wise normalization | `1 - cosine_similarity` |
+| `"ip"` | Unchanged | `1 - inner_product` |
+
+Smaller is always closer. Cosine rejects zero and non-finite vectors because
+their direction is undefined. IP distances can be negative when the dot product
+is greater than one. Metric selection is independent of `quantized=True` SQ8
+versus `quantized=False` Flat storage and is preserved by save/load, mmap,
+compaction, filtering, hybrid search, and WAL recovery.
+
+See [`api_10_distance_metrics.mojo`](api_10_distance_metrics.mojo) for a
+complete executable comparison. SQ8 and IVF-PQ distances are approximate;
+validate production quality with recall@k, not distance equality alone.
 
 ## Common errors
 

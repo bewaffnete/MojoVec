@@ -20,9 +20,13 @@ struct Client:
         ef_construction: Int = 40,
         ef_search: Int = 16,
         quantized: Bool = True,
-    ) -> Collection:
+        metric: String = "l2",
+    ) raises -> Collection:
         """
-        Creates a Flat or SQ8 HNSW collection with BM25 and hybrid RRF search.
+        Creates a Flat or SQ8 HNSW collection.
+
+        `metric` accepts `"l2"`, `"cosine"`, or `"ip"`. Vector query
+        distances always use smaller-is-better Chroma-style semantics.
         """
         return Collection(
             dimension,
@@ -31,6 +35,7 @@ struct Client:
             ef_search,
             quantized,
             name,
+            metric,
         )
 
     def create_ivfpq_collection(self, name: String, dimension: Int, nlist: Int = 100, M: Int = 16) -> CollectionIVFPQ:

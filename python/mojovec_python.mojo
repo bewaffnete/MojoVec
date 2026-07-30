@@ -112,6 +112,7 @@ struct PyCollection(Movable, Writable):
         var ef_c = 40
         var ef_s = 16
         var quantized = True
+        var metric = String("l2")
         if len(args) > 1:
             M = Int(py=args[1])
         if len(args) > 2:
@@ -120,11 +121,22 @@ struct PyCollection(Movable, Writable):
             ef_s = Int(py=args[3])
         if len(args) > 4:
             quantized = Bool(py=args[4])
+        if len(args) > 5:
+            metric = String(py=args[5])
 
         var col_ptr = rebind[UnsafePointer[Collection, MutAnyOrigin]](
             alloc[Collection](1)
         )
-        col_ptr.init_pointee_move(Collection(d, M, ef_c, ef_s, quantized))
+        col_ptr.init_pointee_move(
+            Collection(
+                d,
+                M,
+                ef_c,
+                ef_s,
+                quantized,
+                metric=metric,
+            )
+        )
         self = Self(col_ptr)
 
     @staticmethod
@@ -236,6 +248,12 @@ struct PyCollection(Movable, Writable):
     @staticmethod
     def py_count(self_ptr: UnsafePointer[Self, MutAnyOrigin]) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].count())
+
+    @staticmethod
+    def py_metric(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) raises -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].metric())
 
     @staticmethod
     def py_get_metadata(
@@ -408,6 +426,7 @@ def PyInit_mojovec() abi("C") -> PythonObject:
             )
             .def_method[PyCollection.py_delete]("delete")
             .def_method[PyCollection.py_count]("count")
+            .def_method[PyCollection.py_metric]("metric")
             .def_method[PyCollection.py_get_metadata]("get_metadata")
             .def_method[PyCollection.py_stats]("stats")
             .def_method[PyCollection.py_compact]("compact")

@@ -13,6 +13,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 ## Features
 
 - Flat and SQ8 HNSW collections behind one Chroma-style API;
+- squared L2, cosine, and inner-product distance metrics;
 - managed `add`, `upsert`, `update`, `delete`, and batched `query`;
 - typed `String`, `Int`, `Float64`, and `Bool` record metadata;
 - record documents returned directly with query results;
@@ -90,6 +91,7 @@ from std.collections import List
 def main() raises:
     var client = Client()
     # quantized=True selects SQ8; False selects exact Flat storage.
+    # metric accepts "l2", "cosine", or "ip".
     var collection = client.create_collection(
         "my_docs", 
         dimension=128,
@@ -97,8 +99,17 @@ def main() raises:
         ef_construction=40, 
         ef_search=16,
         quantized=True,
+        metric="cosine",
     )
 ```
+
+Metric and storage are independent. Public vector distances are always
+smaller-is-better: L2 returns squared Euclidean distance, cosine returns
+`1 - cosine_similarity`, and IP returns `1 - inner_product`. Cosine vectors and
+queries are normalized automatically without modifying caller-owned Lists;
+zero or non-finite cosine vectors are rejected. The selected metric is
+preserved by save/load, mmap, compaction, filtering, hybrid search, and WAL
+recovery.
 
 ### 2. Add Vectors
 
@@ -443,8 +454,8 @@ rebuild the graph when they occupy a meaningful fraction of the collection:
 ```
 
 Compaction builds the replacement independently and installs it only after a
-successful rebuild. Collection name, storage kind, `M`, `ef_construction`, and
-`ef_search` are preserved.
+successful rebuild. Collection name, storage kind, metric, `M`,
+`ef_construction`, and `ef_search` are preserved.
 
 ---
 
@@ -459,8 +470,9 @@ pip install mojovec
 ```python
 import mojovec
 
-# dimension, M, ef_construction, ef_search, quantized
-collection = mojovec.Collection(128, 32, 200, 40, True)
+# dimension, M, ef_construction, ef_search, quantized, metric
+collection = mojovec.Collection(128, 32, 200, 40, True, "cosine")
+print(collection.metric())  # cosine
 
 # Add vectors
 ids = [1, 2, 3]
