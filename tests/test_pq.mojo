@@ -1,6 +1,6 @@
 from std.memory.span import Span
 from std.memory import alloc
-from std.random import random_float64
+from std.random.philox import Random
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 from mojovec.quantization.pq import ProductQuantizer
 from mojovec.utils.distances import l2_distance_simd
@@ -10,10 +10,14 @@ def test_pq_encoding_error() raises:
     var n = 1000
     var M = 4
     var ksub = 256
+    var generator = Random(seed=UInt64(181))
     
     var data = alloc[Float32](n * d)
+    var values = generator.step_uniform()
     for i in range(n * d):
-        data[i] = Float32(random_float64(-1.0, 1.0))
+        if i != 0 and i % 4 == 0:
+            values = generator.step_uniform()
+        data[i] = values[i % 4] * 2.0 - 1.0
         
     var pq = ProductQuantizer(d, M, ksub)
     
@@ -55,10 +59,14 @@ def test_pq_symmetric_distances() raises:
     var n = 100
     var M = 4
     var ksub = 256
+    var generator = Random(seed=UInt64(191))
     
     var data = alloc[Float32](n * d)
+    var values = generator.step_uniform()
     for i in range(n * d):
-        data[i] = Float32(random_float64(-1.0, 1.0))
+        if i != 0 and i % 4 == 0:
+            values = generator.step_uniform()
+        data[i] = values[i % 4] * 2.0 - 1.0
         
     var pq = ProductQuantizer(d, M, ksub)
     var data_span = Span[Float32, MutUntrackedOrigin](

@@ -1,6 +1,6 @@
 from std.memory.span import Span
 from std.memory import alloc
-from std.random import random_float64
+from std.random.philox import Random
 from mojovec.index.index_flat import IndexFlat
 from mojovec.index.index_ivf_pq import IndexIVFPQ
 from std.testing import assert_true, assert_equal, TestSuite
@@ -11,10 +11,14 @@ def test_ivf_pq_crud() raises:
     var n = 100
     var nlist = 4
     var M = 2
+    var generator = Random(seed=UInt64(131))
     
     var data = alloc[Float32](n * d)
+    var values = generator.step_uniform()
     for i in range(n * d):
-        data[i] = Float32(random_float64(-1.0, 1.0))
+        if i != 0 and i % 4 == 0:
+            values = generator.step_uniform()
+        data[i] = values[i % 4] * 2.0 - 1.0
         
     var flat_quantizer = alloc[IndexFlat](1)
     flat_quantizer.init_pointee_move(IndexFlat(d))

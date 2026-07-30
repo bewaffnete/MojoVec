@@ -2,14 +2,19 @@ from std.memory.span import Span
 from mojovec.clustering.kmeans import KMeans
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 from std.memory import alloc
-from std.random import rand
+from std.random.philox import Random
 
 def test_kmeans() raises:
     var n = 1000
     var d = 16
     var k = 10
     var x = alloc[Float32](n * d)
-    rand(x, n * d)
+    var generator = Random(seed=UInt64(151))
+    var values = generator.step_uniform()
+    for i in range(n * d):
+        if i != 0 and i % 4 == 0:
+            values = generator.step_uniform()
+        x[i] = values[i % 4]
     var kmeans = KMeans(d, k, 5)
     kmeans.train(Span[Float32, MutUntrackedOrigin](ptr=x, length=n * d))
     x.free()

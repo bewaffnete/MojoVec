@@ -1,6 +1,6 @@
 from std.testing import assert_true, assert_almost_equal, TestSuite
 from std.memory import alloc
-from std.random import random_float64
+from std.random.philox import Random
 
 from mojovec.utils.distances import l2_distance_simd, inner_product_simd
 
@@ -20,10 +20,12 @@ def ip_scalar(x: UnsafePointer[Float32, MutUntrackedOrigin], y: UnsafePointer[Fl
 def check_distance(d: Int) raises:
     var x = alloc[Float32](d)
     var y = alloc[Float32](d)
+    var generator = Random(seed=UInt64(d))
     
     for i in range(d):
-        x[i] = Float32(random_float64(-10.0, 10.0))
-        y[i] = Float32(random_float64(-10.0, 10.0))
+        var values = generator.step_uniform()
+        x[i] = values[0] * 20.0 - 10.0
+        y[i] = values[1] * 20.0 - 10.0
         
     # Check L2
     var expected_l2 = l2_scalar(x, y, d)

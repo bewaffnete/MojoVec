@@ -1,5 +1,4 @@
 from std.memory.span import Span
-from std.random import rand
 from std.memory import alloc
 from std.testing import assert_true, assert_equal, TestSuite
 

@@ -1,6 +1,6 @@
 from std.testing import assert_true, assert_equal, TestSuite
 from std.memory import alloc
-from std.random import random_float64
+from std.random.philox import Random
 from std.memory.span import Span
 from std.io.file import FileHandle
 
@@ -28,13 +28,20 @@ struct Dataset:
     var queries: UnsafePointer[Float32, MutUntrackedOrigin]
 
     def __init__(out self):
+        var generator = Random(seed=UInt64(73))
         self.db = alloc[Float32](n * d)
-        for i in range(n * d): 
-            self.db[i] = Float32(random_float64(-1.0, 1.0))
+        var values = generator.step_uniform()
+        for i in range(n * d):
+            if i != 0 and i % 4 == 0:
+                values = generator.step_uniform()
+            self.db[i] = values[i % 4] * 2.0 - 1.0
             
         self.queries = alloc[Float32](nq * d)
-        for i in range(nq * d): 
-            self.queries[i] = Float32(random_float64(-1.0, 1.0))
+        values = generator.step_uniform()
+        for i in range(nq * d):
+            if i != 0 and i % 4 == 0:
+                values = generator.step_uniform()
+            self.queries[i] = values[i % 4] * 2.0 - 1.0
 
     def free(self):
         self.db.free()
