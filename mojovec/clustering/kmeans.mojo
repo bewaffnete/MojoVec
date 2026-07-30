@@ -4,7 +4,7 @@ from std.memory import alloc
 from std.memory.span import Span
 from std.random.philox import Random
 from ..utils.distances import l2_distance_simd
-from std.math import min
+from std.math import max, min
 
 struct KMeans:
     """K-Means clustering algorithm for vector quantization.
@@ -77,6 +77,10 @@ struct KMeans:
         )
         var local_centroids_ptr = local_centroids.unsafe_ptr()
         var local_counts_ptr = local_counts.unsafe_ptr()
+        var centroids_ptr = self.centroids
+        var assignments_ptr = self.assignments
+        var dimension = self.d
+        var cluster_count = self.k
         
         # Main loop
         for _ in range(self.niter):
@@ -85,17 +89,23 @@ struct KMeans:
             def process_point(i: Int):
                 var min_dist: Float32 = 1e38
                 var best_c = -1
-                var x_ptr = data_ptr + i * self.d
+                var x_ptr = data_ptr + i * dimension
                 
-                for c in range(self.k):
-                    var c_ptr = self.centroids + c * self.d
-                    var dist = l2_distance_simd[8](x_ptr, c_ptr, self.d)
+                for c in range(cluster_count):
+                    var c_ptr = centroids_ptr + c * dimension
+                    var dist = l2_distance_simd[8](
+                        x_ptr,
+                        c_ptr,
+                        dimension,
+                    )
                     
                     if dist < min_dist:
                         min_dist = dist
                         best_c = c
-                        
-                self.assignments[i] = best_c
+
+                # Keep malformed numeric input from becoming an out-of-bounds
+                # cluster write. Finite input always selects a real centroid.
+                assignments_ptr[i] = max(best_c, 0)
                 
             parallelize[process_point](n)
             
@@ -111,23 +121,24 @@ struct KMeans:
                 var start = chunk_id * chunk_size
                 var end = min(start + chunk_size, n)
                 var my_centroids = (
-                    local_centroids_ptr + chunk_id * self.k * self.d
+                    local_centroids_ptr
+                    + chunk_id * cluster_count * dimension
                 )
-                var my_counts = local_counts_ptr + chunk_id * self.k
+                var my_counts = local_counts_ptr + chunk_id * cluster_count
                 
                 for i in range(start, end):
-                    var c = self.assignments[i]
+                    var c = assignments_ptr[i]
                     my_counts[c] += 1
-                    var c_ptr = my_centroids + c * self.d
-                    var x_ptr = data_ptr + i * self.d
+                    var c_ptr = my_centroids + c * dimension
+                    var x_ptr = data_ptr + i * dimension
                     
                     var j = 0
-                    while j <= self.d - 4:
+                    while j <= dimension - 4:
                         var cx = c_ptr.load[width=4](j)
                         var xx = x_ptr.load[width=4](j)
                         c_ptr.store(j, cx + xx)
                         j += 4
-                    while j < self.d:
+                    while j < dimension:
                         c_ptr[j] += x_ptr[j]
                         j += 1
                         
