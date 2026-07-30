@@ -17,7 +17,7 @@ from . import _native
 WAL_ASYNC = 1
 WAL_SYNC = 2
 DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 Metadata = Mapping[str, str | int | float | bool]
 Where = Mapping[str, Any]
