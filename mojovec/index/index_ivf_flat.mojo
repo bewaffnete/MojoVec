@@ -212,7 +212,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
                     var dist: Float32
                     
                     if self.metric_type == METRIC_L2:
-                        dist = l2_distance_simd[4](q_ptr, db_ptr, self.d)
+                        dist = l2_distance_simd[8](q_ptr, db_ptr, self.d)
                     else:
                         dist = -inner_product_simd[4](q_ptr, db_ptr, self.d)
                         

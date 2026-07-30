@@ -49,5 +49,14 @@ def test_distances_odd_dimensions() raises:
     check_distance(33)
     check_distance(127)
 
+
+def test_distances_exact_simd_multiples() raises:
+    check_distance(4)
+    check_distance(8)
+    check_distance(16)
+    check_distance(32)
+    check_distance(64)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

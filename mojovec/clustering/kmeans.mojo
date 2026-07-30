@@ -89,7 +89,7 @@ struct KMeans:
                 
                 for c in range(self.k):
                     var c_ptr = self.centroids + c * self.d
-                    var dist = l2_distance_simd[4](x_ptr, c_ptr, self.d)
+                    var dist = l2_distance_simd[8](x_ptr, c_ptr, self.d)
                     
                     if dist < min_dist:
                         min_dist = dist

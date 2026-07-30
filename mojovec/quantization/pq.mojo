@@ -108,7 +108,7 @@ struct ProductQuantizer(Movable):
                 
                 for k in range(self.ksub):
                     var c_ptr = centroids_m + k * self.dsub
-                    var dist = l2_distance_simd[4](sub_x, c_ptr, self.dsub)
+                    var dist = l2_distance_simd[8](sub_x, c_ptr, self.dsub)
                     
                     if dist < min_dist:
                         min_dist = dist
@@ -165,6 +165,6 @@ struct ProductQuantizer(Movable):
             for k in range(self.ksub):
                 var c_ptr = centroids_m + k * self.dsub
                 if metric_type == METRIC_L2:
-                    table_m[k] = l2_distance_simd[4](sub_q, c_ptr, self.dsub)
+                    table_m[k] = l2_distance_simd[8](sub_q, c_ptr, self.dsub)
                 else:
                     table_m[k] = -inner_product_simd[4](sub_q, c_ptr, self.dsub)
