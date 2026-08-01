@@ -81,7 +81,11 @@ jobs:
           "$smoke_dir/venv/bin/python" -m pip install "$wheel_path"
           cd "$smoke_dir"
           "$smoke_dir/venv/bin/python" -c \
-            'import mojovec; from importlib.metadata import version; assert mojovec.__version__ == version("mojovec"); print(mojovec.__version__)'
+            'import mojovec; from importlib.metadata import version; assert mojovec.__version__ == version("mojovec"); print(mojovec.__version__, mojovec._native_backend)'
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            MOJOVEC_FORCE_BACKEND=avx2 "$smoke_dir/venv/bin/python" -c \
+              'import importlib.util; import mojovec; assert mojovec._native_backend == "avx2"; assert importlib.util.find_spec("mojovec._avx2._native"); assert importlib.util.find_spec("mojovec._avx512._native"); print(mojovec._native_backend)'
+          fi
 
       - name: Run Python Tests
         run: |

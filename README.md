@@ -469,6 +469,14 @@ Silicon are supported):
 pip install mojovec
 ```
 
+Linux wheels contain both AVX2 (`x86-64-v3`) and AVX-512 (`x86-64-v4`)
+native backends. MojoVec checks the CPU before loading native code and selects
+AVX-512 when its complete ISA level is available; otherwise it uses AVX2.
+There is no dispatch branch in the search hot path. For diagnostics or
+repeatable benchmarks, set `MOJOVEC_FORCE_BACKEND=avx2` to select AVX2 even on
+an AVX-512 machine. Forcing AVX-512 on an unsupported CPU is rejected before
+the native module is loaded.
+
 ```python
 import mojovec
 

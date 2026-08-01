@@ -16,6 +16,8 @@ from os import PathLike
 from pathlib import Path
 from typing import Any, TypedDict
 
+from ._dispatch import load_native
+
 
 def _runtime_library_directories() -> list[Path]:
     """Return likely Mojo runtime locations without recursively scanning disk."""
@@ -75,7 +77,7 @@ def _preload_mojo_runtime() -> bool:
 
 
 try:
-    from . import _native
+    _native, _native_backend = load_native()
 except ImportError as native_import_error:
     # Source builds and externally packaged binaries may use a separately
     # installed Mojo runtime. Self-contained wheels never enter this path.
@@ -84,13 +86,13 @@ except ImportError as native_import_error:
         raise
     if not _preload_mojo_runtime():
         raise
-    from . import _native
+    _native, _native_backend = load_native()
 
 
 WAL_ASYNC = 1
 WAL_SYNC = 2
 DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
-__version__ = "0.6.1"
+__version__ = "0.6.2"
 
 Metadata = Mapping[str, str | int | float | bool]
 Where = Mapping[str, Any]
