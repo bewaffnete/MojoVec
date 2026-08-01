@@ -1,43 +1,51 @@
 from std.collections import Dict, List, Optional
-from std.io.file import FileHandle
-from std.memory import alloc
 from std.memory.span import Span
-from std.math import sqrt
-from std.os import SEEK_END, SEEK_SET
 from std.time import perf_counter_ns
-from std.utils import Variant
 
 from mojovec.api.bm25 import BM25Index
-from mojovec.api.metadata import (
-    METADATA_BOOL,
-    METADATA_FLOAT,
-    METADATA_INT,
-    METADATA_STRING,
-    Metadata,
-    MetadataValue,
+from mojovec.api.collection_codec import (
+    METRIC_COSINE,
+    _metric_name,
+    _parse_metric,
 )
-from mojovec.api.metadata_bitmap import (
-    BITMAP_WORD_BITS,
-    MetadataBitmapIndex,
-)
+from mojovec.api.collection_filter import _build_where_filter
+from mojovec.api.metadata import Metadata
+from mojovec.api.metadata_bitmap import MetadataBitmapIndex
 from mojovec.api.results import CollectionStats, CompactReport, QueryResults
+from mojovec.api.collection_results import (
+    _build_vector_query_results,
+)
+from mojovec.api.collection_ranked_query import (
+    _query_bm25_index,
+    _query_hybrid_index,
+)
+from mojovec.api.collection_storage import (
+    HNSWStorage,
+    _create_hnsw_storage,
+    _storage_M,
+    _storage_add,
+    _storage_ef_construction,
+    _storage_ef_search,
+    _storage_is_memory_mapped,
+    _storage_set_ef_search,
+    _storage_vector,
+)
+from mojovec.api.collection_vector_query import (
+    _normalize_vectors,
+    _query_collection_into,
+    _query_collection_into_filtered,
+)
 from mojovec.api.rrf import (
     RRF_DEFAULT_CANDIDATE_MULTIPLIER,
     RRF_DEFAULT_K,
-    reciprocal_rank_fusion,
 )
-from mojovec.api.where import Where, WhereNode
+from mojovec.api.where import Where
 from mojovec.core.types import (
-    METRIC_INNER_PRODUCT,
-    METRIC_L2,
     MetricType,
     STORAGE_FLAT,
     STORAGE_SQ8,
     StorageKind,
 )
-from mojovec.index.index_flat import IndexFlat
-from mojovec.index.index_flat_sq8 import IndexFlatSQ8
-from mojovec.index.index_hnsw import IndexHNSW
 from mojovec.io.wal import (
     WAL_ASYNC,
     WAL_OPERATION_DELETE,
@@ -47,121 +55,15 @@ from mojovec.io.wal import (
     WalReader,
     WriteAheadLog,
 )
+from mojovec.io.collection_snapshot import (
+    _read_collection_snapshot,
+    _save_collection_snapshot,
+)
 
 
-comptime METRIC_COSINE = 2
-comptime FlatHNSW = IndexHNSW[IndexFlat]
-comptime SQ8HNSW = IndexHNSW[IndexFlatSQ8]
-comptime HNSWStorage = Variant[FlatHNSW, SQ8HNSW]
-
-comptime COLLECTION_MAGIC_V2 = 1129270349
-comptime COLLECTION_FORMAT_VERSION = 8
 comptime DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
 comptime COMPACTION_MAX_BATCH_VECTORS = 16_384
 comptime COMPACTION_MAX_BATCH_COMPONENTS = 2_097_152
-
-
-def _parse_metric(value: String) raises -> MetricType:
-    if value == "l2":
-        return METRIC_L2
-    if value == "cosine":
-        return METRIC_COSINE
-    if value == "ip":
-        return METRIC_INNER_PRODUCT
-    raise Error('metric must be "l2", "cosine", or "ip".')
-
-
-def _metric_name(metric: MetricType) -> String:
-    if metric == METRIC_COSINE:
-        return "cosine"
-    if metric == METRIC_INNER_PRODUCT:
-        return "ip"
-    return "l2"
-
-
-def _index_metric(metric: MetricType) -> MetricType:
-    # Cosine similarity is inner product over unit-normalized vectors.
-    if metric == METRIC_COSINE:
-        return METRIC_INNER_PRODUCT
-    return metric
-
-
-def _write_string(mut file: FileHandle, value: String) raises:
-    from mojovec.io.serialization import write_int
-
-    write_int(file, value.byte_length())
-    file.write_bytes(value.as_bytes())
-
-
-def _read_string(mut file: FileHandle) raises -> String:
-    from mojovec.io.serialization import check_size_limit, read_int
-
-    var size = read_int(file)
-    check_size_limit(size, 1_048_576)
-    var data = file.read_bytes(size)
-    return String(from_utf8=data)
-
-
-def _write_float64(mut file: FileHandle, value: Float64) raises:
-    var storage = alloc[Float64](1)
-    storage[0] = value
-    file.write_bytes(
-        Span[UInt8](ptr=storage.bitcast[UInt8](), length=8)
-    )
-    storage.free()
-
-
-def _read_float64(mut file: FileHandle) raises -> Float64:
-    var data = file.read_bytes(8)
-    var value = data.unsafe_ptr().bitcast[Float64]()[0]
-    _ = len(data)
-    return value
-
-
-def _write_metadata(mut file: FileHandle, metadata: Metadata) raises:
-    from mojovec.io.serialization import write_bool, write_int
-
-    write_int(file, metadata.count())
-    for index in range(metadata.count()):
-        _write_string(file, metadata._key_at(index))
-        var value = metadata._value_at(index)
-        write_int(file, value.kind())
-        if value.kind() == METADATA_STRING:
-            _write_string(file, value.as_string())
-        elif value.kind() == METADATA_INT:
-            write_int(file, value.as_int())
-        elif value.kind() == METADATA_FLOAT:
-            _write_float64(file, value.as_float())
-        elif value.kind() == METADATA_BOOL:
-            write_bool(file, value.as_bool())
-        else:
-            raise Error("Unsupported metadata value kind.")
-
-
-def _read_metadata(mut file: FileHandle) raises -> Metadata:
-    from mojovec.io.serialization import (
-        check_size_limit,
-        read_bool,
-        read_int,
-    )
-
-    var field_count = read_int(file)
-    check_size_limit(field_count, 65_536)
-    var metadata = Metadata()
-    for _ in range(field_count):
-        var key = _read_string(file)
-        var kind = read_int(file)
-        if kind == METADATA_STRING:
-            metadata.set(key, _read_string(file))
-        elif kind == METADATA_INT:
-            metadata.set(key, read_int(file))
-        elif kind == METADATA_FLOAT:
-            metadata.set(key, _read_float64(file))
-        elif kind == METADATA_BOOL:
-            metadata.set(key, read_bool(file))
-        else:
-            raise Error("Invalid metadata value kind.")
-    return metadata^
 
 
 struct Collection(Movable, Writable):
@@ -200,24 +102,14 @@ struct Collection(Movable, Writable):
         self._dimension = dimension
         self._storage_kind = STORAGE_SQ8 if quantized else STORAGE_FLAT
         self._metric_type = _parse_metric(metric)
-        var storage_metric = _index_metric(self._metric_type)
-
-        if quantized:
-            var storage = IndexFlatSQ8(dimension, storage_metric)
-            var index = SQ8HNSW(
-                storage^, dimension, storage_metric, M=M
-            )
-            index.hnsw.efConstruction = ef_construction
-            index.hnsw.efSearch = ef_search
-            self._hnsw = HNSWStorage(index^)
-        else:
-            var storage = IndexFlat(dimension, storage_metric)
-            var index = FlatHNSW(
-                storage^, dimension, storage_metric, M=M
-            )
-            index.hnsw.efConstruction = ef_construction
-            index.hnsw.efSearch = ef_search
-            self._hnsw = HNSWStorage(index^)
+        self._hnsw = _create_hnsw_storage(
+            dimension,
+            self._storage_kind,
+            self._metric_type,
+            M,
+            ef_construction,
+            ef_search,
+        )
 
         self._user_ids = List[Int]()
         self._is_deleted = List[UInt8]()
@@ -356,21 +248,13 @@ struct Collection(Movable, Writable):
         if total_count > 0:
             deleted_ratio = Float64(deleted_count) / Float64(total_count)
 
-        var M: Int
-        var ef_construction: Int
-        var ef_search: Int
-        if self._storage_kind == STORAGE_SQ8:
-            M = self._hnsw.unsafe_get[SQ8HNSW]().hnsw.M
-            ef_construction = (
-                self._hnsw.unsafe_get[SQ8HNSW]().hnsw.efConstruction
-            )
-            ef_search = self._hnsw.unsafe_get[SQ8HNSW]().hnsw.efSearch
-        else:
-            M = self._hnsw.unsafe_get[FlatHNSW]().hnsw.M
-            ef_construction = (
-                self._hnsw.unsafe_get[FlatHNSW]().hnsw.efConstruction
-            )
-            ef_search = self._hnsw.unsafe_get[FlatHNSW]().hnsw.efSearch
+        var M = _storage_M(self._hnsw, self._storage_kind)
+        var ef_construction = _storage_ef_construction(
+            self._hnsw, self._storage_kind
+        )
+        var ef_search = _storage_ef_search(
+            self._hnsw, self._storage_kind
+        )
 
         return CollectionStats(
             active_count,
@@ -386,31 +270,16 @@ struct Collection(Movable, Writable):
 
     def is_memory_mapped(self) -> Bool:
         """Returns whether vector and graph arrays currently use file mappings."""
-        if self._storage_kind == STORAGE_SQ8:
-            return (
-                self._hnsw.unsafe_get[SQ8HNSW]().storage.is_memory_mapped()
-                and self._hnsw.unsafe_get[SQ8HNSW]().hnsw.is_memory_mapped()
-            )
-        return (
-            self._hnsw.unsafe_get[FlatHNSW]().storage.is_memory_mapped()
-            and self._hnsw.unsafe_get[FlatHNSW]().hnsw.is_memory_mapped()
-        )
+        return _storage_is_memory_mapped(self._hnsw, self._storage_kind)
 
     def _get_vector(
         self, internal_id: Int
     ) -> Span[Float32, MutUntrackedOrigin]:
-        if self._storage_kind == STORAGE_SQ8:
-            return Span[Float32, MutUntrackedOrigin](
-                ptr=self._hnsw.unsafe_get[
-                    SQ8HNSW
-                ]().storage.get_vector(internal_id),
-                length=self._dimension,
-            )
-        return Span[Float32, MutUntrackedOrigin](
-            ptr=self._hnsw.unsafe_get[
-                FlatHNSW
-            ]().storage.get_vector(internal_id),
-            length=self._dimension,
+        return _storage_vector(
+            self._hnsw,
+            self._storage_kind,
+            internal_id,
+            self._dimension,
         )
 
     def compact(mut self) raises -> CompactReport:
@@ -545,39 +414,13 @@ struct Collection(Movable, Writable):
         self,
         vectors: Span[Float32, _],
     ) raises -> List[Float32]:
-        """Returns row-wise L2-normalized vectors for cosine search."""
-        var normalized = List[Float32](
-            unsafe_uninit_length=len(vectors)
-        )
-        var vector_count = len(vectors) // self._dimension
-        for vector_index in range(vector_count):
-            var offset = vector_index * self._dimension
-            var squared_norm: Float64 = 0.0
-            for component in range(self._dimension):
-                var value = Float64(vectors[offset + component])
-                squared_norm += value * value
-            if not (
-                squared_norm > 0.0
-                and squared_norm <= Float64.MAX
-            ):
-                raise Error(
-                    "Cosine embeddings must be finite non-zero vectors."
-                )
-            var inverse_norm = 1.0 / sqrt(squared_norm)
-            for component in range(self._dimension):
-                normalized[offset + component] = Float32(
-                    Float64(vectors[offset + component]) * inverse_norm
-                )
-        return normalized^
+        return _normalize_vectors(vectors, self._dimension)
 
     def _add_prepared_to_index(
         mut self,
         embeddings: Span[Float32, _],
     ):
-        if self._storage_kind == STORAGE_SQ8:
-            self._hnsw.unsafe_get[SQ8HNSW]().add(embeddings)
-        else:
-            self._hnsw.unsafe_get[FlatHNSW]().add(embeddings)
+        _storage_add(self._hnsw, self._storage_kind, embeddings)
 
     def _append_records(
         mut self,
@@ -947,65 +790,7 @@ struct Collection(Movable, Writable):
     def set_ef_search(mut self, ef: Int) raises:
         if ef <= 0 or ef > 2048:
             raise Error("ef_search must be between 1 and 2048.")
-        if self._storage_kind == STORAGE_SQ8:
-            self._hnsw.unsafe_get[SQ8HNSW]().hnsw.efSearch = ef
-        else:
-            self._hnsw.unsafe_get[FlatHNSW]().hnsw.efSearch = ef
-
-    def _search_index_raw(
-        self,
-        queries: Span[Float32, _],
-        n_results: Int,
-        mut distances: Span[mut=True, Float32, _],
-        mut labels: Span[mut=True, Int, _],
-        deleted: Span[UInt8, _],
-    ):
-        if self._storage_kind == STORAGE_SQ8:
-            self._hnsw.unsafe_get[SQ8HNSW]().search(
-                queries, n_results, distances, labels, deleted
-            )
-        else:
-            self._hnsw.unsafe_get[FlatHNSW]().search(
-                queries, n_results, distances, labels, deleted
-            )
-
-    def _search_index(
-        self,
-        queries: Span[Float32, _],
-        n_results: Int,
-        mut distances: Span[mut=True, Float32, _],
-        mut labels: Span[mut=True, Int, _],
-        deleted: Span[UInt8, _],
-    ) raises:
-        if self._metric_type == METRIC_COSINE:
-            var normalized = self._normalize_vectors(queries)
-            self._search_index_raw(
-                Span[Float32](normalized),
-                n_results,
-                distances,
-                labels,
-                deleted,
-            )
-            return
-        self._search_index_raw(
-            queries,
-            n_results,
-            distances,
-            labels,
-            deleted,
-        )
-
-    def _convert_similarity_distances(
-        self,
-        labels: Span[Int, _],
-        mut distances: Span[mut=True, Float32, _],
-        count: Int,
-    ):
-        if self._metric_type == METRIC_L2:
-            return
-        for index in range(count):
-            if labels[index] >= 0:
-                distances[index] = 1.0 - distances[index]
+        _storage_set_ef_search(self._hnsw, self._storage_kind, ef)
 
     def _query_into(
         self,
@@ -1015,193 +800,29 @@ struct Collection(Movable, Writable):
         mut distances: Span[mut=True, Float32, _],
     ) raises:
         """Internal zero-copy search bridge used by managed frontends."""
-        if self._dimension <= 0:
-            raise Error("Collection dimension must be positive.")
-        if len(query_embeddings) % self._dimension != 0:
-            raise Error(
-                "Query embeddings length must be a multiple of dimension."
-            )
-        if n_results <= 0 or n_results > 2048:
-            raise Error("n_results must be between 1 and 2048.")
-
-        var num_queries = len(query_embeddings) // self._dimension
-        var output_size = num_queries * n_results
-        if len(ids) < output_size or len(distances) < output_size:
-            raise Error(
-                "Output buffers are smaller than query_count * n_results."
-            )
-        if num_queries == 0:
-            return
-
-        # Keep the common append-only path completely filter-free. Passing an
-        # all-zero deletion bitmap still selects the filtered HNSW kernel and
-        # adds a random bitmap load for every candidate.
-        if self.count_deleted() == 0:
-            var empty_filter = Span[UInt8, MutUntrackedOrigin]()
-            self._search_index(
-                query_embeddings,
-                n_results,
-                distances,
-                ids,
-                empty_filter,
-            )
-        else:
-            var deleted = Span[mut=False, UInt8](self._is_deleted)
-            self._search_index(
-                query_embeddings,
-                n_results,
-                distances,
-                ids,
-                deleted,
-            )
-
-        self._convert_similarity_distances(ids, distances, output_size)
-        for i in range(output_size):
-            var internal_id = ids[i]
-            if internal_id >= 0 and internal_id < len(self._user_ids):
-                ids[i] = self._user_ids[internal_id]
-            else:
-                ids[i] = -1
-
-    def _empty_bitmap(self) -> List[UInt64]:
-        var word_count = (
-            len(self._user_ids) + BITMAP_WORD_BITS - 1
-        ) // BITMAP_WORD_BITS
-        var result = List[UInt64](unsafe_uninit_length=word_count)
-        for index in range(word_count):
-            result[index] = 0
-        return result^
-
-    def _scan_predicate_bitmap(
-        self, node: WhereNode
-    ) raises -> List[UInt64]:
-        var result = self._empty_bitmap()
-        var key = node.key()
-        for internal_id in range(len(self._user_ids)):
-            if internal_id not in self._metadata_by_internal:
-                continue
-            var metadata_index = self._metadata_by_internal[internal_id]
-            if not self._metadatas[metadata_index].contains(key):
-                continue
-            var value = self._metadatas[metadata_index].get(key)
-            if node.matches(value):
-                var word_index = internal_id // BITMAP_WORD_BITS
-                result[word_index] |= (
-                    UInt64(1)
-                    << UInt64(internal_id % BITMAP_WORD_BITS)
-                )
-        return result^
-
-    def _predicate_bitmap(
-        self, node: WhereNode
-    ) raises -> List[UInt64]:
-        var key = node.key()
-        if not self._metadata_index.contains_field(key):
-            return self._empty_bitmap()
-        if self._metadata_index.can_evaluate(key):
-            return self._metadata_index.evaluate(
-                node, len(self._user_ids)
-            )
-        return self._scan_predicate_bitmap(node)
+        _query_collection_into(
+            self._hnsw,
+            self._storage_kind,
+            self._metric_type,
+            self._dimension,
+            self._user_ids,
+            self._is_deleted,
+            self.count_deleted(),
+            query_embeddings,
+            n_results,
+            ids,
+            distances,
+        )
 
     def _where_filter(self, where: Where) raises -> List[UInt8]:
-        """
-        Builds the HNSW exclusion mask from typed bitmap predicates.
-
-        Metadata bitmaps contain matching internal IDs. Logical instructions
-        combine complete packed UInt64 words before one final conversion to
-        the byte mask required by HNSW. Deleted rows are always excluded.
-        """
-        var nodes = where.nodes()
-        if len(nodes) == 0:
-            raise Error("Where expression cannot be empty.")
-
-        # Validate the postfix expression and calculate its maximum bitmap
-        # stack depth so compound filters allocate only the required slots.
-        var depth = 0
-        var max_depth = 0
-        for node_index in range(len(nodes)):
-            if nodes[node_index].is_predicate():
-                depth += 1
-                max_depth = max(max_depth, depth)
-            elif nodes[node_index].is_not():
-                if depth < 1:
-                    raise Error("Invalid Where expression.")
-            else:
-                var arity = nodes[node_index].arity()
-                if arity <= 0 or depth < arity:
-                    raise Error("Invalid Where expression.")
-                depth = depth - arity + 1
-        if depth != 1:
-            raise Error("Invalid Where expression.")
-
-        var word_count = (
-            len(self._user_ids) + BITMAP_WORD_BITS - 1
-        ) // BITMAP_WORD_BITS
-        var stack_words = List[UInt64](
-            unsafe_uninit_length=max_depth * word_count
+        return _build_where_filter(
+            where,
+            self._user_ids,
+            self._is_deleted,
+            self._metadata_by_internal,
+            self._metadatas,
+            self._metadata_index,
         )
-        var stack_size = 0
-        for node_index in range(len(nodes)):
-            if nodes[node_index].is_predicate():
-                var predicate = self._predicate_bitmap(nodes[node_index])
-                var destination = stack_size * word_count
-                for word_index in range(word_count):
-                    stack_words[destination + word_index] = (
-                        predicate[word_index]
-                    )
-                stack_size += 1
-            elif nodes[node_index].is_not():
-                var destination = (stack_size - 1) * word_count
-                for word_index in range(word_count):
-                    stack_words[destination + word_index] = ~stack_words[
-                        destination + word_index
-                    ]
-            else:
-                var arity = nodes[node_index].arity()
-                var first = stack_size - arity
-                var destination = first * word_count
-                for word_index in range(word_count):
-                    var combined = stack_words[
-                        destination + word_index
-                    ]
-                    for operand in range(1, arity):
-                        var operand_word = stack_words[
-                            (first + operand) * word_count + word_index
-                        ]
-                        if nodes[node_index].is_all():
-                            combined &= operand_word
-                        elif nodes[node_index].is_any():
-                            combined |= operand_word
-                        else:
-                            raise Error("Invalid Where expression.")
-                    stack_words[destination + word_index] = combined
-                stack_size = first + 1
-
-        # NOT may set unused high bits in the final word. Mask them so the
-        # packed result always describes exactly the collection's row count.
-        var remainder = len(self._user_ids) % BITMAP_WORD_BITS
-        if word_count > 0 and remainder > 0:
-            var valid_bits = (
-                UInt64(1) << UInt64(remainder)
-            ) - UInt64(1)
-            stack_words[word_count - 1] &= valid_bits
-
-        var exclusion = List[UInt8](
-            unsafe_uninit_length=len(self._user_ids)
-        )
-        for internal_id in range(len(self._user_ids)):
-            var word = stack_words[internal_id // BITMAP_WORD_BITS]
-            var mask = UInt64(1) << UInt64(
-                internal_id % BITMAP_WORD_BITS
-            )
-            var matches = (word & mask) != 0
-            exclusion[internal_id] = (
-                1
-                if self._is_deleted[internal_id] > 0 or not matches
-                else 0
-            )
-        return exclusion^
 
     def _query_into_filtered(
         self,
@@ -1211,40 +832,18 @@ struct Collection(Movable, Writable):
         mut distances: Span[mut=True, Float32, _],
         exclusion: Span[UInt8, _],
     ) raises:
-        if self._dimension <= 0:
-            raise Error("Collection dimension must be positive.")
-        if len(query_embeddings) % self._dimension != 0:
-            raise Error(
-                "Query embeddings length must be a multiple of dimension."
-            )
-        if n_results <= 0 or n_results > 2048:
-            raise Error("n_results must be between 1 and 2048.")
-
-        var num_queries = len(query_embeddings) // self._dimension
-        var output_size = num_queries * n_results
-        if len(ids) < output_size or len(distances) < output_size:
-            raise Error(
-                "Output buffers are smaller than query_count * n_results."
-            )
-        if len(exclusion) != len(self._user_ids):
-            raise Error("Where filter size does not match collection size.")
-        if num_queries == 0:
-            return
-
-        self._search_index(
+        _query_collection_into_filtered(
+            self._hnsw,
+            self._storage_kind,
+            self._metric_type,
+            self._dimension,
+            self._user_ids,
             query_embeddings,
             n_results,
-            distances,
             ids,
+            distances,
             exclusion,
         )
-        self._convert_similarity_distances(ids, distances, output_size)
-        for index in range(output_size):
-            var internal_id = ids[index]
-            if internal_id >= 0 and internal_id < len(self._user_ids):
-                ids[index] = self._user_ids[internal_id]
-            else:
-                ids[index] = -1
 
     def _build_query_results(
         self,
@@ -1253,98 +852,16 @@ struct Collection(Movable, Writable):
         num_queries: Int,
         n_results: Int,
     ) raises -> QueryResults:
-        """
-        Materializes aligned managed result rows.
-
-        Metadata and document rows are omitted entirely when the collection
-        has no values of that kind, preserving the lightweight vector-only
-        query path.
-        """
-        var include_metadatas = len(self._metadatas) > 0
-        var include_documents = len(self._documents) > 0
-
-        # Preserve the original vector-only materialization path exactly:
-        # no ID-map lookup and no payload branch for every returned neighbor.
-        if not include_metadatas and not include_documents:
-            var vector_ids = List[List[Int]](capacity=num_queries)
-            var vector_distances = List[List[Float32]](
-                capacity=num_queries
-            )
-            for query_index in range(num_queries):
-                var row_ids = List[Int](capacity=n_results)
-                var row_distances = List[Float32](capacity=n_results)
-                for rank in range(n_results):
-                    var offset = query_index * n_results + rank
-                    row_ids.append(ids_storage[offset])
-                    row_distances.append(distances_storage[offset])
-                vector_ids.append(row_ids^)
-                vector_distances.append(row_distances^)
-            return QueryResults(
-                vector_ids^,
-                vector_distances^,
-                List[List[Metadata]](),
-                List[List[String]](),
-                List[List[Float32]](),
-            )
-
-        var all_ids = List[List[Int]](capacity=num_queries)
-        var all_distances = List[List[Float32]](capacity=num_queries)
-        var all_metadatas = List[List[Metadata]]()
-        var all_documents = List[List[String]]()
-        if include_metadatas:
-            all_metadatas = List[List[Metadata]](capacity=num_queries)
-        if include_documents:
-            all_documents = List[List[String]](capacity=num_queries)
-
-        for query_index in range(num_queries):
-            var row_ids = List[Int](capacity=n_results)
-            var row_distances = List[Float32](capacity=n_results)
-            var row_metadatas = List[Metadata]()
-            var row_documents = List[String]()
-            if include_metadatas:
-                row_metadatas = List[Metadata](capacity=n_results)
-            if include_documents:
-                row_documents = List[String](capacity=n_results)
-
-            for rank in range(n_results):
-                var offset = query_index * n_results + rank
-                var record_id = ids_storage[offset]
-                row_ids.append(record_id)
-                row_distances.append(distances_storage[offset])
-
-                var internal_id = -1
-                if record_id >= 0 and record_id in self._id_to_internal:
-                    internal_id = self._id_to_internal[record_id]
-
-                if include_metadatas:
-                    if internal_id >= 0:
-                        row_metadatas.append(
-                            self._metadata_for_internal(internal_id)
-                        )
-                    else:
-                        row_metadatas.append(Metadata())
-
-                if include_documents:
-                    if internal_id >= 0:
-                        row_documents.append(
-                            self._document_for_internal(internal_id)
-                        )
-                    else:
-                        row_documents.append("")
-
-            all_ids.append(row_ids^)
-            all_distances.append(row_distances^)
-            if include_metadatas:
-                all_metadatas.append(row_metadatas^)
-            if include_documents:
-                all_documents.append(row_documents^)
-
-        return QueryResults(
-            all_ids^,
-            all_distances^,
-            all_metadatas^,
-            all_documents^,
-            List[List[Float32]](),
+        return _build_vector_query_results(
+            ids_storage,
+            distances_storage,
+            num_queries,
+            n_results,
+            self._id_to_internal,
+            self._metadata_by_internal,
+            self._metadatas,
+            self._document_by_internal,
+            self._documents,
         )
 
     def query(
@@ -1452,114 +969,23 @@ struct Collection(Movable, Writable):
             n_results,
         )
 
-    def _build_scored_query_results(
-        self,
-        internal_ids_storage: List[Int],
-        scores_storage: List[Float32],
-        num_queries: Int,
-        n_results: Int,
-    ) raises -> QueryResults:
-        """Materializes ranked scores and aligned collection payloads."""
-        var include_metadatas = len(self._metadatas) > 0
-        var include_documents = len(self._documents) > 0
-        var all_ids = List[List[Int]](capacity=num_queries)
-        var all_scores = List[List[Float32]](capacity=num_queries)
-        var all_metadatas = List[List[Metadata]]()
-        var all_documents = List[List[String]]()
-        if include_metadatas:
-            all_metadatas = List[List[Metadata]](capacity=num_queries)
-        if include_documents:
-            all_documents = List[List[String]](capacity=num_queries)
-
-        for query_index in range(num_queries):
-            var row_ids = List[Int](capacity=n_results)
-            var row_scores = List[Float32](capacity=n_results)
-            var row_metadatas = List[Metadata]()
-            var row_documents = List[String]()
-            if include_metadatas:
-                row_metadatas = List[Metadata](capacity=n_results)
-            if include_documents:
-                row_documents = List[String](capacity=n_results)
-
-            for rank in range(n_results):
-                var offset = query_index * n_results + rank
-                var internal_id = internal_ids_storage[offset]
-                var is_valid = (
-                    internal_id >= 0
-                    and internal_id < len(self._user_ids)
-                    and self._is_deleted[internal_id] == 0
-                )
-                row_ids.append(
-                    self._user_ids[internal_id] if is_valid else -1
-                )
-                row_scores.append(scores_storage[offset])
-
-                if include_metadatas:
-                    if is_valid:
-                        row_metadatas.append(
-                            self._metadata_for_internal(internal_id)
-                        )
-                    else:
-                        row_metadatas.append(Metadata())
-                if include_documents:
-                    if is_valid:
-                        row_documents.append(
-                            self._document_for_internal(internal_id)
-                        )
-                    else:
-                        row_documents.append("")
-
-            all_ids.append(row_ids^)
-            all_scores.append(row_scores^)
-            if include_metadatas:
-                all_metadatas.append(row_metadatas^)
-            if include_documents:
-                all_documents.append(row_documents^)
-
-        return QueryResults(
-            all_ids^,
-            List[List[Float32]](),
-            all_metadatas^,
-            all_documents^,
-            all_scores^,
-        )
-
     def _query_bm25(
         self,
         query_texts: List[String],
         n_results: Int,
         exclusion: List[UInt8],
     ) raises -> QueryResults:
-        if n_results <= 0 or n_results > 2048:
-            raise Error("n_results must be between 1 and 2048.")
-        if len(query_texts) == 0:
-            return QueryResults(
-                List[List[Int]](),
-                List[List[Float32]](),
-                List[List[Metadata]](),
-                List[List[String]](),
-                List[List[Float32]](),
-            )
-
-        var ids_storage = List[Int](
-            capacity=len(query_texts) * n_results
-        )
-        var scores_storage = List[Float32](
-            capacity=len(query_texts) * n_results
-        )
-        for query_text in query_texts:
-            var result = self._bm25.search(
-                query_text, n_results, exclusion
-            )
-            for rank in range(n_results):
-                ids_storage.append(result.internal_ids[rank])
-                scores_storage.append(result.scores[rank])
-
-        return self._build_scored_query_results(
-            ids_storage,
-            scores_storage,
-            len(query_texts),
+        return _query_bm25_index(
+            self._bm25,
+            query_texts,
             n_results,
+            exclusion,
+            self._user_ids,
+            self._is_deleted,
+            self._metadata_by_internal,
+            self._metadatas,
+            self._document_by_internal,
+            self._documents,
         )
 
     def query(
@@ -1602,114 +1028,25 @@ struct Collection(Movable, Writable):
         candidate_multiplier: Int,
         exclusion: List[UInt8],
     ) raises -> QueryResults:
-        if self._dimension <= 0:
-            raise Error("Collection dimension must be positive.")
-        if len(query_embeddings) % self._dimension != 0:
-            raise Error(
-                "Query embeddings length must be a multiple of dimension."
-            )
-        if n_results <= 0 or n_results > 2048:
-            raise Error("n_results must be between 1 and 2048.")
-        if rrf_k <= 0:
-            raise Error("rrf_k must be positive.")
-        if candidate_multiplier <= 0 or candidate_multiplier > 2048:
-            raise Error("candidate_multiplier must be between 1 and 2048.")
-
-        var num_queries = len(query_embeddings) // self._dimension
-        if num_queries != len(query_texts):
-            raise Error(
-                "Hybrid query embedding and text batch sizes must match."
-            )
-        if num_queries == 0:
-            return QueryResults(
-                List[List[Int]](),
-                List[List[Float32]](),
-                List[List[Metadata]](),
-                List[List[String]](),
-                List[List[Float32]](),
-            )
-        if len(exclusion) > 0 and len(exclusion) != len(self._user_ids):
-            raise Error("Where filter size does not match collection size.")
-
-        var candidate_count = n_results * candidate_multiplier
-        if candidate_count > 2048:
-            candidate_count = 2048
-        var candidate_storage_size = num_queries * candidate_count
-        var vector_ids = List[Int](
-            unsafe_uninit_length=candidate_storage_size
-        )
-        var vector_distances = List[Float32](
-            unsafe_uninit_length=candidate_storage_size
-        )
-        var queries = Span[Float32](
-            ptr=query_embeddings.unsafe_ptr(),
-            length=len(query_embeddings),
-        )
-        var vector_id_span = Span[mut=True, Int](vector_ids)
-        var vector_distance_span = Span[mut=True, Float32](
-            vector_distances
-        )
-
-        if len(exclusion) > 0:
-            var filter_span = Span[UInt8](exclusion)
-            self._search_index(
-                queries,
-                candidate_count,
-                vector_distance_span,
-                vector_id_span,
-                filter_span,
-            )
-        elif self.count_deleted() > 0:
-            var deleted_span = Span[mut=False, UInt8](self._is_deleted)
-            self._search_index(
-                queries,
-                candidate_count,
-                vector_distance_span,
-                vector_id_span,
-                deleted_span,
-            )
-        else:
-            var empty_filter = Span[UInt8, MutUntrackedOrigin]()
-            self._search_index(
-                queries,
-                candidate_count,
-                vector_distance_span,
-                vector_id_span,
-                empty_filter,
-            )
-
-        var fused_ids = List[Int](
-            capacity=num_queries * n_results
-        )
-        var fused_scores = List[Float32](
-            capacity=num_queries * n_results
-        )
-        for query_index in range(num_queries):
-            var vector_row = List[Int](capacity=candidate_count)
-            var vector_offset = query_index * candidate_count
-            for rank in range(candidate_count):
-                vector_row.append(vector_ids[vector_offset + rank])
-
-            var text_row = self._bm25.search(
-                query_texts[query_index],
-                candidate_count,
-                exclusion,
-            )
-            var fused = reciprocal_rank_fusion(
-                vector_row,
-                text_row.internal_ids,
-                n_results,
-                rrf_k,
-            )
-            for rank in range(n_results):
-                fused_ids.append(fused.internal_ids[rank])
-                fused_scores.append(fused.scores[rank])
-
-        return self._build_scored_query_results(
-            fused_ids,
-            fused_scores,
-            num_queries,
+        return _query_hybrid_index(
+            self._hnsw,
+            self._storage_kind,
+            self._metric_type,
+            self._dimension,
+            self._bm25,
+            self._user_ids,
+            self._is_deleted,
+            self.count_deleted(),
+            self._metadata_by_internal,
+            self._metadatas,
+            self._document_by_internal,
+            self._documents,
+            query_embeddings,
+            query_texts,
             n_results,
+            rrf_k,
+            candidate_multiplier,
+            exclusion,
         )
 
     def query_hybrid(
@@ -1826,76 +1163,6 @@ struct Collection(Movable, Writable):
         if self._wal:
             self._wal[].reset(self._applied_sequence)
 
-    def _save_direct(
-        mut self,
-        path: String,
-        fault_point: Int,
-    ) raises:
-        """Writes one complete collection payload before its checksum."""
-        from mojovec.io.fault_injection import (
-            SNAPSHOT_FAULT_AFTER_HEADER,
-            SNAPSHOT_FAULT_AFTER_PAYLOAD,
-            inject_snapshot_fault,
-        )
-        from mojovec.io.serialization import (
-            write_index_hnsw_mmap,
-            write_index_hnsw_sq8_mmap,
-            write_int,
-        )
-
-        var file = open(path, "w")
-        write_int(file, COLLECTION_MAGIC_V2)
-        write_int(file, COLLECTION_FORMAT_VERSION)
-        _write_string(file, self._name)
-        write_int(file, self._dimension)
-        write_int(file, self._storage_kind)
-        write_int(file, self._metric_type)
-        write_int(file, self._identity)
-        write_int(file, self._applied_sequence)
-        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_HEADER)
-
-        var num_ids = len(self._user_ids)
-        write_int(file, num_ids)
-        if num_ids > 0:
-            file.write_bytes(
-                Span[UInt8](
-                    ptr=self._user_ids.unsafe_ptr().bitcast[UInt8](),
-                    length=num_ids * 8,
-                )
-            )
-            file.write_bytes(
-                Span[UInt8](ptr=self._is_deleted.unsafe_ptr(), length=num_ids)
-            )
-
-        # Metadata is sparse: collections that do not use it pay no
-        # per-record object or file-format overhead.
-        write_int(file, len(self._metadatas))
-        for internal_id in range(num_ids):
-            if internal_id in self._metadata_by_internal:
-                write_int(file, internal_id)
-                var metadata_index = self._metadata_by_internal[internal_id]
-                _write_metadata(file, self._metadatas[metadata_index])
-
-        # Documents use the same sparse representation as metadata. Empty
-        # strings are reserved for a missing document and are never persisted.
-        write_int(file, len(self._documents))
-        for internal_id in range(num_ids):
-            if internal_id in self._document_by_internal:
-                write_int(file, internal_id)
-                var document_index = self._document_by_internal[internal_id]
-                _write_string(file, self._documents[document_index])
-
-        if self._storage_kind == STORAGE_SQ8:
-            write_index_hnsw_sq8_mmap(
-                file, self._hnsw.unsafe_get[SQ8HNSW]()
-            )
-        else:
-            write_index_hnsw_mmap(
-                file, self._hnsw.unsafe_get[FlatHNSW]()
-            )
-        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_PAYLOAD)
-        file.close()
-
     def save(mut self, path: String) raises:
         """
         Atomically saves a complete collection.
@@ -1914,25 +1181,23 @@ struct Collection(Movable, Writable):
         fault_point: Int,
     ) raises:
         """Atomic save implementation with deterministic durability faults."""
-        from mojovec.io.atomic_file import (
-            atomic_replace,
-            atomic_temporary_path,
-            sync_parent_directory,
+        _save_collection_snapshot(
+            path,
+            fault_point,
+            self._name,
+            self._dimension,
+            self._storage_kind,
+            self._metric_type,
+            self._identity,
+            self._applied_sequence,
+            self._user_ids,
+            self._is_deleted,
+            self._metadata_by_internal,
+            self._metadatas,
+            self._document_by_internal,
+            self._documents,
+            self._hnsw,
         )
-        from mojovec.io.fault_injection import (
-            SNAPSHOT_FAULT_AFTER_PUBLISH,
-            SNAPSHOT_FAULT_BEFORE_PUBLISH,
-            inject_snapshot_fault,
-        )
-        from mojovec.io.snapshot_file import append_snapshot_checksum
-
-        var temporary_path = atomic_temporary_path(path)
-        self._save_direct(temporary_path, fault_point)
-        append_snapshot_checksum(temporary_path)
-        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_BEFORE_PUBLISH)
-        atomic_replace(temporary_path, path)
-        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_PUBLISH)
-        sync_parent_directory(path)
 
     def snapshot(
         mut self,
@@ -2041,131 +1306,33 @@ struct Collection(Movable, Writable):
     ) raises -> Collection:
         """Loads Flat/SQ8, mapping index arrays when the threshold is met.
         """
-        from mojovec.io.serialization import (
-            check_size_limit,
-            read_index_hnsw_mmap,
-            read_index_hnsw_sq8_mmap,
-            read_int,
+        var snapshot = _read_collection_snapshot(
+            path, memory_mapped, mmap_threshold_bytes
         )
-        from mojovec.io.snapshot_file import validate_snapshot_checksum
-
-        if mmap_threshold_bytes < 0:
-            raise Error("mmap_threshold_bytes cannot be negative.")
-        var file = open(path, "r")
-        var file_size = Int(file.seek(0, SEEK_END))
-        file_size = validate_snapshot_checksum(file, file_size)
-        _ = file.seek(0, SEEK_SET)
-        var magic = read_int(file)
-        if magic != COLLECTION_MAGIC_V2:
-            raise Error("Invalid Collection magic.")
-        var version = read_int(file)
-        if version != COLLECTION_FORMAT_VERSION:
-            raise Error("Unsupported Collection format version.")
-
-        var name = _read_string(file)
-        var dimension = read_int(file)
-        var storage_kind: StorageKind = read_int(file)
-        if storage_kind != STORAGE_FLAT and storage_kind != STORAGE_SQ8:
-            raise Error("Invalid Collection storage kind.")
-        var metric_type: MetricType = read_int(file)
-        if (
-            metric_type != METRIC_L2
-            and metric_type != METRIC_COSINE
-            and metric_type != METRIC_INNER_PRODUCT
-        ):
-            raise Error("Invalid Collection metric.")
-        var identity = read_int(file)
-        var applied_sequence = read_int(file)
-        if identity <= 0 or applied_sequence < 0:
-            raise Error("Invalid Collection durability state.")
-
-        check_size_limit(dimension, 65_536)
-        var num_ids = read_int(file)
-        check_size_limit(num_ids, 1_000_000_000)
         var collection = Collection(
-            dimension,
-            quantized=storage_kind == STORAGE_SQ8,
-            name=name,
-            metric=_metric_name(metric_type),
+            snapshot.dimension,
+            quantized=snapshot.storage_kind == STORAGE_SQ8,
+            name=snapshot.name,
+            metric=_metric_name(snapshot.metric_type),
         )
-        collection._identity = identity
-        collection._applied_sequence = applied_sequence
-
-        if num_ids > 0:
-            var ids_data = file.read_bytes(num_ids * 8)
-            var ids_source = ids_data.unsafe_ptr().bitcast[Int]()
-            var deleted_data = file.read_bytes(num_ids)
-            var deleted_source = deleted_data.unsafe_ptr()
-            for i in range(num_ids):
-                var record_id = ids_source[i]
-                var is_deleted = deleted_source[i]
-                collection._user_ids.append(record_id)
-                collection._is_deleted.append(is_deleted)
-                if is_deleted == 0:
-                    collection._id_to_internal[record_id] = i
-            _ = len(ids_data)
-            _ = len(deleted_data)
-
-        var metadata_count = read_int(file)
-        check_size_limit(metadata_count, num_ids)
-        for _ in range(metadata_count):
-            var internal_id = read_int(file)
-            if (
-                internal_id < 0
-                or internal_id >= num_ids
-                or internal_id in collection._metadata_by_internal
-            ):
-                raise Error("Invalid metadata internal ID.")
-            var metadata = _read_metadata(file)
-            if metadata.count() == 0:
-                raise Error("Sparse metadata entries cannot be empty.")
-            collection._store_metadata(internal_id, metadata)
-
-        var document_count = read_int(file)
-        check_size_limit(document_count, num_ids)
-        for _ in range(document_count):
-            var internal_id = read_int(file)
-            if (
-                internal_id < 0
-                or internal_id >= num_ids
-                or internal_id in collection._document_by_internal
-            ):
-                raise Error("Invalid document internal ID.")
-            var document = _read_string(file)
-            if document.byte_length() == 0:
-                raise Error("Sparse document entries cannot be empty.")
-            collection._store_document(internal_id, document)
-
-        var use_mmap = (
-            memory_mapped
-            and file_size >= mmap_threshold_bytes
-        )
-        if storage_kind == STORAGE_SQ8:
-            var index = read_index_hnsw_sq8_mmap(file, file_size)
-            if (
-                index.metric_type != _index_metric(metric_type)
-                or index.storage.metric_type != _index_metric(metric_type)
-            ):
-                raise Error("Collection and SQ8 index metrics differ.")
-            if not use_mmap:
-                index.storage._detach_mapped()
-                index.hnsw._detach_mapped()
-            if index.ntotal != num_ids:
-                raise Error("Collection metadata and SQ8 index size differ.")
-            collection._hnsw.set[SQ8HNSW](index^)
-        else:
-            var index = read_index_hnsw_mmap(file, file_size)
-            if (
-                index.metric_type != _index_metric(metric_type)
-                or index.storage.metric_type != _index_metric(metric_type)
-            ):
-                raise Error("Collection and Flat index metrics differ.")
-            if not use_mmap:
-                index.storage._detach_mapped()
-                index.hnsw._detach_mapped()
-            if index.ntotal != num_ids:
-                raise Error("Collection metadata and Flat index size differ.")
-            collection._hnsw.set[FlatHNSW](index^)
-
-        file.close()
+        collection._identity = snapshot.identity
+        collection._applied_sequence = snapshot.applied_sequence
+        collection._user_ids = snapshot.user_ids.take()
+        collection._is_deleted = snapshot.is_deleted.take()
+        for internal_id in range(len(collection._user_ids)):
+            if collection._is_deleted[internal_id] == 0:
+                collection._id_to_internal[
+                    collection._user_ids[internal_id]
+                ] = internal_id
+        for index in range(len(snapshot.metadata_internal_ids)):
+            collection._store_metadata(
+                snapshot.metadata_internal_ids[index],
+                snapshot.metadatas[index],
+            )
+        for index in range(len(snapshot.document_internal_ids)):
+            collection._store_document(
+                snapshot.document_internal_ids[index],
+                snapshot.documents[index],
+            )
+        collection._hnsw = snapshot.storage.take()
         return collection^
