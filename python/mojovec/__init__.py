@@ -6,18 +6,91 @@ search path. Vector indexing and search still execute entirely in Mojo.
 
 from __future__ import annotations
 
+import ctypes
+import os
+import site
+import sys
 from collections.abc import Mapping, Sequence
 from numbers import Real
 from os import PathLike
+from pathlib import Path
 from typing import Any, TypedDict
 
-from . import _native
+
+def _runtime_library_directories() -> list[Path]:
+    """Return likely Mojo runtime locations without recursively scanning disk."""
+    directories: list[Path] = []
+    configured = os.environ.get("MOJO_RUNTIME_LIB_DIR")
+    if configured:
+        directories.append(Path(configured).expanduser())
+
+    # Pixi is the supported Mojo installer used by this project and CI.
+    directories.append(Path.home() / ".pixi" / "envs" / "mojo" / "lib")
+    directories.append(Path(sys.prefix) / "lib")
+
+    # The modular Python package uses this layout on hosted notebooks.
+    try:
+        for packages in site.getsitepackages():
+            directories.append(Path(packages) / "modular" / "lib")
+    except AttributeError:
+        pass
+
+    unique: list[Path] = []
+    for directory in directories:
+        if directory not in unique:
+            unique.append(directory)
+    return unique
+
+
+def _preload_mojo_runtime() -> bool:
+    """Load a separately installed Mojo runtime for legacy, unbundled wheels."""
+    if sys.platform == "darwin":
+        suffix = ".dylib"
+    elif sys.platform.startswith("linux"):
+        suffix = ".so"
+    else:
+        return False
+
+    # Dependency order matters when the dynamic loader cannot use the build
+    # machine's RPATH. Missing optional libraries are simply skipped.
+    library_names = (
+        "libMSupportGlobals",
+        "libAsyncRTRuntimeGlobals",
+        "libAsyncRTMojoBindings",
+        "libKGENCompilerRTShared",
+    )
+    for directory in _runtime_library_directories():
+        compiler_runtime = directory / f"libKGENCompilerRTShared{suffix}"
+        if not compiler_runtime.is_file():
+            continue
+        try:
+            for name in library_names:
+                library = directory / f"{name}{suffix}"
+                if library.is_file():
+                    ctypes.CDLL(str(library), mode=ctypes.RTLD_GLOBAL)
+        except OSError:
+            continue
+        return True
+    return False
+
+
+try:
+    from . import _native
+except ImportError as native_import_error:
+    # Source builds and externally packaged binaries may use a separately
+    # installed Mojo runtime. Self-contained wheels never enter this path.
+    runtime_names = ("libKGENCompilerRTShared", "libAsyncRTMojoBindings")
+    if not any(name in str(native_import_error) for name in runtime_names):
+        raise
+    if not _preload_mojo_runtime():
+        raise
+    from . import _native
 
 
 WAL_ASYNC = 1
 WAL_SYNC = 2
 DEFAULT_MMAP_THRESHOLD_BYTES = 64 * 1024 * 1024
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 Metadata = Mapping[str, str | int | float | bool]
 Where = Mapping[str, Any]

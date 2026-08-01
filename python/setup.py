@@ -23,9 +23,16 @@ class BinaryDistribution(Distribution):
 
 setup(
     name="mojovec",
-    version="0.6.0",
+    version="0.6.1",
     description="Python bindings for MojoVec",
     packages=["mojovec"],
-    package_data={"mojovec": ["_native.so", "py.typed"]},
+    package_data={
+        "mojovec": [
+            "_native.so",
+            "py.typed",
+            ".dylibs/*.dylib",
+            ".libs/*.so*",
+        ]
+    },
     distclass=BinaryDistribution,
 )
