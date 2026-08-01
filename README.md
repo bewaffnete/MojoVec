@@ -1,5 +1,7 @@
 # MojoVec 🔥
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bewaffnete/MojoVec/blob/main/examples/quickstart_mojovec.ipynb)
+
 **A Vector Database (HNSW) written entirely in Mojo.**
 
 MojoVec is an Approximate Nearest Neighbor (ANN) search library built from scratch in pure Mojo — no C++ dependencies. HNSW, IVF, and Product Quantization (PQ) are implemented.
