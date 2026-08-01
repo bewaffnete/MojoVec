@@ -13,6 +13,10 @@ from std.memory.span import Span
 from std.memory import alloc
 from std.runtime.asyncrt import parallelism_level
 from std.sys.info import num_logical_cores
+from mojovec.core.validation import (
+    _validate_hnsw_parameters,
+    _validate_vector_dimension,
+)
 
 
 struct HNSWPThreadContext(Movable):
@@ -73,14 +77,22 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         d: Int,
         metric_type: MetricType,
         M: Int = 32,
-    ):
+        ef_construction: Int = 40,
+        ef_search: Int = 16,
+    ) raises:
         """Initializes the HNSW index with the provided storage, dimension, metric type, and M parameter."""
+        _validate_vector_dimension(d)
+        _validate_hnsw_parameters(M, ef_construction, ef_search)
         self.d = d
         self.ntotal = 0
         self.metric_type = metric_type
         self.is_trained = True
         self.storage = storage^
-        self.hnsw = HNSWGraph(M=M)
+        self.hnsw = HNSWGraph(
+            M=M,
+            efConstruction=ef_construction,
+            efSearch=ef_search,
+        )
         self.vt_pool = VisitedTablePool(self.hnsw.capacity)
 
     def __init__(out self, *, deinit move: Self):

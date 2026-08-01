@@ -19,6 +19,7 @@ from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from std.sys.intrinsics import prefetch, PrefetchOptions
 from std.ffi import external_call
 from mojovec.io.memory_map import FileMemoryMap
+from mojovec.core.validation import _validate_vector_dimension
 
 @always_inline
 def _alloc_aligned(count: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:
@@ -126,8 +127,9 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
     var capacity: Int
     var _mapping: FileMemoryMap
 
-    def __init__(out self, d: Int, metric: MetricType = METRIC_L2):
+    def __init__(out self, d: Int, metric: MetricType = METRIC_L2) raises:
         """Initializes the flat index."""
+        _validate_vector_dimension(d)
         self.d = d
         self.ntotal = 0
         self.metric_type = metric

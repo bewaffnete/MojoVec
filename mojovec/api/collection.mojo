@@ -46,6 +46,10 @@ from mojovec.core.types import (
     STORAGE_SQ8,
     StorageKind,
 )
+from mojovec.core.validation import (
+    _validate_hnsw_parameters,
+    _validate_vector_dimension,
+)
 from mojovec.io.wal import (
     WAL_ASYNC,
     WAL_OPERATION_DELETE,
@@ -98,6 +102,10 @@ struct Collection(Movable, Writable):
         name: String = "",
         metric: String = "l2",
     ) raises:
+        # Validate every allocation-sensitive value before constructing either
+        # the Flat or SQ8 storage backend.
+        _validate_vector_dimension(dimension)
+        _validate_hnsw_parameters(M, ef_construction, ef_search)
         self._name = name.copy()
         self._dimension = dimension
         self._storage_kind = STORAGE_SQ8 if quantized else STORAGE_FLAT

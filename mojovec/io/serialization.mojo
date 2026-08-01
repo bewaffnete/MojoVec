@@ -14,6 +14,10 @@ from ..quantization.pq import ProductQuantizer
 from ..index.index_hnsw import IndexHNSW
 from ..index.hnsw_graph import HNSWGraph
 from mojovec.io.memory_map import FileMemoryMap
+from mojovec.core.validation import (
+    _validate_hnsw_parameters,
+    _validate_vector_dimension,
+)
 comptime MAGIC_FLAT: Int = 0x4d4a4f46
 comptime MAGIC_HNSW: Int = 0x4d4a4f48
 comptime MAGIC_IVF_FLAT: Int = 0x4d4a4f49
@@ -171,7 +175,7 @@ def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
     if magic != MAGIC_FLAT: raise Error("Invalid magic for IndexFlat")
     
     var d = read_int(f)
-    check_size_limit(d, 65536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var capacity = read_int(f)
@@ -218,7 +222,7 @@ def read_index_flat_sq8(mut f: FileHandle) raises -> IndexFlatSQ8:
     if magic != MAGIC_FLAT_SQ8: raise Error("Invalid magic for IndexFlatSQ8")
     
     var d = read_int(f)
-    check_size_limit(d, 65536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var capacity = read_int(f)
@@ -277,11 +281,13 @@ def write_hnsw_graph(mut f: FileHandle, graph: HNSWGraph) raises:
 
 def read_hnsw_graph(mut f: FileHandle, mut graph: HNSWGraph) raises:
     graph.M = read_int(f)
-    check_size_limit(graph.M, 1024)
     graph.efConstruction = read_int(f)
-    check_size_limit(graph.efConstruction, 2048)
     graph.efSearch = read_int(f)
-    check_size_limit(graph.efSearch, 2048)
+    _validate_hnsw_parameters(
+        graph.M,
+        graph.efConstruction,
+        graph.efSearch,
+    )
     graph.max_level = read_int(f)
     if graph.max_level < -1 or graph.max_level > 32:
         raise Error("Invalid HNSW maximum level.")
@@ -348,7 +354,7 @@ def read_index_hnsw(mut f: FileHandle) raises -> IndexHNSW[IndexFlat]:
     if magic != MAGIC_HNSW: raise Error("Invalid magic for IndexHNSW")
     
     var d = read_int(f)
-    check_size_limit(d, 65536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
@@ -382,7 +388,7 @@ def read_index_hnsw_sq8(mut f: FileHandle) raises -> IndexHNSW[IndexFlatSQ8]:
     if magic != MAGIC_HNSW_SQ8: raise Error("Invalid magic for IndexHNSW SQ8")
     
     var d = read_int(f)
-    check_size_limit(d, 65536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
@@ -427,7 +433,7 @@ def read_index_flat_mmap(
     if read_int(f) != MAGIC_FLAT_MMAP:
         raise Error("Invalid magic for memory-mapped IndexFlat.")
     var d = read_int(f)
-    check_size_limit(d, 65_536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var capacity = read_int(f)
@@ -506,7 +512,7 @@ def read_index_flat_sq8_mmap(
     if read_int(f) != MAGIC_FLAT_SQ8_MMAP:
         raise Error("Invalid magic for memory-mapped IndexFlatSQ8.")
     var d = read_int(f)
-    check_size_limit(d, 65_536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var capacity = read_int(f)
@@ -642,11 +648,9 @@ def read_hnsw_graph_mmap(
     if read_int(f) != MAGIC_HNSW_GRAPH_MMAP:
         raise Error("Invalid magic for memory-mapped HNSW graph.")
     var M = read_int(f)
-    check_size_limit(M, 1024)
     var ef_construction = read_int(f)
-    check_size_limit(ef_construction, 2048)
     var ef_search = read_int(f)
-    check_size_limit(ef_search, 2048)
+    _validate_hnsw_parameters(M, ef_construction, ef_search)
     var max_level = read_int(f)
     if max_level < -1 or max_level > 32:
         raise Error("Invalid HNSW maximum level.")
@@ -743,7 +747,7 @@ def read_index_hnsw_mmap(
     if read_int(f) != MAGIC_HNSW_MMAP:
         raise Error("Invalid magic for memory-mapped IndexHNSW.")
     var d = read_int(f)
-    check_size_limit(d, 65_536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
@@ -790,7 +794,7 @@ def read_index_hnsw_sq8_mmap(
     if read_int(f) != MAGIC_HNSW_SQ8_MMAP:
         raise Error("Invalid magic for memory-mapped IndexHNSW SQ8.")
     var d = read_int(f)
-    check_size_limit(d, 65_536)
+    _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
@@ -911,7 +915,7 @@ def read_index_ivf_flat(mut f: FileHandle) raises -> IndexIVFFlat[IndexFlat]:
     if magic != MAGIC_IVF_FLAT: raise Error("Invalid magic for IndexIVFFlat")
     
     var d = read_int(f)
-    check_size_limit(d, 65536)
+    _validate_vector_dimension(d)
     var nlist = read_int(f)
     check_size_limit(nlist, 1_000_000)
     var nprobe = read_int(f)
@@ -959,7 +963,7 @@ def read_index_ivf_pq(mut f: FileHandle) raises -> IndexIVFPQ[IndexFlat]:
     if magic != MAGIC_IVF_PQ: raise Error("Invalid magic for IndexIVFPQ")
     
     var d = read_int(f)
-    check_size_limit(d, 65536)
+    _validate_vector_dimension(d)
     var nlist = read_int(f)
     check_size_limit(nlist, 1_000_000)
     var M = read_int(f)

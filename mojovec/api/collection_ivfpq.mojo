@@ -16,7 +16,9 @@ struct CollectionIVFPQ(Movable):
     var _user_ids: List[Int]
     var _flat_quantizer: OwnedPointer[IndexFlat]
 
-    def __init__(out self, dimension: Int, nlist: Int = 100, M: Int = 16):
+    def __init__(
+        out self, dimension: Int, nlist: Int = 100, M: Int = 16
+    ) raises:
         """
         Initializes a new IVF-PQ collection with the given parameters.
         """

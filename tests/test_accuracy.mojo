@@ -38,7 +38,7 @@ struct Dataset:
         self.db.free()
         self.queries.free()
 
-def get_ground_truth(ds: Dataset) -> UnsafePointer[Int, MutUntrackedOrigin]:
+def get_ground_truth(ds: Dataset) raises -> UnsafePointer[Int, MutUntrackedOrigin]:
     var index = IndexFlat(d, METRIC_L2)
     index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
     

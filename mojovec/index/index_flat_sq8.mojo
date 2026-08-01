@@ -12,6 +12,7 @@ from std.memory import memcpy
 from std.memory.span import Span
 import std.math as math
 from mojovec.io.memory_map import FileMemoryMap
+from mojovec.core.validation import _validate_vector_dimension
 
 struct SQ8DistanceComputer(DistanceComputerTrait):
     """Computes distances between a query vector and SQ8 quantized database vectors."""
@@ -160,13 +161,14 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
     var scale: Float32
     var _mapping: FileMemoryMap
     
-    def __init__(out self, d: Int, metric: MetricType = METRIC_L2):
+    def __init__(out self, d: Int, metric: MetricType = METRIC_L2) raises:
         """Initializes the SQ8 index.
         
         Args:
             d: The dimensionality of the vectors.
             metric: The metric type used for distance computation.
         """
+        _validate_vector_dimension(d)
         self.d = d
         self.ntotal = 0
         self.metric_type = metric

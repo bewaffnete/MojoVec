@@ -12,6 +12,7 @@ from mojovec.utils.heap import (
 from ..utils.distance_computer import DistanceComputerTrait
 from .hnsw_visited import VisitedTable
 from mojovec.io.memory_map import FileMemoryMap
+from mojovec.core.validation import _validate_hnsw_parameters
 
 
 struct NeighborsInfo:
@@ -52,17 +53,12 @@ struct HNSWGraph(Movable):
 
     def __init__(
         out self, M: Int = 32, efConstruction: Int = 40, efSearch: Int = 16
-    ):
+    ) raises:
         """Initializes the HNSW graph with the given hyperparameters."""
+        _validate_hnsw_parameters(M, efConstruction, efSearch)
         self.M = M
-        if self.M > 1000:
-            self.M = 1000
         self.efConstruction = efConstruction
-        if self.efConstruction > 2048:
-            self.efConstruction = 2048
         self.efSearch = efSearch
-        if self.efSearch > 2048:
-            self.efSearch = 2048
         self.max_level = -1
         self.entry_point = -1
         self.ntotal = 0
@@ -70,10 +66,10 @@ struct HNSWGraph(Movable):
         self.capacity = 1024
         self.cum_nneighbor_per_level = alloc[Int](33)
         self.cum_nneighbor_per_level[0] = 0
-        self.cum_nneighbor_per_level[1] = M * 2
+        self.cum_nneighbor_per_level[1] = self.M * 2
         for i in range(2, 33):
             self.cum_nneighbor_per_level[i] = (
-                self.cum_nneighbor_per_level[i - 1] + M
+                self.cum_nneighbor_per_level[i - 1] + self.M
             )
 
         self.neighbors_capacity = (

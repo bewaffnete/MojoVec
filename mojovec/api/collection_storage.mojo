@@ -34,15 +34,25 @@ def _create_hnsw_storage(
     var storage_metric = _index_metric(metric_type)
     if storage_kind == STORAGE_SQ8:
         var storage = IndexFlatSQ8(dimension, storage_metric)
-        var index = SQ8HNSW(storage^, dimension, storage_metric, M=M)
-        index.hnsw.efConstruction = ef_construction
-        index.hnsw.efSearch = ef_search
+        var index = SQ8HNSW(
+            storage^,
+            dimension,
+            storage_metric,
+            M=M,
+            ef_construction=ef_construction,
+            ef_search=ef_search,
+        )
         return HNSWStorage(index^)
 
     var storage = IndexFlat(dimension, storage_metric)
-    var index = FlatHNSW(storage^, dimension, storage_metric, M=M)
-    index.hnsw.efConstruction = ef_construction
-    index.hnsw.efSearch = ef_search
+    var index = FlatHNSW(
+        storage^,
+        dimension,
+        storage_metric,
+        M=M,
+        ef_construction=ef_construction,
+        ef_search=ef_search,
+    )
     return HNSWStorage(index^)
 
 
