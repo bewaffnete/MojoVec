@@ -471,6 +471,17 @@ Silicon are supported):
 pip install mojovec
 ```
 
+To build the Python package from a source checkout with the PEP 517 backend:
+
+```bash
+python -m pip install --upgrade build
+python -m build --wheel
+python -m pip install dist/mojovec-*.whl
+```
+
+The build backend invokes Mojo only during `build_ext`; reading package
+metadata and creating the source distribution do not compile native code.
+
 Linux wheels contain both AVX2 (`x86-64-v3`) and AVX-512 (`x86-64-v4`)
 native backends. MojoVec checks the CPU before loading native code and selects
 AVX-512 when its complete ISA level is available; otherwise it uses AVX2.

@@ -15,24 +15,22 @@ downloaded datasets.
 
 Run every command from the repository root.
 
-Build the Python extension once before running the Python track:
+Build and install the Python package once before running the Python track:
 
 ```bash
-cd python
-python setup.py build_ext --inplace
-cd ..
+python -m pip install .
 ```
 
 Then run:
 
 ```bash
-PYTHONPATH=python python examples/python/api_01_collection_crud.py
-PYTHONPATH=python python examples/python/api_02_metadata_where.py
-PYTHONPATH=python python examples/python/api_03_bm25_hybrid.py
-PYTHONPATH=python python examples/python/api_04_persistence_compaction.py
-PYTHONPATH=python python examples/python/api_05_wal_recovery.py
-PYTHONPATH=python python examples/python/api_06_numpy_fast_path.py
-PYTHONPATH=python python examples/python/api_07_distance_metrics.py
+python examples/python/api_01_collection_crud.py
+python examples/python/api_02_metadata_where.py
+python examples/python/api_03_bm25_hybrid.py
+python examples/python/api_04_persistence_compaction.py
+python examples/python/api_05_wal_recovery.py
+python examples/python/api_06_numpy_fast_path.py
+python examples/python/api_07_distance_metrics.py
 ```
 
 The NumPy fast-path example is optional and requires `numpy`. The other Python

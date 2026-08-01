@@ -1,8 +1,8 @@
 """Complete managed Collection lifecycle from Python.
 
-Run from the repository root after building the extension:
+Run from the repository root after installing the built wheel:
 
-    PYTHONPATH=python python examples/python/api_01_collection_crud.py
+    python examples/python/api_01_collection_crud.py
 
 Python accepts both nested vectors and the flattened row-major representation
 used by Mojo. Nested vectors are usually easier to read, so this tutorial uses

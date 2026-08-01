@@ -6,6 +6,7 @@ small, stable, and easy for IDEs and documentation tools to inspect.
 
 from __future__ import annotations
 
+from ._version import __version__
 from ._collection import Collection, load, recover
 from ._runtime import _native_backend
 from ._types import (
@@ -16,9 +17,6 @@ from ._types import (
     QueryResult,
     Where,
 )
-
-__version__ = "0.7.0"
-
 
 def native_backend() -> str:
     """Return the native CPU backend selected for this Python process.

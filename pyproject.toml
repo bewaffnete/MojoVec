@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mojovec"
+dynamic = ["version"]
+description = "High-performance vector search powered by Mojo"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+authors = [{ name = "MojoVec contributors" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Operating System :: MacOS :: MacOS X",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/bewaffnete/MojoVec"
+Repository = "https://github.com/bewaffnete/MojoVec"
+Issues = "https://github.com/bewaffnete/MojoVec/issues"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+packages = ["mojovec", "mojovec._avx2", "mojovec._avx512"]
+include-package-data = true
+
+[tool.setuptools.dynamic]
+version = { attr = "mojovec._version.__version__" }
+
+[tool.setuptools.package-data]
+mojovec = ["py.typed", ".dylibs/*.dylib", ".libs/*.so*"]
+
+[tool.setuptools.cmdclass]
+build_ext = "mojovec_build.MojoBuildExt"
+bdist_wheel = "mojovec_build.MojoBdistWheel"
+
+[[tool.setuptools.ext-modules]]
+name = "mojovec._native"
+sources = ["python/mojovec_python.mojo"]
