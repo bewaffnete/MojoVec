@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-22.04, macos-latest]
         python-version: ["3.12", "3.13", "3.14"]
 
     steps:
@@ -56,13 +56,15 @@ jobs:
       - name: Build Python wheel
         working-directory: python
         run: |
-          python setup.py bdist_wheel
           if [ "$RUNNER_OS" == "Linux" ]; then
+            python setup.py bdist_wheel
             auditwheel repair \
-              --plat manylinux_2_34_x86_64 \
+              --plat manylinux_2_35_x86_64 \
               --wheel-dir repaired \
               dist/*.whl
           else
+            python setup.py bdist_wheel \
+              --plat-name macosx_11_0_arm64
             delocate-wheel \
               --wheel-dir repaired \
               dist/*.whl
