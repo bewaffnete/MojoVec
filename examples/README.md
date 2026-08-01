@@ -2,6 +2,8 @@
 
 The examples are split by language:
 
+- [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) is the complete
+  interactive Jupyter/Colab walkthrough;
 - [`mojo/`](mojo/) contains ten executable tutorials for the native Mojo API;
 - [`python/`](python/) contains seven executable tutorials for the managed
   Python API.
@@ -79,7 +81,7 @@ Run the Python examples in numeric order:
 | [`api_05_wal_recovery.py`](python/api_05_wal_recovery.py) | Optional async/sync durability and restart recovery | `enable_wal`, `flush_wal`, `recover`, `checkpoint` |
 | [`api_06_numpy_fast_path.py`](python/api_06_numpy_fast_path.py) | Contiguous zero-copy vector buffers | `upsert_numpy`, `query_numpy` |
 | [`api_07_distance_metrics.py`](python/api_07_distance_metrics.py) | L2, cosine, and inner-product ordering | `metric`, `storage_kind` |
-| [`mojovec_0_6_quickstart.ipynb`](python/mojovec_0_6_quickstart.ipynb) | Полный интерактивный quickstart для Jupyter/Colab | CRUD, `where`, BM25, hybrid RRF, compaction, mmap |
+| [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) | Complete interactive Jupyter/Colab quickstart | CRUD, `where`, BM25, hybrid RRF, Flat/SQ8, NumPy, compaction, mmap, WAL |
 
 The managed Python methods return ordinary Python values and own all native
 resources. No example opens an index file manually, releases a query buffer, or
