@@ -480,6 +480,11 @@ the native module is loaded.
 ```python
 import mojovec
 
+# Public wrappers expose ordinary Python signatures, type annotations, and
+# NumPy-style runtime documentation.
+help(mojovec.Collection.query)
+print("native backend:", mojovec.native_backend())
+
 collection = mojovec.Collection(
     dimension=3,
     M=32,
