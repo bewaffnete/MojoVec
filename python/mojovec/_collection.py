@@ -20,19 +20,36 @@ from ._where import _compile_where
 
 def _flatten_embeddings(
     embeddings: Sequence[Real] | Sequence[Sequence[Real]],
+    dimension: int | None = None,
 ) -> Sequence[Real]:
     if len(embeddings) == 0:
         return []
     first = embeddings[0]
     if isinstance(first, Real):
-        # Keep the established flat-list path allocation-free on the Python
-        # side; the native boundary already converts each scalar to Float32.
+        if dimension is not None and len(embeddings) % dimension != 0:
+            raise ValueError(
+                f"flat embeddings contain {len(embeddings)} values; "
+                f"expected a multiple of dimension {dimension}"
+            )
         return embeddings  # type: ignore[return-value]
-    return [
-        float(value)
-        for row in embeddings  # type: ignore[assignment]
-        for value in row
-    ]
+
+    flat: list[float] = []
+    for index, row in enumerate(embeddings):  # type: ignore[union-attr]
+        if isinstance(row, Real):
+            raise ValueError("embeddings must be homogenously flat or 2D")
+        row_len = len(row)  # type: ignore[arg-type]
+        if dimension is not None and row_len != dimension:
+            raise ValueError(
+                f"embedding at index {index} has dimension {row_len}; "
+                f"expected {dimension}"
+            )
+        elif dimension is None and index > 0 and row_len != len(embeddings[0]):  # type: ignore[arg-type]
+            raise ValueError(
+                f"embedding at index {index} has dimension {row_len}; "
+                f"expected {len(embeddings[0])}"
+            )
+        flat.extend(float(value) for value in row)  # type: ignore[union-attr]
+    return flat
 
 
 def _validate_payload_lengths(
@@ -196,7 +213,7 @@ class Collection:
         documents: Sequence[str] | None,
     ) -> None:
         _validate_payload_lengths(ids, metadatas, documents)
-        flat = _flatten_embeddings(embeddings)
+        flat = _flatten_embeddings(embeddings, self.dimension())
         expected = len(ids) * self.dimension()
         if len(flat) != expected:
             raise ValueError(
@@ -362,7 +379,7 @@ class Collection:
             )
         if query_embeddings is None:
             raise ValueError("query_embeddings or query_texts is required")
-        flat = _flatten_embeddings(query_embeddings)
+        flat = _flatten_embeddings(query_embeddings, self.dimension())
         if compiled is None:
             return self._inner.query_vector(flat, n_results)
         return self._inner.query_vector_where(flat, n_results, compiled)
@@ -399,7 +416,7 @@ class Collection:
         QueryResult
             Batched results with fused values in ``scores``.
         """
-        flat = _flatten_embeddings(query_embeddings)
+        flat = _flatten_embeddings(query_embeddings, self.dimension())
         if where is None:
             return self._inner.query_hybrid(
                 flat,

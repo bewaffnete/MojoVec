@@ -360,6 +360,14 @@ def test_query_rejects_ambiguous_or_invalid_inputs():
         col.query([1.0, 0.0], where={"x": {"$in": [1, "1"]}})
 
 
+def test_ragged_embeddings_are_rejected():
+    col = mojovec.Collection(dimension=4)
+    with pytest.raises(ValueError, match="embedding at index 0 has dimension 3; expected 4"):
+        col.add(ids=[101, 102], embeddings=[[1, 2, 3], [4, 5, 6, 7, 8]])
+    with pytest.raises(ValueError, match="embedding at index 0 has dimension 2; expected 4"):
+        col.query(query_embeddings=[[1, 2], [3, 4, 5, 6, 7, 8]])
+
+
 def test_snapshot_load_mmap_and_wal_recovery(tmp_path):
     snapshot_path = tmp_path / "snapshot.mojovec"
     point_in_time_path = tmp_path / "point-in-time.mojovec"
