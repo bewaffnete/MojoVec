@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Determine repository root directory
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # ANSI Color codes
 BOLD="\033[1m"
 GREEN="\033[0;32m"
@@ -12,6 +16,8 @@ NC="\033[0m"
 echo -e "${BOLD}${CYAN}===========================================${NC}"
 echo -e "${BOLD}${CYAN}       MojoVec - Running All Tests         ${NC}"
 echo -e "${BOLD}${CYAN}===========================================${NC}\n"
+
+cd "$REPO_ROOT"
 
 PASSED=0
 FAILED=0
