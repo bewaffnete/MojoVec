@@ -3,10 +3,11 @@ Smoke test to verify that the compiled mojovec.mojoc package can be imported
 and used successfully by a downstream client.
 """
 
+from std.testing import TestSuite, assert_equal
 from mojovec import Client
 
 
-def main() raises:
+def test_mojoc_package_smoke() raises:
     var client = Client()
     var collection = client.create_collection(
         "package_smoke",
@@ -38,6 +39,8 @@ def main() raises:
         ],
         n_results=1,
     )
-    if results.ids[0][0] != 10:
-        raise Error("Precompiled package returned an unexpected result.")
-    print("Successfully queried Collection from mojovec.mojoc!")
+    assert_equal(results.ids[0][0], 10, "Precompiled package returned an unexpected result.")
+
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()

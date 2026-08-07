@@ -59,8 +59,6 @@ def test_ivf_flat() raises:
     ivf.search(Span[Float32, MutUntrackedOrigin](ptr=queries, length=nq * d), k, span_dist_1, span_labels_1)
     
 
-    print("All IndexIVFFlat tests passed!")
-    
     # Keep ivf alive
     _ = ivf.ntotal
     

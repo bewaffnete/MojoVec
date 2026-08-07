@@ -1,4 +1,4 @@
-from std.testing import assert_equal, assert_not_equal, assert_true
+from std.testing import assert_equal, assert_not_equal, assert_true, TestSuite
 from std.collections import List
 from std.memory.span import Span
 from mojovec.api.collection import Collection
@@ -8,7 +8,7 @@ def get_test_data() -> Tuple[List[Int], List[Float32]]:
     var embeddings = List[Float32]()
     for i in range(100):
         ids.append(i)
-        for j in range(16):
+        for _ in range(16):
             embeddings.append(Float32(i))
     return ids^, embeddings^
 
@@ -19,7 +19,7 @@ def test_soft_delete() raises:
     
     # Query for id 50
     var query = List[Float32]()
-    for j in range(16):
+    for _ in range(16):
         query.append(50.0)
         
     var results1 = collection.query(query, n_results=5)
@@ -58,7 +58,7 @@ def test_save_load_deleted() raises:
     # Verify 10 and 20 are excluded from results
     var query10 = List[Float32]()
     var query20 = List[Float32]()
-    for j in range(16):
+    for _ in range(16):
         query10.append(10.0)
         query20.append(20.0)
         
@@ -69,6 +69,4 @@ def test_save_load_deleted() raises:
     assert_not_equal(r20.ids[0][0], 20, "20 should be deleted in loaded model")
 
 def main() raises:
-    test_soft_delete()
-    test_save_load_deleted()
-    print("All Soft Delete tests passed!")
+    TestSuite.discover_tests[__functions_in_module()]().run()

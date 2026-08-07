@@ -1,11 +1,11 @@
 from std.memory.span import Span
+from std.memory import alloc
+from std.testing import TestSuite, assert_equal, assert_true
 from mojovec.index.index_hnsw import IndexHNSW
 from mojovec.index.index_flat import IndexFlat
 from mojovec.core.types import METRIC_L2
-from std.random import rand
-from std.memory import alloc
 
-def main() raises:
+def test_hnsw_structure_construction() raises:
     var d = 2
     var nb = 10
     var xb = alloc[Float32](nb * d)
@@ -17,18 +17,11 @@ def main() raises:
     
     hnsw.add(Span[Float32, MutUntrackedOrigin](ptr=xb, length=nb * d))
     
-    # Print the graph
-    for i in range(nb):
-        var level = hnsw.hnsw.levels[i]
-        pass  # print("Node", i, "level", level)
-        for l in range(level + 1):
-            var neighbors_info = hnsw.hnsw.get_neighbors(i, l)
-            var neighbors = neighbors_info.ptr
-            pass  # print("  level", l, "neighbors: ", end="")
-            for j in range(neighbors_info.max_links):
-                var neigh = neighbors[j]
-                if neigh == -1:
-                    break
-                pass  # print(neigh, end=" ")
-            pass  # print("")
+    # Verify graph structure and nodes
+    assert_equal(hnsw.hnsw.ntotal, 10, "HNSW ntotal should match added points")
+    assert_true(hnsw.hnsw.M == 2, "M parameter should be 2")
+
     xb.free()
+
+def main() raises:
+    TestSuite.discover_tests[__functions_in_module()]().run()
