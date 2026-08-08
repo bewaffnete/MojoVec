@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+import math
 
 import pytest
 import mojovec
@@ -482,3 +483,30 @@ def test_same_collection_supports_concurrent_read_queries():
 
     with ThreadPoolExecutor(max_workers=4) as executor:
         list(executor.map(query_repeatedly, range(4)))
+
+
+@pytest.mark.parametrize("metric", ["l2", "ip", "cosine"])
+@pytest.mark.parametrize("quantized", [False, True])
+def test_non_finite_vectors_are_rejected(metric, quantized):
+    col = mojovec.Collection(2, quantized=quantized, metric=metric)
+
+    for value in (math.nan, math.inf, -math.inf):
+        with pytest.raises(Exception, match="finite"):
+            col.add([1], [[1.0, value]])
+        assert col.count() == 0
+
+    col.add([1], [[1.0, 0.0]])
+    for value in (math.nan, math.inf, -math.inf):
+        with pytest.raises(Exception, match="finite"):
+            col.query([[1.0, value]], n_results=1)
+        with pytest.raises(Exception, match="finite"):
+            col.query_hybrid(
+                [[1.0, value]],
+                ["document"],
+                n_results=1,
+            )
+        with pytest.raises(Exception, match="finite"):
+            col.upsert([1], [[value, 0.0]])
+        assert col.count() == 1
+
+    assert col.query([[1.0, 0.0]], n_results=1)["ids"][0][0] == 1

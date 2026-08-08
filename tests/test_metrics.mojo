@@ -151,6 +151,78 @@ def test_metric_validation_and_zero_cosine_vectors() raises:
     assert_true(zero_query_failed)
 
 
+def _check_non_finite_rejected(metric: String, quantized: Bool) raises:
+    var collection = Collection(
+        2,
+        M=8,
+        ef_construction=48,
+        ef_search=32,
+        quantized=quantized,
+        metric=metric,
+    )
+    var zero = Float32(0.0)
+    var one = Float32(1.0)
+    var bad_values = [zero / zero, one / zero, -one / zero]
+
+    for index in range(len(bad_values)):
+        var add_failed = False
+        try:
+            collection.add(
+                [index + 1],
+                [one, bad_values[index]],
+            )
+        except:
+            add_failed = True
+        assert_true(add_failed)
+        assert_equal(collection.count(), 0)
+
+    collection.add([10], [one, zero])
+    for bad_value in bad_values:
+        var query_failed = False
+        try:
+            _ = collection.query([one, bad_value], n_results=1)
+        except:
+            query_failed = True
+        assert_true(query_failed)
+
+        var hybrid_failed = False
+        try:
+            _ = collection.query_hybrid(
+                [one, bad_value],
+                [String("document")],
+                n_results=1,
+            )
+        except:
+            hybrid_failed = True
+        assert_true(hybrid_failed)
+
+        var upsert_failed = False
+        try:
+            collection.upsert([10], [bad_value, zero])
+        except:
+            upsert_failed = True
+        assert_true(upsert_failed)
+        assert_equal(collection.count(), 1)
+
+    var result = collection.query([one, zero], n_results=1)
+    assert_equal(result.ids[0][0], 10)
+
+
+def test_l2_rejects_non_finite_flat_and_sq8() raises:
+    _check_non_finite_rejected("l2", False)
+    _check_non_finite_rejected("l2", True)
+
+
+def test_ip_rejects_non_finite_flat_and_sq8() raises:
+    _check_non_finite_rejected("ip", False)
+    _check_non_finite_rejected("ip", True)
+
+
+def test_cosine_rejects_non_finite_flat_and_sq8() raises:
+    _check_non_finite_rejected("cosine", False)
+    _check_non_finite_rejected("cosine", True)
+
+
 def test_cosine_wal_recovery_preserves_metric() raises:
     var snapshot_path = "/tmp/mojovec_metric_cosine_wal.mojovec"
     var wal_path = "/tmp/mojovec_metric_cosine_wal.log"

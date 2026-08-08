@@ -1,12 +1,24 @@
 """Allocation-aware vector query execution shared by managed frontends."""
 
 from std.collections import List
-from std.math import sqrt
+from std.math import isfinite, sqrt
 from std.memory.span import Span
 
 from mojovec.api.collection_codec import METRIC_COSINE
 from mojovec.api.collection_storage import HNSWStorage, _storage_search
 from mojovec.core.types import METRIC_L2, MetricType, StorageKind
+
+
+@always_inline
+def _is_finite_component(value: Float32) -> Bool:
+    return isfinite(value)
+
+
+def _validate_finite_vectors(vectors: Span[Float32, _]) raises:
+    """Rejects NaN and positive or negative infinity components."""
+    for index in range(len(vectors)):
+        if not _is_finite_component(vectors[index]):
+            raise Error("Vector components must be finite.")
 
 
 def _normalize_vectors(
@@ -19,10 +31,13 @@ def _normalize_vectors(
         var offset = vector_index * dimension
         var squared_norm: Float64 = 0.0
         for component in range(dimension):
-            var value = Float64(vectors[offset + component])
-            squared_norm += value * value
-        if not (squared_norm > 0.0 and squared_norm <= Float64.MAX):
-            raise Error("Cosine embeddings must be finite non-zero vectors.")
+            var component_value = vectors[offset + component]
+            if not _is_finite_component(component_value):
+                raise Error("Vector components must be finite.")
+            var wide_value = Float64(component_value)
+            squared_norm += wide_value * wide_value
+        if not squared_norm > 0.0:
+            raise Error("Cosine embeddings must be non-zero vectors.")
         var inverse_norm = 1.0 / sqrt(squared_norm)
         for component in range(dimension):
             normalized[offset + component] = Float32(
@@ -54,6 +69,7 @@ def _search_collection_index(
             deleted,
         )
         return
+    _validate_finite_vectors(queries)
     _storage_search(
         storage,
         storage_kind,

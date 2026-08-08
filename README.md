@@ -109,7 +109,8 @@ Metric and storage are independent. Public vector distances are always
 smaller-is-better: L2 returns squared Euclidean distance, cosine returns
 `1 - cosine_similarity`, and IP returns `1 - inner_product`. Cosine vectors and
 queries are normalized automatically without modifying caller-owned Lists;
-zero or non-finite cosine vectors are rejected. The selected metric is
+zero cosine vectors are rejected. NaN and infinite components are rejected for
+every metric before they reach the graph, SQ8 quantizer, or WAL. The metric is
 preserved by save/load, mmap, compaction, filtering, hybrid search, and WAL
 recovery.
 

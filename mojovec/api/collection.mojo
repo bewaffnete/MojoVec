@@ -35,6 +35,7 @@ from mojovec.api.collection_storage import (
     _storage_vector,
 )
 from mojovec.api.collection_vector_query import (
+    _validate_finite_vectors,
     _normalize_vectors,
     _query_collection_into,
     _query_collection_into_filtered,
@@ -504,6 +505,8 @@ struct Collection(Movable, Writable):
         var normalized_embeddings = List[Float32]()
         if self._metric_type == METRIC_COSINE:
             normalized_embeddings = self._normalize_vectors(embeddings)
+        else:
+            _validate_finite_vectors(embeddings)
         inject_batch_fault(
             fault_point,
             BATCH_FAULT_AFTER_VECTOR_PREPARE,
