@@ -627,7 +627,6 @@ struct WriteAheadLog(Movable):
             raise Error(
                 "WAL append previously failed; recover or checkpoint before retrying."
             )
-        self.usable = False
         var frame_size = (
             WAL_FRAME_HEADER_BYTES
             + len(ids) * 8
@@ -648,41 +647,56 @@ struct WriteAheadLog(Movable):
         _append_int(header, len(ids))
         _append_int(header, len(embeddings))
 
-        var checksum = _write_and_hash(self.file, header, WAL_CHECKSUM_SEED)
-        if len(ids) > 0:
-            checksum = _write_and_hash(
-                self.file,
-                Span[UInt8](
-                    ptr=ids.unsafe_ptr().bitcast[UInt8](),
-                    length=len(ids) * 8,
-                ),
-                checksum,
+        var frame_start = getsize(self.path)
+        self.usable = False
+        var append_failed = False
+        try:
+            var checksum = _write_and_hash(
+                self.file, header, WAL_CHECKSUM_SEED
             )
-        if len(embeddings) > 0:
-            checksum = _write_and_hash(
-                self.file,
-                Span[UInt8](
-                    ptr=embeddings.unsafe_ptr().bitcast[UInt8](),
-                    length=len(embeddings) * 4,
-                ),
-                checksum,
-            )
-        if has_metadatas:
-            for metadata in metadatas:
-                checksum = _write_metadata_and_hash(
-                    self.file, metadata, checksum
+            if len(ids) > 0:
+                checksum = _write_and_hash(
+                    self.file,
+                    Span[UInt8](
+                        ptr=ids.unsafe_ptr().bitcast[UInt8](),
+                        length=len(ids) * 8,
+                    ),
+                    checksum,
                 )
-        if has_documents:
-            for document in documents:
-                checksum = _write_string_and_hash(self.file, document, checksum)
+            if len(embeddings) > 0:
+                checksum = _write_and_hash(
+                    self.file,
+                    Span[UInt8](
+                        ptr=embeddings.unsafe_ptr().bitcast[UInt8](),
+                        length=len(embeddings) * 4,
+                    ),
+                    checksum,
+                )
+            if has_metadatas:
+                for metadata in metadatas:
+                    checksum = _write_metadata_and_hash(
+                        self.file, metadata, checksum
+                    )
+            if has_documents:
+                for document in documents:
+                    checksum = _write_string_and_hash(
+                        self.file, document, checksum
+                    )
 
-        var trailer = List[UInt8](capacity=WAL_FRAME_TRAILER_BYTES)
-        _append_uint64(trailer, checksum)
-        _append_int(trailer, WAL_FRAME_COMMIT)
-        self.file.write_all(trailer)
-        self.next_sequence += 1
-        if self.durability == WAL_SYNC:
-            sync_file(self.file)
+            var trailer = List[UInt8](capacity=WAL_FRAME_TRAILER_BYTES)
+            _append_uint64(trailer, checksum)
+            _append_int(trailer, WAL_FRAME_COMMIT)
+            self.file.write_all(trailer)
+            if self.durability == WAL_SYNC:
+                sync_file(self.file)
+        except:
+            append_failed = True
+
+        if append_failed:
+            self.rollback_last_append(frame_start, sequence)
+            raise Error("WAL append failed; incomplete frame was rolled back.")
+
+        self.next_sequence = sequence + 1
         self.usable = True
         return sequence
 
@@ -718,6 +732,24 @@ struct WriteAheadLog(Movable):
             List[String](),
             False,
         )
+
+    def byte_size(self) raises -> Int:
+        """Returns the current append boundary for one transactional frame."""
+        return getsize(self.path)
+
+    def rollback_last_append(
+        mut self,
+        byte_size: Int,
+        sequence: Int,
+    ) raises:
+        """Removes a completed frame that has not been applied in memory."""
+        self.usable = False
+        if external_call["ftruncate", Int](self.file.handle, byte_size) != 0:
+            raise Error("Cannot roll back the last WAL frame.")
+        _ = self.file.seek(0, SEEK_END)
+        sync_file(self.file)
+        self.next_sequence = sequence
+        self.usable = True
 
     def flush(mut self) raises:
         sync_file(self.file)

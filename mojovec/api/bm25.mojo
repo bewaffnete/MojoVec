@@ -164,8 +164,12 @@ struct BM25Index(Movable):
             self._document_lengths.append(0)
             self._active.append(0)
 
-    def add(mut self, internal_id: Int, document: String) raises:
-        var tokens = self._analyzer.analyze(document)
+    def _prepare_document(self, document: String) raises -> List[String]:
+        """Performs all fallible document analysis before a batch commit."""
+        return self._analyzer.analyze(document)
+
+    def _add_prepared(mut self, internal_id: Int, tokens: List[String]):
+        """Adds pre-tokenized content without introducing an error boundary."""
         self._ensure_slot(internal_id)
         if len(tokens) == 0:
             return
@@ -173,16 +177,28 @@ struct BM25Index(Movable):
         var frequencies = Dict[String, Int]()
         for token in tokens:
             if token in frequencies:
-                frequencies[token] += 1
+                # The membership check and lookup share one local Dict with no
+                # intervening mutation from another writer.
+                try:
+                    frequencies[token] += 1
+                except:
+                    continue
             else:
                 frequencies[token] = 1
 
         for token_ref in frequencies:
             var token = token_ref.copy()
-            var frequency = frequencies[token]
+            var frequency: Int
+            try:
+                frequency = frequencies[token]
+            except:
+                continue
             var posting_index: Int
             if token in self._term_lookup:
-                posting_index = self._term_lookup[token]
+                try:
+                    posting_index = self._term_lookup[token]
+                except:
+                    continue
             else:
                 posting_index = len(self._postings)
                 self._term_lookup[token] = posting_index
@@ -193,6 +209,10 @@ struct BM25Index(Movable):
         self._active[internal_id] = 1
         self._active_document_count += 1
         self._active_token_count += len(tokens)
+
+    def add(mut self, internal_id: Int, document: String) raises:
+        var tokens = self._prepare_document(document)
+        self._add_prepared(internal_id, tokens)
 
     def deactivate(mut self, internal_id: Int):
         if (

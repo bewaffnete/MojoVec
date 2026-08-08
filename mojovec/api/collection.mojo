@@ -8,6 +8,10 @@ from mojovec.api.collection_codec import (
     _metric_name,
     _parse_metric,
 )
+from mojovec.api.collection_batch import (
+    PreparedBatchPayloads,
+    _prepare_batch_payloads,
+)
 from mojovec.api.collection_filter import _build_where_filter
 from mojovec.api.metadata import Metadata
 from mojovec.api.metadata_bitmap import MetadataBitmapIndex
@@ -62,6 +66,14 @@ from mojovec.io.wal import (
 from mojovec.io.collection_snapshot import (
     _read_collection_snapshot,
     _save_collection_snapshot,
+)
+from mojovec.io.fault_injection import (
+    BATCH_FAULT_AFTER_PAYLOAD_PREPARE,
+    BATCH_FAULT_AFTER_VECTOR_PREPARE,
+    BATCH_FAULT_AFTER_WAL_APPEND,
+    BATCH_FAULT_DURING_PAYLOAD_PREPARE,
+    BATCH_FAULT_NONE,
+    inject_batch_fault,
 )
 
 
@@ -207,7 +219,7 @@ struct Collection(Movable, Writable):
 
     def _store_metadata(
         mut self, internal_id: Int, metadata: Metadata
-    ) raises:
+    ):
         if metadata.count() == 0:
             return
         self._metadata_by_internal[internal_id] = len(self._metadatas)
@@ -239,13 +251,25 @@ struct Collection(Movable, Writable):
         # allow update/upsert to remove a previous document explicitly.
         if document.byte_length() == 0:
             return
+        var tokens = self._bm25._prepare_document(document)
+        self._store_document_prepared(internal_id, document, tokens)
+
+    def _store_document_prepared(
+        mut self,
+        internal_id: Int,
+        document: String,
+        tokens: List[String],
+    ):
+        """Commits a document whose fallible text analysis is complete."""
+        if document.byte_length() == 0:
+            return
         self._document_by_internal[internal_id] = len(self._documents)
         self._documents.append(document.copy())
         if (
             internal_id >= len(self._is_deleted)
             or self._is_deleted[internal_id] == 0
         ):
-            self._bm25.add(internal_id, document)
+            self._bm25._add_prepared(internal_id, tokens)
 
     def stats(self) -> CollectionStats:
         """Returns active/deleted counts and the current HNSW configuration."""
@@ -440,6 +464,28 @@ struct Collection(Movable, Writable):
         documents: List[String],
         has_documents: Bool,
     ) raises:
+        self._append_records_with_fault(
+            ids,
+            embeddings,
+            replace_existing,
+            metadatas,
+            has_metadatas,
+            documents,
+            has_documents,
+            BATCH_FAULT_NONE,
+        )
+
+    def _append_records_with_fault(
+        mut self,
+        ids: Span[Int, _],
+        embeddings: Span[Float32, _],
+        replace_existing: Bool,
+        metadatas: List[Metadata],
+        has_metadatas: Bool,
+        documents: List[String],
+        has_documents: Bool,
+        fault_point: Int,
+    ) raises:
         self._validate_shape(ids, embeddings)
         self._validate_unique_batch(ids)
         if has_metadatas and len(metadatas) != len(ids):
@@ -458,9 +504,53 @@ struct Collection(Movable, Writable):
         var normalized_embeddings = List[Float32]()
         if self._metric_type == METRIC_COSINE:
             normalized_embeddings = self._normalize_vectors(embeddings)
+        inject_batch_fault(
+            fault_point,
+            BATCH_FAULT_AFTER_VECTOR_PREPARE,
+        )
+
+        # New vector-only records have no payload work. Keep that dominant
+        # ingestion path allocation-free apart from the graph and ID arrays.
+        var payload_free_insert = not has_metadatas and not has_documents
+        if payload_free_insert and replace_existing:
+            for index in range(len(ids)):
+                if ids[index] in self._id_to_internal:
+                    payload_free_insert = False
+                    break
+
+        # Materialize inherited payloads and tokenize every document before
+        # WAL or live state changes. The remaining commit path cannot raise.
+        var prepared = PreparedBatchPayloads()
+        if payload_free_insert:
+            inject_batch_fault(
+                fault_point,
+                BATCH_FAULT_DURING_PAYLOAD_PREPARE,
+            )
+        else:
+            prepared = _prepare_batch_payloads(
+                ids,
+                self._id_to_internal,
+                self._metadata_by_internal,
+                self._metadatas,
+                self._document_by_internal,
+                self._documents,
+                self._bm25,
+                metadatas,
+                has_metadatas,
+                documents,
+                has_documents,
+                fault_point,
+            )
+        inject_batch_fault(
+            fault_point,
+            BATCH_FAULT_AFTER_PAYLOAD_PREPARE,
+        )
 
         var wal_sequence = self._applied_sequence
+        var wal_byte_size = 0
+        var wrote_wal = False
         if not self._replaying_wal and self._wal:
+            wal_byte_size = self._wal[].byte_size()
             wal_sequence = self._wal[].append_write(
                 ids,
                 embeddings,
@@ -470,57 +560,67 @@ struct Collection(Movable, Writable):
                 documents,
                 has_documents,
             )
+            wrote_wal = True
 
-        for i in range(len(ids)):
-            var record_id = ids[i]
-            var previous = -1
-            if record_id in self._id_to_internal:
-                previous = self._id_to_internal[record_id]
-                self._is_deleted[previous] = 1
-                self._bm25.deactivate(previous)
+        var fault_after_wal = False
+        try:
+            inject_batch_fault(
+                fault_point,
+                BATCH_FAULT_AFTER_WAL_APPEND,
+            )
+        except:
+            fault_after_wal = True
+        if fault_after_wal:
+            if wrote_wal:
+                self._wal[].rollback_last_append(
+                    wal_byte_size,
+                    wal_sequence,
+                )
+            raise Error("Injected atomic batch failure after WAL append.")
 
-            var internal_id = len(self._user_ids)
-            self._user_ids.append(record_id)
-            self._is_deleted.append(0)
-            if has_metadatas:
-                self._store_metadata(internal_id, metadatas[i])
-            elif (
-                previous >= 0
-                and previous in self._metadata_by_internal
-            ):
-                var previous_metadata_index = (
-                    self._metadata_by_internal[previous]
-                )
-                var inherited_metadata = (
-                    self._metadatas[previous_metadata_index].copy()
-                )
-                self._store_metadata(internal_id, inherited_metadata)
-            if has_documents:
-                self._store_document(internal_id, documents[i])
-            elif (
-                previous >= 0
-                and previous in self._document_by_internal
-            ):
-                var previous_document_index = (
-                    self._document_by_internal[previous]
-                )
-                var inherited_document = (
-                    self._documents[previous_document_index].copy()
-                )
-                self._store_document(
-                    internal_id,
-                    inherited_document,
-                )
-            self._id_to_internal[record_id] = internal_id
-
+        # From this point through publication, every operation is non-raising.
         if self._metric_type == METRIC_COSINE:
             self._add_prepared_to_index(
                 Span[Float32](normalized_embeddings)
             )
         else:
             self._add_prepared_to_index(embeddings)
+
+        if payload_free_insert:
+            for i in range(len(ids)):
+                var internal_id = len(self._user_ids)
+                self._user_ids.append(ids[i])
+                self._is_deleted.append(0)
+                self._id_to_internal[ids[i]] = internal_id
+        else:
+            self._commit_prepared_payloads(ids, prepared)
+
         if not self._replaying_wal and self._wal:
             self._applied_sequence = wal_sequence
+
+    def _commit_prepared_payloads(
+        mut self,
+        ids: Span[Int, _],
+        prepared: PreparedBatchPayloads,
+    ):
+        """Publishes previously prepared payload rows without raising."""
+        for i in range(len(ids)):
+            var record_id = ids[i]
+            var previous = prepared.previous_internal_ids[i]
+            if previous >= 0:
+                self._is_deleted[previous] = 1
+                self._bm25.deactivate(previous)
+
+            var internal_id = len(self._user_ids)
+            self._user_ids.append(record_id)
+            self._is_deleted.append(0)
+            self._store_metadata(internal_id, prepared.metadatas[i])
+            self._store_document_prepared(
+                internal_id,
+                prepared.documents[i],
+                prepared.document_tokens[i],
+            )
+            self._id_to_internal[record_id] = internal_id
 
     def add(mut self, ids: List[Int], embeddings: List[Float32]) raises:
         """
@@ -604,7 +704,7 @@ struct Collection(Movable, Writable):
 
     def upsert(mut self, ids: List[Int], embeddings: List[Float32]) raises:
         """
-        Inserts records or replaces active records with matching IDs.
+        Atomically inserts records or replaces active records with matching IDs.
 
         Inputs and collection storage use automatic lifetime management.
         """
@@ -679,6 +779,28 @@ struct Collection(Movable, Writable):
             has_metadatas=False,
             documents=List[String](),
             has_documents=False,
+        )
+
+    def _upsert_with_fault(
+        mut self,
+        ids: List[Int],
+        embeddings: List[Float32],
+        metadatas: List[Metadata],
+        documents: List[String],
+        fault_point: Int,
+    ) raises:
+        """Test-only entry point for deterministic atomic batch failures."""
+        self._append_records_with_fault(
+            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](
+                ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+            ),
+            replace_existing=True,
+            metadatas=metadatas,
+            has_metadatas=True,
+            documents=documents,
+            has_documents=True,
+            fault_point=fault_point,
         )
 
     def _validate_existing_ids(self, ids: Span[Int, _]) raises:

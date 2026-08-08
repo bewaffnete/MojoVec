@@ -14,6 +14,10 @@ from mojovec import (
     WAL_SYNC,
 )
 from mojovec.io.fault_injection import (
+    BATCH_FAULT_AFTER_PAYLOAD_PREPARE,
+    BATCH_FAULT_AFTER_VECTOR_PREPARE,
+    BATCH_FAULT_AFTER_WAL_APPEND,
+    BATCH_FAULT_DURING_PAYLOAD_PREPARE,
     SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT,
 )
 
@@ -266,6 +270,101 @@ def test_failed_mutation_does_not_enter_wal() raises:
     )
     assert_equal(recovered.count(), 1)
     assert_equal(recovered.wal_sequence(), 1)
+    recovered.disable_wal()
+
+
+def test_faulted_payload_batches_preserve_live_and_wal_state() raises:
+    var snapshot_path = "test_wal_atomic_batch.mojovec"
+    var wal_path = "/tmp/mojovec_test_wal_atomic_batch.log"
+    empty_file(wal_path)
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path, memory_mapped=False)
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    var initial_metadatas = List[Metadata]()
+    initial_metadatas.append(metadata("original-one", 2025))
+    initial_metadatas.append(metadata("original-two", 2026))
+    collection.add(
+        [1, 2],
+        vectors(1.0, 20.0),
+        initial_metadatas,
+        ["original first document", "original second document"],
+    )
+    assert_equal(collection.wal_sequence(), 1)
+
+    var replacement_metadatas = List[Metadata]()
+    replacement_metadatas.append(metadata("replacement-one", 2030))
+    replacement_metadatas.append(metadata("new-three", 2031))
+    var replacement_documents = List[String]()
+    replacement_documents.append("replacement first document")
+    replacement_documents.append("new third document")
+    for fault_point in [
+        BATCH_FAULT_AFTER_VECTOR_PREPARE,
+        BATCH_FAULT_DURING_PAYLOAD_PREPARE,
+        BATCH_FAULT_AFTER_PAYLOAD_PREPARE,
+        BATCH_FAULT_AFTER_WAL_APPEND,
+    ]:
+        var failed = False
+        try:
+            collection._upsert_with_fault(
+                [1, 3],
+                vectors(100.0, 300.0),
+                replacement_metadatas,
+                replacement_documents,
+                fault_point,
+            )
+        except:
+            failed = True
+        assert_true(failed)
+
+        # Neither the managed payloads nor the graph publish a partial row.
+        assert_equal(collection.count(), 2)
+        assert_equal(collection.count_deleted(), 0)
+        assert_equal(collection.stats().total_count, 2)
+        assert_equal(
+            collection.get_metadata(1).get_string("label"),
+            "original-one",
+        )
+        assert_equal(
+            collection.get_document(1),
+            "original first document",
+        )
+        assert_equal(
+            collection.query(vector(1.0), n_results=1).ids[0][0],
+            1,
+        )
+        var new_id_visible = True
+        try:
+            _ = collection.get_metadata(3)
+        except:
+            new_id_visible = False
+        assert_false(new_id_visible)
+        assert_equal(collection.wal_sequence(), 1)
+
+    # The after-WAL rollback leaves the writer usable for the next batch.
+    collection.upsert(
+        [1, 3],
+        vectors(100.0, 300.0),
+        replacement_metadatas,
+        replacement_documents,
+    )
+    assert_equal(collection.wal_sequence(), 2)
+    collection.disable_wal()
+
+    # Recovery observes only the successful retry, never a faulted frame.
+    var recovered = Collection.recover(
+        snapshot_path,
+        wal_path,
+        durability=WAL_SYNC,
+        memory_mapped=False,
+    )
+    assert_equal(recovered.count(), 3)
+    assert_equal(recovered.wal_sequence(), 2)
+    assert_equal(
+        recovered.get_metadata(1).get_string("label"),
+        "replacement-one",
+    )
+    assert_equal(recovered.get_document(3), "new third document")
     recovered.disable_wal()
 
 

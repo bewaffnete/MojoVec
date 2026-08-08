@@ -115,13 +115,19 @@ struct MetadataBitmapIndex(Movable):
         mut self,
         internal_id: Int,
         metadata: Metadata,
-    ) raises:
+    ):
         for metadata_index in range(metadata.count()):
             var key = metadata._key_at(metadata_index)
             var value = metadata._value_at(metadata_index)
             var field_index: Int
             if key in self._field_lookup:
-                field_index = self._field_lookup[key]
+                # Membership and lookup observe the same single-writer state.
+                # Catch the Dict API's checked accessor so commit stays
+                # non-raising after preparation.
+                try:
+                    field_index = self._field_lookup[key]
+                except:
+                    continue
             else:
                 field_index = len(self._fields)
                 self._field_lookup[key] = field_index

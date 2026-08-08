@@ -274,6 +274,8 @@ class Collection:
     ) -> None:
         """Insert missing IDs and replace existing records atomically.
 
+        Validation, payload preparation, and WAL failures leave both the live
+        collection and its committed WAL sequence unchanged.
         Vector-only replacements preserve existing metadata and documents.
         Supplying either payload replaces that payload in full.
         """
