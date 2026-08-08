@@ -46,7 +46,7 @@ jobs:
 
       - name: Install Python build dependencies
         run: |
-          python -m pip install --upgrade pip build pytest
+          python -m pip install --upgrade pip build pytest numpy
           if [ "$RUNNER_OS" == "Linux" ]; then
             python -m pip install auditwheel
           else

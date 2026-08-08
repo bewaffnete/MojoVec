@@ -26,6 +26,9 @@ Homepage = "https://github.com/bewaffnete/MojoVec"
 Repository = "https://github.com/bewaffnete/MojoVec"
 Issues = "https://github.com/bewaffnete/MojoVec/issues"
 
+[project.optional-dependencies]
+test = ["pytest", "numpy"]
+
 [tool.setuptools]
 package-dir = { "" = "python" }
 packages = ["mojovec", "mojovec._avx2", "mojovec._avx512"]

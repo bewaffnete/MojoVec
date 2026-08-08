@@ -528,13 +528,18 @@ class Collection:
 
         ids_array = np.asarray(ids)
         embeddings_array = np.asarray(embeddings)
-        if ids_array.dtype != np.int64 or ids_array.ndim != 1:
-            raise TypeError("ids must be a one-dimensional numpy.int64 array")
+        if (
+            ids_array.dtype != np.int64
+            or ids_array.ndim != 1
+            or not ids_array.flags.c_contiguous
+        ):
+            raise TypeError(
+                "ids must be a contiguous one-dimensional numpy.int64 array"
+            )
         if (
             embeddings_array.dtype != np.float32
             or embeddings_array.ndim not in (1, 2)
             or not embeddings_array.flags.c_contiguous
-            or not ids_array.flags.c_contiguous
         ):
             raise TypeError(
                 "embeddings must be a contiguous numpy.float32 array"
