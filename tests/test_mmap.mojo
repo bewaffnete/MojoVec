@@ -298,6 +298,39 @@ def test_queries_continue_during_atomic_publication() raises:
     assert_equal(latest.query(vector(40.0), n_results=1).ids[0][0], 40)
 
 
+def test_same_collection_supports_concurrent_read_queries() raises:
+    var collection = make_collection(False)
+    var failures = List[Int](length=8, fill=0)
+
+    @parameter
+    def work(worker: Int):
+        try:
+            for _ in range(50):
+                var vector_result = collection.query(
+                    vector(1.0), n_results=1
+                )
+                var text_result = collection.query(
+                    [String("memory mapped")], n_results=1
+                )
+                var hybrid_result = collection.query_hybrid(
+                    vector(1.0),
+                    [String("memory mapped")],
+                    n_results=1,
+                )
+                if (
+                    vector_result.ids[0][0] != 10
+                    or text_result.ids[0][0] != 10
+                    or hybrid_result.ids[0][0] != 10
+                ):
+                    failures[worker] = 1
+        except:
+            failures[worker] = 1
+
+    parallelize[work](8, 8)
+    for failure in failures:
+        assert_equal(failure, 0)
+
+
 def test_failed_atomic_replacement_preserves_destination() raises:
     var writer = make_collection(False)
     writer.save("/tmp/mojovec_test_atomic_failure.bin")

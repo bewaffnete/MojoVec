@@ -373,10 +373,24 @@ current state and returns an independent point-in-time collection:
     )
 ```
 
-Readers do not block the single writer and do not need locks or manual cleanup.
+Each published reader above is a separate collection object, so readers do not
+block the single writer and do not need locks or manual cleanup.
 Without a WAL, writes made after the latest `save()` or `snapshot()` are not
 crash-durable. This is the simplest and fastest mode when another datastore is
 the source of truth.
+
+### Concurrency contract
+
+Concurrent vector, filtered, BM25, and hybrid queries are supported against the
+same unchanged `Collection`. Query methods borrow the collection read-only, and
+HNSW search leases its scratch state from a thread-safe visited-table pool.
+
+Do not run `add()`, `upsert()`, `update()`, `delete()`, `compact()`, persistence,
+or configuration changes concurrently with queries or with another mutation on
+the same object. Synchronize those operations in the application, or publish
+independent point-in-time readers with `snapshot()` as shown above. The Python
+binding releases the GIL only while native read-only search is executing; input
+conversion and result construction continue to use the GIL.
 
 For standalone durability, enable the optional write-ahead log:
 

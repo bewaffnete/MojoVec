@@ -995,7 +995,7 @@ struct Collection(Movable, Writable):
         )
 
     def query(
-        mut self,
+        self,
         query_embeddings: List[Float32],
         n_results: Int = 10,
     ) raises -> QueryResults:
@@ -1046,7 +1046,7 @@ struct Collection(Movable, Writable):
         )
 
     def query(
-        mut self,
+        self,
         query_embeddings: List[Float32],
         where: Where,
         n_results: Int = 10,
@@ -1150,7 +1150,7 @@ struct Collection(Movable, Writable):
         )
 
     def _query_hybrid(
-        mut self,
+        self,
         query_embeddings: List[Float32],
         query_texts: List[String],
         n_results: Int,
@@ -1180,7 +1180,7 @@ struct Collection(Movable, Writable):
         )
 
     def query_hybrid(
-        mut self,
+        self,
         query_embeddings: List[Float32],
         query_texts: List[String],
         n_results: Int = 10,
@@ -1203,7 +1203,7 @@ struct Collection(Movable, Writable):
         )
 
     def query_hybrid(
-        mut self,
+        self,
         query_embeddings: List[Float32],
         query_texts: List[String],
         where: Where,

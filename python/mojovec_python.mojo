@@ -1,6 +1,7 @@
 from std.os import abort
 from std.python import PythonObject, Python
 from std.python.bindings import PythonModuleBuilder
+from std.ffi import external_call
 from std.memory import alloc
 from std.collections import List
 from mojovec.api.collection import Collection
@@ -13,6 +14,27 @@ from mojovec.api.metadata import (
 )
 from mojovec.api.results import CollectionStats, CompactReport, QueryResults
 from mojovec.api.where import Where
+
+
+struct _ReleasedPythonThreadState(Movable):
+    """Detaches CPython state while one native read-only query runs."""
+
+    var state: Int
+
+    def __init__(out self):
+        self.state = external_call["PyEval_SaveThread", Int]()
+
+    def __init__(out self, *, deinit move: Self):
+        self.state = move.state
+
+    def __del__(deinit self):
+        if self.state != 0:
+            external_call["PyEval_RestoreThread", NoneType](self.state)
+
+    def restore(mut self):
+        if self.state != 0:
+            external_call["PyEval_RestoreThread", NoneType](self.state)
+            self.state = 0
 
 
 def _stats_to_python(stats: CollectionStats) raises -> PythonObject:
@@ -601,7 +623,9 @@ struct PyCollection(Movable, Writable):
     ) raises -> PythonObject:
         var num_res = Int(py=n_results)
         var mojo_embeddings = _floats_from_python(py_embeddings)
+        var released = _ReleasedPythonThreadState()
         var res = self_ptr[].ptr[].query(mojo_embeddings, num_res)
+        released.restore()
         return _query_results_to_python(res^)
 
     @staticmethod
@@ -613,11 +637,15 @@ struct PyCollection(Movable, Writable):
     ) raises -> PythonObject:
         var where = py_where.downcast_value_ptr[PyWhere]()
         var embeddings = _floats_from_python(py_embeddings)
+        var compiled_where = where[].ptr[].copy()
+        var num_res = Int(py=n_results)
+        var released = _ReleasedPythonThreadState()
         var results = self_ptr[].ptr[].query(
             embeddings,
-            where[].ptr[].copy(),
-            Int(py=n_results),
+            compiled_where,
+            num_res,
         )
+        released.restore()
         return _query_results_to_python(results^)
 
     @staticmethod
@@ -627,10 +655,13 @@ struct PyCollection(Movable, Writable):
         n_results: PythonObject,
     ) raises -> PythonObject:
         var query_texts = _strings_from_python(py_query_texts)
+        var num_res = Int(py=n_results)
+        var released = _ReleasedPythonThreadState()
         var results = self_ptr[].ptr[].query(
             query_texts,
-            Int(py=n_results),
+            num_res,
         )
+        released.restore()
         return _query_results_to_python(results^)
 
     @staticmethod
@@ -642,11 +673,15 @@ struct PyCollection(Movable, Writable):
     ) raises -> PythonObject:
         var where = py_where.downcast_value_ptr[PyWhere]()
         var query_texts = _strings_from_python(py_query_texts)
+        var compiled_where = where[].ptr[].copy()
+        var num_res = Int(py=n_results)
+        var released = _ReleasedPythonThreadState()
         var results = self_ptr[].ptr[].query(
             query_texts,
-            where[].ptr[].copy(),
-            Int(py=n_results),
+            compiled_where,
+            num_res,
         )
+        released.restore()
         return _query_results_to_python(results^)
 
     @staticmethod
@@ -660,13 +695,18 @@ struct PyCollection(Movable, Writable):
     ) raises -> PythonObject:
         var embeddings = _floats_from_python(py_embeddings)
         var query_texts = _strings_from_python(py_query_texts)
+        var num_res = Int(py=n_results)
+        var fusion_k = Int(py=rrf_k)
+        var multiplier = Int(py=candidate_multiplier)
+        var released = _ReleasedPythonThreadState()
         var results = self_ptr[].ptr[].query_hybrid(
             embeddings,
             query_texts,
-            Int(py=n_results),
-            Int(py=rrf_k),
-            Int(py=candidate_multiplier),
+            num_res,
+            fusion_k,
+            multiplier,
         )
+        released.restore()
         return _query_results_to_python(results^)
 
     @staticmethod
@@ -682,14 +722,20 @@ struct PyCollection(Movable, Writable):
         var where = py_where.downcast_value_ptr[PyWhere]()
         var embeddings = _floats_from_python(py_embeddings)
         var query_texts = _strings_from_python(py_query_texts)
+        var compiled_where = where[].ptr[].copy()
+        var num_res = Int(py=n_results)
+        var fusion_k = Int(py=rrf_k)
+        var multiplier = Int(py=candidate_multiplier)
+        var released = _ReleasedPythonThreadState()
         var results = self_ptr[].ptr[].query_hybrid(
             embeddings,
             query_texts,
-            where[].ptr[].copy(),
-            Int(py=n_results),
-            Int(py=rrf_k),
-            Int(py=candidate_multiplier),
+            compiled_where,
+            num_res,
+            fusion_k,
+            multiplier,
         )
+        released.restore()
         return _query_results_to_python(results^)
 
     @staticmethod
@@ -754,7 +800,9 @@ struct PyCollection(Movable, Writable):
         var distances = Span[mut=True, Float32, MutAnyOrigin](
             ptr=out_dists_ptr, length=num_queries * k
         )
+        var released = _ReleasedPythonThreadState()
         self_ptr[].ptr[]._query_into(queries, k, ids, distances)
+        released.restore()
 
         var result = Python.dict()
         result["ids"] = out_ids

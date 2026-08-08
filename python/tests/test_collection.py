@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 import mojovec
 
@@ -447,3 +449,36 @@ def test_numpy_fast_paths_if_numpy_is_available():
     assert result["ids"].shape == (1, 2)
     assert result["ids"][0, 0] == 1
     assert result["metadatas"] == []
+
+
+def test_same_collection_supports_concurrent_read_queries():
+    col = mojovec.Collection(dimension=4, quantized=False)
+    col.add(
+        [10, 20, 30],
+        [
+            [1.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+        ],
+        documents=[
+            "memory mapped vector search",
+            "metadata filtering",
+            "write ahead log",
+        ],
+    )
+
+    def query_repeatedly(_: int) -> None:
+        for _ in range(25):
+            vector = col.query([1.0, 0.0, 0.0, 0.0], n_results=1)
+            text = col.query(query_texts=["memory mapped"], n_results=1)
+            hybrid = col.query_hybrid(
+                [1.0, 0.0, 0.0, 0.0],
+                ["memory mapped"],
+                n_results=1,
+            )
+            assert vector["ids"][0][0] == 10
+            assert text["ids"][0][0] == 10
+            assert hybrid["ids"][0][0] == 10
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        list(executor.map(query_repeatedly, range(4)))

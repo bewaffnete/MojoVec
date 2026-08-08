@@ -87,6 +87,12 @@ class Collection:
     -----
     The Python object owns the native collection. No manual allocation,
     pointer management, or memory-release call is required.
+
+    Concurrent ``query`` and ``query_hybrid`` calls are supported on the same
+    unchanged collection. Native read-only search releases the Python GIL.
+    Mutations, persistence, compaction, and configuration changes must not run
+    concurrently with queries or other mutations on the same object; use
+    external synchronization or independent :meth:`snapshot` readers.
     """
 
     def __init__(

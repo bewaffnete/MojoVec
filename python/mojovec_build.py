@@ -65,6 +65,13 @@ class MojoBuildExt(build_ext):
             "-o",
             str(output),
         ]
+        if sys.platform == "darwin":
+            # Resolve CPython C-API symbols from the importing interpreter.
+            # This is the standard extension-module model on macOS and avoids
+            # pinning the wheel to one particular libpython installation.
+            command.extend(
+                ["-Xlinker", "-undefined", "-Xlinker", "dynamic_lookup"]
+            )
         if target_cpu is not None:
             command.extend(["--target-cpu", target_cpu])
         self.announce(
