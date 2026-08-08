@@ -24,13 +24,13 @@ comptime MAGIC_IVF_FLAT: Int = 0x4d4a4f49
 comptime MAGIC_IVF_PQ: Int = 0x4d4a4f50
 comptime MAGIC_INVLISTS: Int = 0x4d4a4f4c
 comptime MAGIC_PQ: Int = 0x4d4a4f51
-comptime MAGIC_FLAT_SQ8: Int = 0x4d4a4f52
-comptime MAGIC_HNSW_SQ8: Int = 0x4d4a4f53
+comptime MAGIC_FLAT_SQ8: Int = 0x4d4a4f59
+comptime MAGIC_HNSW_SQ8: Int = 0x4d4a4f5A
 comptime MAGIC_FLAT_MMAP: Int = 0x4d4a4f54
-comptime MAGIC_FLAT_SQ8_MMAP: Int = 0x4d4a4f55
+comptime MAGIC_FLAT_SQ8_MMAP: Int = 0x4d4a4f5B
 comptime MAGIC_HNSW_GRAPH_MMAP: Int = 0x4d4a4f56
 comptime MAGIC_HNSW_MMAP: Int = 0x4d4a4f57
-comptime MAGIC_HNSW_SQ8_MMAP: Int = 0x4d4a4f58
+comptime MAGIC_HNSW_SQ8_MMAP: Int = 0x4d4a4f5C
 comptime MMAP_DATA_ALIGNMENT = 64
 comptime MAX_SERIALIZED_BYTE_COUNT = 9_223_372_036_854_775_807
 

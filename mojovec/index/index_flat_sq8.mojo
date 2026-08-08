@@ -2,10 +2,8 @@ from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from std.memory import alloc
 
-comptime SIMD_WIDTH = 64
-
-from ..utils.distances import l2_distance_simd, sq8_dot_product_simd, sq8_l2_from_dot, inner_product_simd
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
+from ..utils.distances import sq8_signed_dot_product_simd_batch4
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from std.sys.intrinsics import prefetch, PrefetchOptions
 from std.memory import memcpy
@@ -13,39 +11,48 @@ from std.memory.span import Span
 import std.math as math
 from mojovec.io.memory_map import FileMemoryMap
 from mojovec.core.validation import _validate_vector_dimension
+from mojovec.quantization.sq8 import (
+    _encode_sq8_batch,
+    _encode_sq8_vector,
+    _sq8_code_distance,
+)
+
 
 struct SQ8DistanceComputer(DistanceComputerTrait):
-    """Computes distances between a query vector and SQ8 quantized database vectors."""
+    """Metric-dispatched byte distance computer shared by Flat and HNSW."""
     var d: Int
     var metric_type: MetricType
-    var codes_f32: UnsafePointer[Float32, MutUntrackedOrigin]
     var codes_u8: UnsafePointer[UInt8, MutUntrackedOrigin]
     var norms_u32: UnsafePointer[UInt32, MutUntrackedOrigin]
-    var query_f32: UnsafePointer[Float32, MutUntrackedOrigin]
     var query_u8: UnsafePointer[UInt8, MutUntrackedOrigin]
     var query_norm_u32: UInt32
     var scale_sq: Float32
     
-    def __init__(out self, d: Int, metric_type: MetricType, codes_f32: UnsafePointer[Float32, MutUntrackedOrigin], codes_u8: UnsafePointer[UInt8, MutUntrackedOrigin], norms_u32: UnsafePointer[UInt32, MutUntrackedOrigin], query_f32: UnsafePointer[Float32, MutUntrackedOrigin], query_u8: UnsafePointer[UInt8, MutUntrackedOrigin], query_norm_u32: UInt32, scale_sq: Float32):
+    def __init__(
+        out self,
+        d: Int,
+        metric_type: MetricType,
+        codes_u8: UnsafePointer[UInt8, MutUntrackedOrigin],
+        norms_u32: UnsafePointer[UInt32, MutUntrackedOrigin],
+        query_u8: UnsafePointer[UInt8, MutUntrackedOrigin],
+        query_norm_u32: UInt32,
+        scale_sq: Float32,
+    ):
         """Initializes the SQ8 distance computer.
         
         Args:
             d: The dimensionality of the vectors.
             metric_type: The metric type used for distance computation.
-            codes_f32: A pointer to the uncompressed database vectors (used for fallback).
             codes_u8: A pointer to the quantized database vectors.
             norms_u32: A pointer to the norms of the quantized database vectors.
-            query_f32: A pointer to the uncompressed query vector.
             query_u8: A pointer to the quantized query vector.
             query_norm_u32: The norm of the quantized query vector.
             scale_sq: The squared scaling factor used for quantization.
         """
         self.d = d
         self.metric_type = metric_type
-        self.codes_f32 = codes_f32
         self.codes_u8 = codes_u8
         self.norms_u32 = norms_u32
-        self.query_f32 = query_f32
         self.query_u8 = query_u8
         self.query_norm_u32 = query_norm_u32
         self.scale_sq = scale_sq
@@ -63,10 +70,8 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
         """
         self.d = move.d
         self.metric_type = move.metric_type
-        self.codes_f32 = move.codes_f32
         self.codes_u8 = move.codes_u8
         self.norms_u32 = move.norms_u32
-        self.query_f32 = move.query_f32
         self.query_u8 = move.query_u8
         self.query_norm_u32 = move.query_norm_u32
         self.scale_sq = move.scale_sq
@@ -74,11 +79,47 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
     @always_inline
     def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> InlineArray[Float32, 4]:
         var res = InlineArray[Float32, 4](uninitialized=True)
-        res[0] = self.distance(id0)
-        res[1] = self.distance(id1)
-        res[2] = self.distance(id2)
-        res[3] = self.distance(id3)
+        if self.metric_type == METRIC_L2:
+            res[0] = self._distance_l2(id0)
+            res[1] = self._distance_l2(id1)
+            res[2] = self._distance_l2(id2)
+            res[3] = self._distance_l2(id3)
+        else:
+            var dots = sq8_signed_dot_product_simd_batch4(
+                (self.codes_u8 + id0 * self.d).bitcast[Int8](),
+                (self.codes_u8 + id1 * self.d).bitcast[Int8](),
+                (self.codes_u8 + id2 * self.d).bitcast[Int8](),
+                (self.codes_u8 + id3 * self.d).bitcast[Int8](),
+                self.query_u8.bitcast[Int8](),
+                self.d,
+            )
+            res[0] = -Float32(dots[0]) * self.scale_sq
+            res[1] = -Float32(dots[1]) * self.scale_sq
+            res[2] = -Float32(dots[2]) * self.scale_sq
+            res[3] = -Float32(dots[3]) * self.scale_sq
         return res
+
+    @always_inline
+    def _distance_l2(self, id: Int) -> Float32:
+        return _sq8_code_distance[False](
+            self.query_u8,
+            self.codes_u8 + (id * self.d),
+            self.query_norm_u32,
+            self.norms_u32[id],
+            self.d,
+            self.scale_sq,
+        )
+
+    @always_inline
+    def _distance_ip(self, id: Int) -> Float32:
+        return _sq8_code_distance[True](
+            self.query_u8,
+            self.codes_u8 + (id * self.d),
+            self.query_norm_u32,
+            self.norms_u32[id],
+            self.d,
+            self.scale_sq,
+        )
 
     @always_inline
     def distance(self, id: Int, threshold: Float32 = Float32.MAX) -> Float32:
@@ -92,19 +133,9 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
             The computed approximate distance.
         """
         if self.metric_type == METRIC_L2:
-            var db_u8_ptr = self.codes_u8 + (id * self.d)
-            
-            # UDOT dot product
-            var dot = sq8_dot_product_simd(self.query_u8, db_u8_ptr, self.d)
-            
-            # Norm decomposition for L2
-            var db_norm = self.norms_u32[id]
-            var l2_sq8 = sq8_l2_from_dot(self.query_norm_u32, db_norm, dot)
-            return Float32(l2_sq8) * self.scale_sq
+            return self._distance_l2(id)
         else:
-            # Fallback for inner product
-            var db_f32_ptr = self.codes_f32 + (id * self.d)
-            return -inner_product_simd[SIMD_WIDTH](self.query_f32, db_f32_ptr, self.d)
+            return self._distance_ip(id)
             
     @always_inline
     def symmetric_distance(self, i: Int, j: Int) -> Float32:
@@ -117,12 +148,26 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
         Returns:
             The computed symmetric distance.
         """
-        var ptr_i = self.codes_f32 + (i * self.d)
-        var ptr_j = self.codes_f32 + (j * self.d)
+        var ptr_i = self.codes_u8 + (i * self.d)
+        var ptr_j = self.codes_u8 + (j * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd[SIMD_WIDTH](ptr_i, ptr_j, self.d)
+            return _sq8_code_distance[False](
+                ptr_i,
+                ptr_j,
+                self.norms_u32[i],
+                self.norms_u32[j],
+                self.d,
+                self.scale_sq,
+            )
         else:
-            return -inner_product_simd[SIMD_WIDTH](ptr_i, ptr_j, self.d)
+            return _sq8_code_distance[True](
+                ptr_i,
+                ptr_j,
+                self.norms_u32[i],
+                self.norms_u32[j],
+                self.d,
+                self.scale_sq,
+            )
 
     @always_inline
     def prefetch_vector(self, id: Int):
@@ -145,7 +190,7 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
         return False
 
 struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
-    """An index that quantizes vectors to 8-bit integers (SQ8) to accelerate search and reduce memory footprint."""
+    """Affine UInt8 L2 and symmetric Int8 IP storage with exact rerank data."""
     comptime ComputerType = SQ8DistanceComputer
     comptime HNSW_PTHREAD_STORAGE_KIND = 1
     var d: Int
@@ -285,37 +330,69 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
             self.global_max = batch_max
             needs_requantize = True
             
-        if self.global_max == self.global_min:
-            self.scale = 1.0
+        if self.metric_type == METRIC_L2:
+            if self.global_max == self.global_min:
+                self.scale = 1.0
+            else:
+                self.scale = (self.global_max - self.global_min) / 255.0
         else:
-            self.scale = (self.global_max - self.global_min) / 255.0
+            var max_abs = math.max(
+                math.abs(self.global_min), math.abs(self.global_max)
+            )
+            self.scale = max_abs / 127.0 if max_abs > 0.0 else 1.0
+
+        var inverse_scale = 1.0 / self.scale
             
         # Re-quantize existing data if scale changed
         if needs_requantize and self.ntotal > 0:
-            var inv_scale = 1.0 / self.scale
-            for i in range(self.ntotal):
-                var norm: UInt32 = 0
-                for j in range(self.d):
-                    var val = self.codes_f32[i * self.d + j]
-                    var q = (val - self.global_min) * inv_scale
-                    var u8_val = UInt8(math.clamp(math.round(q), 0, 255))
-                    self.codes_u8[i * self.d + j] = u8_val
-                    norm += UInt32(u8_val) * UInt32(u8_val)
-                self.norms_u32[i] = norm
+            if self.metric_type == METRIC_L2:
+                _encode_sq8_batch[False](
+                    self.codes_f32,
+                    self.codes_u8,
+                    self.norms_u32,
+                    self.ntotal,
+                    self.d,
+                    self.global_min,
+                    inverse_scale,
+                )
+            else:
+                _encode_sq8_batch[True](
+                    self.codes_f32,
+                    self.codes_u8,
+                    self.norms_u32,
+                    self.ntotal,
+                    self.d,
+                    0.0,
+                    inverse_scale,
+                )
                 
         # Insert new data
-        var inv_scale = 1.0 / self.scale
         var offset_f32 = self.ntotal * self.d
-        for i in range(n):
-            var norm: UInt32 = 0
-            for j in range(self.d):
-                var val = x_ptr[i * self.d + j]
-                self.codes_f32[offset_f32 + i * self.d + j] = val
-                var q = (val - self.global_min) * inv_scale
-                var u8_val = UInt8(math.clamp(math.round(q), 0, 255))
-                self.codes_u8[offset_f32 + i * self.d + j] = u8_val
-                norm += UInt32(u8_val) * UInt32(u8_val)
-            self.norms_u32[self.ntotal + i] = norm
+        memcpy(
+            dest=self.codes_f32 + offset_f32,
+            src=x_ptr,
+            count=n * self.d,
+        )
+        if self.metric_type == METRIC_L2:
+            _encode_sq8_batch[False](
+                x_ptr,
+                self.codes_u8 + offset_f32,
+                self.norms_u32 + self.ntotal,
+                n,
+                self.d,
+                self.global_min,
+                inverse_scale,
+            )
+        else:
+            _encode_sq8_batch[True](
+                x_ptr,
+                self.codes_u8 + offset_f32,
+                self.norms_u32 + self.ntotal,
+                n,
+                self.d,
+                0.0,
+                inverse_scale,
+            )
             
         self.ntotal += n
 
@@ -358,7 +435,6 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         var self_d = self.d
         var self_ntotal = self.ntotal
         var self_metric_type = self.metric_type
-        var self_codes_f32 = self.codes_f32
         var self_codes_u8 = self.codes_u8
         var self_norms_u32 = self.norms_u32
         var self_global_min = self.global_min
@@ -374,13 +450,24 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
             var res_labels_ptr = labels_ptr + (i * k)
             
             var query_u8 = alloc[UInt8](self_d)
-            var query_norm: UInt32 = 0
-            var inv_scale = 1.0 / self_scale
-            for dim in range(self_d):
-                var q = (query_ptr[dim] - self_global_min) * inv_scale
-                var u8_val = UInt8(math.clamp(math.round(q), 0, 255))
-                query_u8[dim] = u8_val
-                query_norm += UInt32(u8_val) * UInt32(u8_val)
+            var inverse_scale = 1.0 / self_scale
+            var query_norm: UInt32
+            if self_metric_type == METRIC_L2:
+                query_norm = _encode_sq8_vector[False](
+                    query_ptr,
+                    query_u8,
+                    self_d,
+                    self_global_min,
+                    inverse_scale,
+                )
+            else:
+                query_norm = _encode_sq8_vector[True](
+                    query_ptr,
+                    query_u8,
+                    self_d,
+                    0.0,
+                    inverse_scale,
+                )
                 
             var heap_size = 0
             var scale_sq = self_scale * self_scale
@@ -391,24 +478,34 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
                         continue
                 var dist: Float32
                 if self_metric_type == METRIC_L2:
-                    var db_u8_ptr = self_codes_u8 + (j * self_d)
-                    var dot = sq8_dot_product_simd(query_u8, db_u8_ptr, self_d)
-                    var db_norm = self_norms_u32[j]
-                    var l2_sq8 = sq8_l2_from_dot(query_norm, db_norm, dot)
-                    dist = Float32(l2_sq8) * scale_sq
+                    dist = _sq8_code_distance[False](
+                        query_u8,
+                        self_codes_u8 + (j * self_d),
+                        query_norm,
+                        self_norms_u32[j],
+                        self_d,
+                        scale_sq,
+                    )
                 else:
-                    var db_f32_ptr = self_codes_f32 + (j * self_d)
-                    dist = -inner_product_simd[SIMD_WIDTH](query_ptr, db_f32_ptr, self_d)
+                    dist = _sq8_code_distance[True](
+                        query_u8,
+                        self_codes_u8 + (j * self_d),
+                        query_norm,
+                        self_norms_u32[j],
+                        self_d,
+                        scale_sq,
+                    )
                     
                 if heap_size < k:
                     max_heap_push(res_dist_ptr, res_labels_ptr, heap_size, dist, j)
                     heap_size += 1
-                else:
+                elif dist < res_dist_ptr[0]:
                     max_heap_replace_top(res_dist_ptr, res_labels_ptr, heap_size, dist, j)
                     
             var sorted_dist_ptr = distances_ptr + (i * k)
             var sorted_labels_ptr = labels_ptr + (i * k)
             
+            var result_count = heap_size
             while heap_size > 0:
                 var popped = max_heap_pop(res_dist_ptr, res_labels_ptr, heap_size)
                 heap_size -= 1
@@ -416,12 +513,12 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
                 sorted_dist_ptr[idx] = popped.dist
                 sorted_labels_ptr[idx] = Int(popped.label)
                 
-            for j in range(heap_size, k):
+            for j in range(result_count, k):
                 sorted_dist_ptr[j] = 0.0
                 sorted_labels_ptr[j] = -1
                 
             if self_metric_type == METRIC_INNER_PRODUCT:
-                for j in range(k):
+                for j in range(result_count):
                     if res_labels_ptr[j] >= 0:
                         res_dist_ptr[j] = -res_dist_ptr[j]
                     
@@ -436,26 +533,35 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         Returns:
             An instance of the associated distance computer.
         """
-        # Quantize the query ONCE for all comparisons
+        # Quantize the query once with the codec selected by the metric.
         var query_u8 = alloc[UInt8](self.d)
-        var query_norm: UInt32 = 0
-        var inv_scale = 1.0 / self.scale
-        for i in range(self.d):
-            var q = (query[i] - self.global_min) * inv_scale
-            var u8_val = UInt8(math.clamp(math.round(q), 0, 255))
-            query_u8[i] = u8_val
-            query_norm += UInt32(u8_val) * UInt32(u8_val)
+        var inverse_scale = 1.0 / self.scale
+        var query_norm: UInt32
+        if self.metric_type == METRIC_L2:
+            query_norm = _encode_sq8_vector[False](
+                query,
+                query_u8,
+                self.d,
+                self.global_min,
+                inverse_scale,
+            )
+        else:
+            query_norm = _encode_sq8_vector[True](
+                query,
+                query_u8,
+                self.d,
+                0.0,
+                inverse_scale,
+            )
             
         return SQ8DistanceComputer(
             self.d,
             self.metric_type,
-            self.codes_f32,
             self.codes_u8,
             self.norms_u32,
-            rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query),
             query_u8,
             query_norm,
-            self.scale * self.scale
+            self.scale * self.scale,
         )
 
     def get_vector(self, id: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:

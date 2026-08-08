@@ -282,6 +282,100 @@ def sq8_dot_product_simd(
 
         return res
 
+
+@always_inline
+def sq8_signed_dot_product_simd(
+    x: UnsafePointer[Int8, _],
+    y: UnsafePointer[Int8, _],
+    d: Int,
+) -> Int32:
+    """Computes an Int8 dot product with SDOT on AArch64 and SIMD elsewhere."""
+    comptime if is_apple_gpu():
+        var acc0 = SIMD[DType.int32, 4]()
+        var acc1 = SIMD[DType.int32, 4]()
+        var acc2 = SIMD[DType.int32, 4]()
+        var acc3 = SIMD[DType.int32, 4]()
+
+        var i = 0
+        while i <= d - 64:
+            acc0 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](acc0, x.load[width=16](i), y.load[width=16](i))
+            acc1 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](
+                acc1,
+                x.load[width=16](i + 16),
+                y.load[width=16](i + 16),
+            )
+            acc2 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](
+                acc2,
+                x.load[width=16](i + 32),
+                y.load[width=16](i + 32),
+            )
+            acc3 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](
+                acc3,
+                x.load[width=16](i + 48),
+                y.load[width=16](i + 48),
+            )
+            i += 64
+
+        var acc = acc0 + acc1 + acc2 + acc3
+        while i <= d - 16:
+            acc = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](acc, x.load[width=16](i), y.load[width=16](i))
+            i += 16
+
+        var result = acc.reduce_add()
+        while i < d:
+            result += Int32(x[i]) * Int32(y[i])
+            i += 1
+        return result
+    else:
+        var acc0 = SIMD[DType.int32, 16]()
+        var acc1 = SIMD[DType.int32, 16]()
+        var acc2 = SIMD[DType.int32, 16]()
+        var acc3 = SIMD[DType.int32, 16]()
+
+        var i = 0
+        while i <= d - 64:
+            var x0 = x.load[width=16](i).cast[DType.int16]()
+            var y0 = y.load[width=16](i).cast[DType.int16]()
+            acc0 += (x0 * y0).cast[DType.int32]()
+            var x1 = x.load[width=16](i + 16).cast[DType.int16]()
+            var y1 = y.load[width=16](i + 16).cast[DType.int16]()
+            acc1 += (x1 * y1).cast[DType.int32]()
+            var x2 = x.load[width=16](i + 32).cast[DType.int16]()
+            var y2 = y.load[width=16](i + 32).cast[DType.int16]()
+            acc2 += (x2 * y2).cast[DType.int32]()
+            var x3 = x.load[width=16](i + 48).cast[DType.int16]()
+            var y3 = y.load[width=16](i + 48).cast[DType.int16]()
+            acc3 += (x3 * y3).cast[DType.int32]()
+            i += 64
+
+        var acc = acc0 + acc1 + acc2 + acc3
+        while i <= d - 16:
+            var vx = x.load[width=16](i).cast[DType.int16]()
+            var vy = y.load[width=16](i).cast[DType.int16]()
+            acc += (vx * vy).cast[DType.int32]()
+            i += 16
+
+        var result = acc.reduce_add()
+        while i < d:
+            result += Int32(x[i]) * Int32(y[i])
+            i += 1
+        return result
+
 @always_inline
 def sq8_l2_from_dot(norm_a: UInt32, norm_b: UInt32, dot: UInt32) -> UInt32:
     """
@@ -299,7 +393,92 @@ def sq8_l2_from_dot(norm_a: UInt32, norm_b: UInt32, dot: UInt32) -> UInt32:
     var d = Int64(norm_a) + Int64(norm_b) - 2 * Int64(dot)
     return UInt32(math.max(d, 0))
 
+
 from std.collections import InlineArray
+
+
+@always_inline
+def sq8_signed_dot_product_simd_batch4(
+    x0: UnsafePointer[Int8, _],
+    x1: UnsafePointer[Int8, _],
+    x2: UnsafePointer[Int8, _],
+    x3: UnsafePointer[Int8, _],
+    query: UnsafePointer[Int8, _],
+    d: Int,
+) -> InlineArray[Int32, 4]:
+    """Computes four signed SQ8 dots while loading each query block once."""
+    var result = InlineArray[Int32, 4](uninitialized=True)
+    comptime if is_apple_gpu():
+        var acc0 = SIMD[DType.int32, 4]()
+        var acc1 = SIMD[DType.int32, 4]()
+        var acc2 = SIMD[DType.int32, 4]()
+        var acc3 = SIMD[DType.int32, 4]()
+        var i = 0
+        while i <= d - 16:
+            var q = query.load[width=16](i)
+            acc0 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](acc0, x0.load[width=16](i), q)
+            acc1 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](acc1, x1.load[width=16](i), q)
+            acc2 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](acc2, x2.load[width=16](i), q)
+            acc3 = llvm_intrinsic[
+                "llvm.aarch64.neon.sdot.v4i32.v16i8",
+                SIMD[DType.int32, 4],
+            ](acc3, x3.load[width=16](i), q)
+            i += 16
+        result[0] = acc0.reduce_add()
+        result[1] = acc1.reduce_add()
+        result[2] = acc2.reduce_add()
+        result[3] = acc3.reduce_add()
+        while i < d:
+            var q = Int32(query[i])
+            result[0] += Int32(x0[i]) * q
+            result[1] += Int32(x1[i]) * q
+            result[2] += Int32(x2[i]) * q
+            result[3] += Int32(x3[i]) * q
+            i += 1
+        return result
+    else:
+        var acc0 = SIMD[DType.int32, 16]()
+        var acc1 = SIMD[DType.int32, 16]()
+        var acc2 = SIMD[DType.int32, 16]()
+        var acc3 = SIMD[DType.int32, 16]()
+        var i = 0
+        while i <= d - 16:
+            var q = query.load[width=16](i).cast[DType.int16]()
+            acc0 += (
+                x0.load[width=16](i).cast[DType.int16]() * q
+            ).cast[DType.int32]()
+            acc1 += (
+                x1.load[width=16](i).cast[DType.int16]() * q
+            ).cast[DType.int32]()
+            acc2 += (
+                x2.load[width=16](i).cast[DType.int16]() * q
+            ).cast[DType.int32]()
+            acc3 += (
+                x3.load[width=16](i).cast[DType.int16]() * q
+            ).cast[DType.int32]()
+            i += 16
+        result[0] = acc0.reduce_add()
+        result[1] = acc1.reduce_add()
+        result[2] = acc2.reduce_add()
+        result[3] = acc3.reduce_add()
+        while i < d:
+            var q = Int32(query[i])
+            result[0] += Int32(x0[i]) * q
+            result[1] += Int32(x1[i]) * q
+            result[2] += Int32(x2[i]) * q
+            result[3] += Int32(x3[i]) * q
+            i += 1
+        return result
+
 
 @always_inline
 def l2_distance_simd_batch4[simd_width: Int](

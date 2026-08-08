@@ -56,7 +56,7 @@ from mojovec.io.snapshot_file import (
 
 
 comptime COLLECTION_MAGIC = 1129270349
-comptime COLLECTION_FORMAT = 8
+comptime COLLECTION_FORMAT = 9
 comptime MAX_COLLECTION_RECORDS = 10_000_000
 comptime MAX_COLLECTION_SNAPSHOT_BYTES = 274_877_906_944
 

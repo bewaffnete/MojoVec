@@ -1,4 +1,5 @@
 from std.collections import List
+from std.memory.span import Span
 from std.testing import (
     TestSuite,
     assert_almost_equal,
@@ -7,6 +8,8 @@ from std.testing import (
 )
 
 from mojovec import Client, Collection, WAL_SYNC
+from mojovec.core.types import METRIC_INNER_PRODUCT
+from mojovec.index.index_flat_sq8 import IndexFlatSQ8
 
 
 def _check_inner_product(quantized: Bool) raises:
@@ -48,6 +51,46 @@ def test_inner_product_flat() raises:
 
 def test_inner_product_sq8() raises:
     _check_inner_product(True)
+
+
+def test_sq8_inner_product_low_level_search_uses_signed_codes() raises:
+    var index = IndexFlatSQ8(3, METRIC_INNER_PRODUCT)
+    var database = [
+        Float32(1.0), Float32(0.0), Float32(0.0),
+        Float32(-1.0), Float32(0.0), Float32(0.0),
+        Float32(0.5), Float32(0.0), Float32(0.0),
+    ]
+    index.add(Span[Float32](database))
+
+    var query = [Float32(1.0), Float32(0.0), Float32(0.0)]
+    var distances = List[Float32](unsafe_uninit_length=3)
+    var labels = List[Int](unsafe_uninit_length=3)
+    var distance_span = Span[mut=True, Float32](distances)
+    var label_span = Span[mut=True, Int](labels)
+    index.search(
+        Span[Float32](query),
+        3,
+        distance_span,
+        label_span,
+    )
+    assert_equal(labels[0], 0)
+    assert_equal(labels[1], 2)
+    assert_equal(labels[2], 1)
+    assert_true(distances[0] > distances[1])
+    assert_true(distances[1] > distances[2])
+
+
+def test_sq8_inner_product_requantizes_after_symmetric_bounds_expand() raises:
+    var index = IndexFlatSQ8(2, METRIC_INNER_PRODUCT)
+    var first = [Float32(1.0), Float32(0.25)]
+    index.add(Span[Float32](first))
+    var second = [Float32(-4.0), Float32(0.0)]
+    index.add(Span[Float32](second))
+
+    var query = [Float32(1.0), Float32(0.0)]
+    var computer = index.get_distance_computer(query.unsafe_ptr())
+    assert_true(computer.distance(0) < computer.distance(1))
+    assert_almost_equal(index.scale, 4.0 / 127.0, atol=1e-6)
 
 
 def _check_cosine(quantized: Bool, path: String) raises:

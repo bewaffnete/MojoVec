@@ -3,8 +3,9 @@ from std.testing import assert_true
 from std.random.philox import Random
 from std.memory import alloc
 
-from mojovec.core.types import METRIC_L2, QT_8bit
+from mojovec.core.types import METRIC_INNER_PRODUCT, METRIC_L2, QT_8bit
 from mojovec.index.index_flat import IndexFlat
+from mojovec.index.index_flat_sq8 import IndexFlatSQ8
 from mojovec.index.index_ivf_flat import IndexIVFFlat
 from mojovec.index.index_scalar_quantizer import IndexScalarQuantizer
 from mojovec.index.index_hnsw import IndexHNSW
@@ -150,6 +151,49 @@ def test_accuracy_sq8() raises:
     test_dist.free()
     test_labels.free()
 
+
+def test_accuracy_sq8_inner_product() raises:
+    var ds = Dataset()
+    var exact = IndexFlat(d, METRIC_INNER_PRODUCT)
+    exact.add(Span[Float32](ptr=ds.db, length=nb * d))
+    var approximate = IndexFlatSQ8(d, METRIC_INNER_PRODUCT)
+    approximate.add(Span[Float32](ptr=ds.db, length=nb * d))
+
+    var exact_distances = alloc[Float32](nq * k)
+    var exact_labels = alloc[Int](nq * k)
+    var approximate_distances = alloc[Float32](nq * k)
+    var approximate_labels = alloc[Int](nq * k)
+    var queries = Span[Float32](ptr=ds.queries, length=nq * d)
+    var exact_distance_span = Span[mut=True, Float32](
+        ptr=exact_distances, length=nq * k
+    )
+    var exact_label_span = Span[mut=True, Int](
+        ptr=exact_labels, length=nq * k
+    )
+    var approximate_distance_span = Span[mut=True, Float32](
+        ptr=approximate_distances, length=nq * k
+    )
+    var approximate_label_span = Span[mut=True, Int](
+        ptr=approximate_labels, length=nq * k
+    )
+    exact.search(queries, k, exact_distance_span, exact_label_span)
+    approximate.search(
+        queries,
+        k,
+        approximate_distance_span,
+        approximate_label_span,
+    )
+
+    var recall = compute_recall(exact_labels, approximate_labels, nq, k)
+    print("SQ8 IP Recall@10:", recall)
+    assert_true(recall >= 0.95, "SQ8 inner-product Recall too low")
+
+    ds.free()
+    exact_distances.free()
+    exact_labels.free()
+    approximate_distances.free()
+    approximate_labels.free()
+
 def main() raises:
     # These cases each use the runtime worker pool internally. Running them
     # concurrently through TestSuite can overlap independent `parallelize`
@@ -160,3 +204,4 @@ def main() raises:
     test_accuracy_hnsw()
     test_accuracy_ivf_flat()
     test_accuracy_sq8()
+    test_accuracy_sq8_inner_product()

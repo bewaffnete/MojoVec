@@ -114,6 +114,12 @@ every metric before they reach the graph, SQ8 quantizer, or WAL. The metric is
 preserved by save/load, mmap, compaction, filtering, hybrid search, and WAL
 recovery.
 
+SQ8 selects its byte codec by metric: L2 keeps affine `UInt8` quantization,
+while cosine and IP use zero-centered symmetric `Int8` codes. Their HNSW
+candidate traversal runs through signed SIMD dot-product kernels (SDOT on Apple
+Silicon); only the small final candidate set reads the original Float32 vectors
+for exact reranking.
+
 ### 2. Add Vectors
 
 ```mojo

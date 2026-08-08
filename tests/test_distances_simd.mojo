@@ -1,8 +1,13 @@
-from std.testing import assert_true, assert_almost_equal, TestSuite
+from std.testing import assert_true, assert_almost_equal, assert_equal, TestSuite
 from std.memory import alloc
 from std.random.philox import Random
 
-from mojovec.utils.distances import l2_distance_simd, inner_product_simd
+from mojovec.utils.distances import (
+    inner_product_simd,
+    l2_distance_simd,
+    sq8_signed_dot_product_simd,
+    sq8_signed_dot_product_simd_batch4,
+)
 
 def l2_scalar(x: UnsafePointer[Float32, MutUntrackedOrigin], y: UnsafePointer[Float32, MutUntrackedOrigin], d: Int) -> Float32:
     var res: Float32 = 0.0
@@ -58,6 +63,51 @@ def test_distances_exact_simd_multiples() raises:
     check_distance(16)
     check_distance(32)
     check_distance(64)
+
+
+def test_signed_sq8_dot_handles_vector_tails() raises:
+    for dimension in [1, 7, 16, 63, 64, 127, 128, 129]:
+        var x = alloc[Int8](dimension)
+        var y = alloc[Int8](dimension)
+        var expected: Int32 = 0
+        for index in range(dimension):
+            var x_value = Int8((index * 37) % 255 - 127)
+            var y_value = Int8((index * 53 + 11) % 255 - 127)
+            x[index] = x_value
+            y[index] = y_value
+            expected += Int32(x_value) * Int32(y_value)
+        assert_equal(
+            sq8_signed_dot_product_simd(x, y, dimension), expected
+        )
+        x.free()
+        y.free()
+
+
+def test_signed_sq8_batch4_matches_individual_kernels() raises:
+    var dimension = 129
+    var query = alloc[Int8](dimension)
+    var x0 = alloc[Int8](dimension)
+    var x1 = alloc[Int8](dimension)
+    var x2 = alloc[Int8](dimension)
+    var x3 = alloc[Int8](dimension)
+    for index in range(dimension):
+        query[index] = Int8((index * 11) % 255 - 127)
+        x0[index] = Int8((index * 17 + 1) % 255 - 127)
+        x1[index] = Int8((index * 29 + 2) % 255 - 127)
+        x2[index] = Int8((index * 41 + 3) % 255 - 127)
+        x3[index] = Int8((index * 59 + 4) % 255 - 127)
+    var batched = sq8_signed_dot_product_simd_batch4(
+        x0, x1, x2, x3, query, dimension
+    )
+    assert_equal(batched[0], sq8_signed_dot_product_simd(x0, query, dimension))
+    assert_equal(batched[1], sq8_signed_dot_product_simd(x1, query, dimension))
+    assert_equal(batched[2], sq8_signed_dot_product_simd(x2, query, dimension))
+    assert_equal(batched[3], sq8_signed_dot_product_simd(x3, query, dimension))
+    query.free()
+    x0.free()
+    x1.free()
+    x2.free()
+    x3.free()
 
 
 def main() raises:
