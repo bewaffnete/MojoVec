@@ -6,6 +6,9 @@
 
 MojoVec is an Approximate Nearest Neighbor (ANN) search library built from scratch in pure Mojo — no C++ dependencies. HNSW, IVF, and Product Quantization (PQ) are implemented.
 
+Using MojoVec through an AI coding agent? Give it the standalone
+[`AI_AGENT_GUIDE.md`](AI_AGENT_GUIDE.md) API and integration guide.
+
 ---
 
 ## Why

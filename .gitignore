@@ -23,6 +23,7 @@ faiss/
 # Exclude generated/reference Markdown except maintained entry-point READMEs
 *.md
 !README.md
+!AI_AGENT_GUIDE.md
 !benchmarks/README.md
 !benchmarks/cold_bench/README.md
 !benchmarks/cold_bench/RESULTS.md
