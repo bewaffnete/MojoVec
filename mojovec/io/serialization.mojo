@@ -78,6 +78,24 @@ def read_int(mut f: FileHandle) raises -> Int:
     return val
 
 
+def write_uint64(mut f: FileHandle, value: UInt64) raises:
+    var storage = InlineArray[UInt64, 1](uninitialized=True)
+    storage[0] = value
+    f.write_all(
+        Span[UInt8](
+            ptr=storage.unsafe_ptr().bitcast[UInt8](),
+            length=8,
+        )
+    )
+
+
+def read_uint64(mut f: FileHandle) raises -> UInt64:
+    var data = _read_exact_bytes(f, 8)
+    var value = data.unsafe_ptr().bitcast[UInt64]()[0]
+    _ = len(data)
+    return value
+
+
 def _align_mmap_offset(offset: Int) -> Int:
     return (
         (offset + MMAP_DATA_ALIGNMENT - 1)

@@ -44,7 +44,9 @@ from mojovec.io.serialization import (
     checked_byte_count,
     check_size_limit,
     read_int,
+    read_uint64,
     write_int,
+    write_uint64,
 )
 from mojovec.io.snapshot_file import (
     SNAPSHOT_CHECKSUM_TRAILER_BYTES,
@@ -90,7 +92,7 @@ struct CollectionSnapshot(Movable):
     var dimension: Int
     var storage_kind: StorageKind
     var metric_type: MetricType
-    var identity: Int
+    var identity: UInt64
     var applied_sequence: Int
     var user_ids: Optional[List[Int]]
     var is_deleted: Optional[List[UInt8]]
@@ -108,7 +110,7 @@ def _write_collection_snapshot(
     dimension: Int,
     storage_kind: StorageKind,
     metric_type: MetricType,
-    identity: Int,
+    identity: UInt64,
     applied_sequence: Int,
     user_ids: List[Int],
     is_deleted: List[UInt8],
@@ -130,7 +132,7 @@ def _write_collection_snapshot(
     write_int(file, dimension)
     write_int(file, storage_kind)
     write_int(file, metric_type)
-    write_int(file, identity)
+    write_uint64(file, identity)
     write_int(file, applied_sequence)
     inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_HEADER)
 
@@ -172,7 +174,7 @@ def _save_collection_snapshot(
     dimension: Int,
     storage_kind: StorageKind,
     metric_type: MetricType,
-    identity: Int,
+    identity: UInt64,
     applied_sequence: Int,
     user_ids: List[Int],
     is_deleted: List[UInt8],
@@ -249,9 +251,9 @@ def _read_collection_snapshot(
         and metric_type != METRIC_INNER_PRODUCT
     ):
         raise Error("Invalid Collection metric.")
-    var identity = read_int(file)
+    var identity = read_uint64(file)
     var applied_sequence = read_int(file)
-    if identity <= 0 or applied_sequence < 0:
+    if identity == 0 or applied_sequence < 0:
         raise Error("Invalid Collection durability state.")
 
     _validate_vector_dimension(dimension)

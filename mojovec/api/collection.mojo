@@ -45,6 +45,7 @@ from mojovec.api.rrf import (
     RRF_DEFAULT_K,
 )
 from mojovec.api.where import Where
+from mojovec.core.identity import _random_collection_identity
 from mojovec.core.types import (
     MetricType,
     STORAGE_FLAT,
@@ -100,7 +101,7 @@ struct Collection(Movable, Writable):
     var _documents: List[String]
     var _bm25: BM25Index
     var _id_to_internal: Dict[Int, Int]
-    var _identity: Int
+    var _identity: UInt64
     var _wal: Optional[WriteAheadLog]
     var _applied_sequence: Int
     var _replaying_wal: Bool
@@ -123,6 +124,7 @@ struct Collection(Movable, Writable):
         self._dimension = dimension
         self._storage_kind = STORAGE_SQ8 if quantized else STORAGE_FLAT
         self._metric_type = _parse_metric(metric)
+        var identity = _random_collection_identity()
         self._hnsw = _create_hnsw_storage(
             dimension,
             self._storage_kind,
@@ -141,7 +143,7 @@ struct Collection(Movable, Writable):
         self._documents = List[String]()
         self._bm25 = BM25Index()
         self._id_to_internal = Dict[Int, Int]()
-        self._identity = Int(perf_counter_ns())
+        self._identity = identity
         self._wal = None
         self._applied_sequence = 0
         self._replaying_wal = False

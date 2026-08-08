@@ -90,6 +90,10 @@ def _decode_int(data: List[UInt8], byte_offset: Int) -> Int:
     return (data.unsafe_ptr() + byte_offset).bitcast[Int]()[0]
 
 
+def _decode_uint64(data: List[UInt8], byte_offset: Int) -> UInt64:
+    return (data.unsafe_ptr() + byte_offset).bitcast[UInt64]()[0]
+
+
 def _write_and_hash(
     mut file: FileHandle,
     bytes: Span[UInt8, _],
@@ -234,7 +238,7 @@ def _write_file_header(
     path: String,
     dimension: Int,
     storage_kind: Int,
-    identity: Int,
+    identity: UInt64,
     base_sequence: Int,
     name: String,
 ) raises:
@@ -243,7 +247,7 @@ def _write_file_header(
     _append_int(header, WAL_FILE_MAGIC)
     _append_int(header, dimension)
     _append_int(header, storage_kind)
-    _append_int(header, identity)
+    _append_uint64(header, identity)
     _append_int(header, base_sequence)
     _append_int(header, name.byte_length())
     for byte in name.as_bytes():
@@ -257,7 +261,7 @@ def _write_file_header(
 struct WalHeader(Movable):
     var dimension: Int
     var storage_kind: Int
-    var identity: Int
+    var identity: UInt64
     var base_sequence: Int
     var name: String
     var byte_size: Int
@@ -266,7 +270,7 @@ struct WalHeader(Movable):
         out self,
         dimension: Int,
         storage_kind: Int,
-        identity: Int,
+        identity: UInt64,
         base_sequence: Int,
         name: String,
         byte_size: Int,
@@ -285,12 +289,12 @@ def read_wal_header(mut file: FileHandle) raises -> WalHeader:
         raise Error("Invalid WAL file magic.")
     var dimension = _decode_int(fixed, 8)
     var storage_kind = _decode_int(fixed, 16)
-    var identity = _decode_int(fixed, 24)
+    var identity = _decode_uint64(fixed, 24)
     var base_sequence = _decode_int(fixed, 32)
     var name_size = _decode_int(fixed, 40)
     if dimension <= 0 or dimension > 65_536:
         raise Error("Invalid WAL dimension.")
-    if identity <= 0 or base_sequence < 0:
+    if identity == 0 or base_sequence < 0:
         raise Error("Invalid WAL durability state.")
     if name_size < 0 or name_size > 1_048_576:
         raise Error("Invalid WAL collection name size.")
@@ -508,7 +512,7 @@ struct WriteAheadLog(Movable):
     var file: FileHandle
     var dimension: Int
     var storage_kind: Int
-    var identity: Int
+    var identity: UInt64
     var name: String
     var durability: WalDurability
     var next_sequence: Int
@@ -520,7 +524,7 @@ struct WriteAheadLog(Movable):
         var file: FileHandle,
         dimension: Int,
         storage_kind: Int,
-        identity: Int,
+        identity: UInt64,
         name: String,
         durability: WalDurability,
         next_sequence: Int,
@@ -551,7 +555,7 @@ struct WriteAheadLog(Movable):
         path: String,
         dimension: Int,
         storage_kind: Int,
-        identity: Int,
+        identity: UInt64,
         name: String,
         base_sequence: Int,
         durability: WalDurability,
@@ -588,7 +592,7 @@ struct WriteAheadLog(Movable):
         path: String,
         dimension: Int,
         storage_kind: Int,
-        identity: Int,
+        identity: UInt64,
         name: String,
         durability: WalDurability,
         next_sequence: Int,

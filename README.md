@@ -436,7 +436,10 @@ adds a checksum and commit marker, and ignores an incomplete final frame during
 recovery. Checkpoint sequence numbers make recovery idempotent even if a crash
 happens after the new snapshot is published but before WAL rotation. A
 non-empty WAL cannot be silently replaced by `enable_wal()`; use `recover()` so
-committed mutations are not skipped.
+committed mutations are not skipped. Each new collection receives a non-zero
+64-bit identity from the operating-system CSPRNG; snapshots and WAL headers
+preserve it so a valid WAL cannot be replayed into another collection that
+happens to share the same name and shape.
 
 `snapshot()` performs the same safe checkpoint when WAL is enabled, then
 returns an independent reader. The returned reader does not append to the

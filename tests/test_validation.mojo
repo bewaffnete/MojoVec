@@ -1,10 +1,13 @@
+from std.collections import Dict
 from std.testing import TestSuite, assert_equal, assert_true
 
 from mojovec import Collection
+from mojovec.core.identity import _random_collection_identity
 from mojovec.core.types import METRIC_L2
 from mojovec.index.hnsw_graph import HNSWGraph
 from mojovec.index.index_flat import IndexFlat
 from mojovec.index.index_flat_sq8 import IndexFlatSQ8
+from mojovec.io.serialization import read_uint64, write_uint64
 
 
 def _collection_is_rejected(
@@ -81,6 +84,28 @@ def test_low_level_allocating_constructors_validate_inputs() raises:
     except:
         ef_search_failed = True
     assert_true(ef_search_failed)
+
+
+def test_collection_identities_are_random_non_zero_uint64_values() raises:
+    var identities = Dict[UInt64, Bool]()
+    for _ in range(1_024):
+        var identity = _random_collection_identity()
+        assert_true(identity != 0)
+        assert_true(identity not in identities)
+        identities[identity] = True
+    assert_equal(len(identities), 1_024)
+
+
+def test_identity_serialization_preserves_all_uint64_bits() raises:
+    var path = "/tmp/mojovec_test_uint64_identity.bin"
+    var writer = open(path, "w")
+    write_uint64(writer, UInt64.MAX)
+    writer.close()
+
+    var reader = open(path, "r")
+    var restored = read_uint64(reader)
+    reader.close()
+    assert_equal(restored, UInt64.MAX)
 
 
 def main() raises:
