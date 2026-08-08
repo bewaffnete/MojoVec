@@ -32,6 +32,7 @@ comptime MAGIC_HNSW_GRAPH_MMAP: Int = 0x4d4a4f56
 comptime MAGIC_HNSW_MMAP: Int = 0x4d4a4f57
 comptime MAGIC_HNSW_SQ8_MMAP: Int = 0x4d4a4f58
 comptime MMAP_DATA_ALIGNMENT = 64
+comptime MAX_SERIALIZED_BYTE_COUNT = 9_223_372_036_854_775_807
 
 # --- Primitive I/O ---
 
@@ -39,6 +40,27 @@ comptime MMAP_DATA_ALIGNMENT = 64
 def check_size_limit(size: Int, max_allowed: Int) raises:
     if size < 0 or size > max_allowed:
         raise Error("Security Error: Deserialized size is out of valid range or exceeds safety limits")
+
+
+@always_inline
+def checked_byte_count(count: Int, item_size: Int) raises -> Int:
+    """Multiplies serialized element counts without signed overflow."""
+    if (
+        count < 0
+        or item_size <= 0
+        or count > MAX_SERIALIZED_BYTE_COUNT // item_size
+    ):
+        raise Error("Serialized byte count overflows the supported range.")
+    return count * item_size
+
+
+def _read_exact_bytes(mut f: FileHandle, byte_count: Int) raises -> List[UInt8]:
+    if byte_count < 0:
+        raise Error("Serialized byte count cannot be negative.")
+    var data = f.read_bytes(byte_count)
+    if len(data) != byte_count:
+        raise Error("Unexpected end of serialized data.")
+    return data^
 
 
 def write_int(mut f: FileHandle, val: Int) raises:
@@ -49,7 +71,7 @@ def write_int(mut f: FileHandle, val: Int) raises:
     ptr.free()
 
 def read_int(mut f: FileHandle) raises -> Int:
-    var read_data = f.read_bytes(8)
+    var read_data = _read_exact_bytes(f, 8)
     var ptr = read_data.unsafe_ptr().bitcast[Int]()
     var val = ptr[0]
     _ = len(read_data)
@@ -83,7 +105,8 @@ def _validate_mmap_region(
     file_size: Int,
 ) raises:
     if (
-        byte_offset < 0
+        file_size < 0
+        or byte_offset < 0
         or byte_count < 0
         or byte_offset % MMAP_DATA_ALIGNMENT != 0
         or byte_offset > file_size
@@ -99,11 +122,11 @@ def write_bool(mut f: FileHandle, val: Bool) raises:
     ptr.free()
 
 def read_bool(mut f: FileHandle) raises -> Bool:
-    var read_data = f.read_bytes(1)
-    var ptr = read_data.unsafe_ptr().bitcast[Bool]()
-    var val = ptr[0]
-    _ = len(read_data)
-    return val
+    var read_data = _read_exact_bytes(f, 1)
+    var value = read_data[0]
+    if value > 1:
+        raise Error("Invalid serialized Bool value.")
+    return value == 1
 
 def write_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
@@ -112,7 +135,7 @@ def write_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, 
 
 def read_unsafe_pointer_float32(mut f: FileHandle, mut ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var read_data = f.read_bytes(count * 4)
+    var read_data = _read_exact_bytes(f, checked_byte_count(count, 4))
     var src = read_data.unsafe_ptr().bitcast[Float32]()
     for i in range(count):
         ptr[i] = src[i]
@@ -125,7 +148,7 @@ def write_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutU
 
 def read_unsafe_pointer_uint8(mut f: FileHandle, mut ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var read_data = f.read_bytes(count)
+    var read_data = _read_exact_bytes(f, count)
     var src = read_data.unsafe_ptr()
     for i in range(count):
         ptr[i] = src[i]
@@ -138,7 +161,7 @@ def write_unsafe_pointer_uint32(mut f: FileHandle, ptr: UnsafePointer[UInt32, Mu
 
 def read_unsafe_pointer_uint32(mut f: FileHandle, mut ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var read_data = f.read_bytes(count * 4)
+    var read_data = _read_exact_bytes(f, checked_byte_count(count, 4))
     var src = read_data.unsafe_ptr().bitcast[UInt32]()
     for i in range(count):
         ptr[i] = src[i]
@@ -151,7 +174,7 @@ def write_unsafe_pointer_int(mut f: FileHandle, ptr: UnsafePointer[Int, MutUntra
 
 def read_unsafe_pointer_int(mut f: FileHandle, mut ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var read_data = f.read_bytes(count * 8)
+    var read_data = _read_exact_bytes(f, checked_byte_count(count, 8))
     var src = read_data.unsafe_ptr().bitcast[Int]()
     for i in range(count):
         ptr[i] = src[i]
@@ -185,7 +208,7 @@ def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
         
-    var index = IndexFlat(d, metric)
+    var index = IndexFlat(d, metric, initial_capacity=0)
     index.ntotal = ntotal
     _free_aligned(index.codes)
     index.capacity = capacity
@@ -232,7 +255,7 @@ def read_index_flat_sq8(mut f: FileHandle) raises -> IndexFlatSQ8:
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
         
-    var index = IndexFlatSQ8(d, metric)
+    var index = IndexFlatSQ8(d, metric, initial_capacity=0)
     index.ntotal = ntotal
     index.capacity = capacity
     
@@ -445,17 +468,19 @@ def read_index_flat_mmap(
         raise Error("Invalid IndexFlat metric.")
     var codes_offset = read_int(f)
     var codes_count = read_int(f)
-    if codes_count != capacity * d:
+    var expected_codes_count = checked_byte_count(capacity, d)
+    if codes_count != expected_codes_count:
         raise Error("Invalid memory-mapped IndexFlat code count.")
-    _validate_mmap_region(codes_offset, codes_count * 4, file_size)
-    _ = f.seek(UInt64(codes_offset + codes_count * 4), SEEK_SET)
+    var codes_bytes = checked_byte_count(codes_count, 4)
+    _validate_mmap_region(codes_offset, codes_bytes, file_size)
+    _ = f.seek(UInt64(codes_offset + codes_bytes), SEEK_SET)
 
     var metric = (
         METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
     )
     var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
     var codes_address = mapping.address + codes_offset
-    var index = IndexFlat(d, metric)
+    var index = IndexFlat(d, metric, initial_capacity=0)
     _free_aligned(index.codes)
     index.ntotal = ntotal
     index.capacity = capacity
@@ -534,23 +559,26 @@ def read_index_flat_sq8_mmap(
     var u8_count = read_int(f)
     var norms_offset = read_int(f)
     var norms_count = read_int(f)
+    var expected_vector_count = checked_byte_count(capacity, d)
     if (
-        f32_count != capacity * d
-        or u8_count != capacity * d
+        f32_count != expected_vector_count
+        or u8_count != expected_vector_count
         or norms_count != capacity
     ):
         raise Error("Invalid memory-mapped IndexFlatSQ8 array sizes.")
-    _validate_mmap_region(f32_offset, f32_count * 4, file_size)
+    var f32_bytes = checked_byte_count(f32_count, 4)
+    var norms_bytes = checked_byte_count(norms_count, 4)
+    _validate_mmap_region(f32_offset, f32_bytes, file_size)
     _validate_mmap_region(u8_offset, u8_count, file_size)
-    _validate_mmap_region(norms_offset, norms_count * 4, file_size)
-    _ = f.seek(UInt64(norms_offset + norms_count * 4), SEEK_SET)
+    _validate_mmap_region(norms_offset, norms_bytes, file_size)
+    _ = f.seek(UInt64(norms_offset + norms_bytes), SEEK_SET)
 
     var metric = (
         METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
     )
     var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
     var base = mapping.address
-    var index = IndexFlatSQ8(d, metric)
+    var index = IndexFlatSQ8(d, metric, initial_capacity=0)
     index.codes_f32.free()
     index.codes_u8.free()
     index.norms_u32.free()
@@ -686,17 +714,19 @@ def read_hnsw_graph_mmap(
         or cumulative_count != 33
     ):
         raise Error("Invalid memory-mapped HNSW graph array sizes.")
-    _validate_mmap_region(levels_offset, levels_count * 8, file_size)
-    _validate_mmap_region(offsets_offset, offsets_count * 8, file_size)
+    var levels_bytes = checked_byte_count(levels_count, 8)
+    var offsets_bytes = checked_byte_count(offsets_count, 8)
+    var neighbors_bytes = checked_byte_count(neighbors_count, 4)
+    var cumulative_bytes = checked_byte_count(cumulative_count, 8)
+    _validate_mmap_region(levels_offset, levels_bytes, file_size)
+    _validate_mmap_region(offsets_offset, offsets_bytes, file_size)
     _validate_mmap_region(
-        neighbors_offset, neighbors_count * 4, file_size
+        neighbors_offset, neighbors_bytes, file_size
     )
     _validate_mmap_region(
-        cumulative_offset, cumulative_count * 8, file_size
+        cumulative_offset, cumulative_bytes, file_size
     )
-    _ = f.seek(
-        UInt64(cumulative_offset + cumulative_count * 8), SEEK_SET
-    )
+    _ = f.seek(UInt64(cumulative_offset + cumulative_bytes), SEEK_SET)
 
     var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
     var base = mapping.address
@@ -743,6 +773,7 @@ def write_index_hnsw_mmap(
 def read_index_hnsw_mmap(
     mut f: FileHandle,
     file_size: Int,
+    expected_count: Int = -1,
 ) raises -> IndexHNSW[IndexFlat]:
     if read_int(f) != MAGIC_HNSW_MMAP:
         raise Error("Invalid magic for memory-mapped IndexHNSW.")
@@ -750,6 +781,8 @@ def read_index_hnsw_mmap(
     _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
+    if expected_count >= 0 and ntotal != expected_count:
+        raise Error("Collection metadata and Flat index size differ.")
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
     if metric_int != 0 and metric_int != 1:
@@ -790,6 +823,7 @@ def write_index_hnsw_sq8_mmap(
 def read_index_hnsw_sq8_mmap(
     mut f: FileHandle,
     file_size: Int,
+    expected_count: Int = -1,
 ) raises -> IndexHNSW[IndexFlatSQ8]:
     if read_int(f) != MAGIC_HNSW_SQ8_MMAP:
         raise Error("Invalid magic for memory-mapped IndexHNSW SQ8.")
@@ -797,6 +831,8 @@ def read_index_hnsw_sq8_mmap(
     _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
+    if expected_count >= 0 and ntotal != expected_count:
+        raise Error("Collection metadata and SQ8 index size differ.")
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
     if metric_int != 0 and metric_int != 1:

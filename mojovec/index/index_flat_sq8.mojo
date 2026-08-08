@@ -161,21 +161,29 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
     var scale: Float32
     var _mapping: FileMemoryMap
     
-    def __init__(out self, d: Int, metric: MetricType = METRIC_L2) raises:
+    def __init__(
+        out self,
+        d: Int,
+        metric: MetricType = METRIC_L2,
+        initial_capacity: Int = 1000,
+    ) raises:
         """Initializes the SQ8 index.
         
         Args:
             d: The dimensionality of the vectors.
             metric: The metric type used for distance computation.
+            initial_capacity: Initial owned allocation; loaders use zero.
         """
         _validate_vector_dimension(d)
+        if initial_capacity < 0 or initial_capacity > 1000:
+            raise Error("initial_capacity must be between 0 and 1000.")
         self.d = d
         self.ntotal = 0
         self.metric_type = metric
-        self.capacity = 1000
-        self.codes_f32 = alloc[Float32](self.capacity * self.d)
-        self.codes_u8 = alloc[UInt8](self.capacity * self.d)
-        self.norms_u32 = alloc[UInt32](self.capacity)
+        self.capacity = initial_capacity
+        self.codes_f32 = alloc[Float32](max(self.capacity * self.d, 1))
+        self.codes_u8 = alloc[UInt8](max(self.capacity * self.d, 1))
+        self.norms_u32 = alloc[UInt32](max(self.capacity, 1))
         self.global_min = Float32.MAX
         self.global_max = -Float32.MAX
         self.scale = 1.0

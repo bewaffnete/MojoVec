@@ -1,8 +1,9 @@
 """Atomic Collection snapshot encoding and checksum publication."""
 
 from std.collections import Dict, List, Optional
+from std.io.file import FileHandle
 from std.memory.span import Span
-from std.os import SEEK_END, SEEK_SET
+from std.os import SEEK_CUR, SEEK_END, SEEK_SET
 
 from mojovec.api.collection_codec import (
     METRIC_COSINE,
@@ -25,6 +26,7 @@ from mojovec.core.types import (
     MetricType,
     StorageKind,
 )
+from mojovec.core.validation import _validate_vector_dimension
 from mojovec.io.atomic_file import (
     atomic_replace,
     atomic_temporary_path,
@@ -37,8 +39,14 @@ from mojovec.io.fault_injection import (
     SNAPSHOT_FAULT_BEFORE_PUBLISH,
     inject_snapshot_fault,
 )
-from mojovec.io.serialization import check_size_limit, read_int, write_int
+from mojovec.io.serialization import (
+    checked_byte_count,
+    check_size_limit,
+    read_int,
+    write_int,
+)
 from mojovec.io.snapshot_file import (
+    SNAPSHOT_CHECKSUM_TRAILER_BYTES,
     append_snapshot_checksum,
     validate_snapshot_checksum,
 )
@@ -46,6 +54,31 @@ from mojovec.io.snapshot_file import (
 
 comptime COLLECTION_MAGIC = 1129270349
 comptime COLLECTION_FORMAT = 8
+comptime MAX_COLLECTION_RECORDS = 10_000_000
+comptime MAX_COLLECTION_SNAPSHOT_BYTES = 274_877_906_944
+
+
+def _remaining_snapshot_bytes(
+    mut file: FileHandle,
+    payload_size: Int,
+) raises -> Int:
+    """Returns validated bytes remaining in the checksummed payload."""
+    var position = Int(file.seek(0, SEEK_CUR))
+    if position < 0 or position > payload_size:
+        raise Error("Snapshot cursor is outside the checksummed payload.")
+    return payload_size - position
+
+
+def _validate_sparse_entry_count(
+    count: Int,
+    record_count: Int,
+    remaining_bytes: Int,
+) raises:
+    """Rejects impossible sparse counts before reserving managed memory."""
+    check_size_limit(count, record_count)
+    # Every sparse entry contains at least an internal ID and a count/length.
+    if checked_byte_count(count, 16) > remaining_bytes:
+        raise Error("Sparse entry count exceeds the remaining snapshot size.")
 
 
 @fieldwise_init
@@ -85,6 +118,10 @@ def _write_collection_snapshot(
     storage: HNSWStorage,
 ) raises:
     """Writes one complete payload; the caller publishes it atomically."""
+    var num_ids = len(user_ids)
+    check_size_limit(num_ids, MAX_COLLECTION_RECORDS)
+    if len(is_deleted) != num_ids:
+        raise Error("Collection user IDs and deletion flags differ in size.")
     var file = open(path, "w")
     write_int(file, COLLECTION_MAGIC)
     write_int(file, COLLECTION_FORMAT)
@@ -96,7 +133,6 @@ def _write_collection_snapshot(
     write_int(file, applied_sequence)
     inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_HEADER)
 
-    var num_ids = len(user_ids)
     write_int(file, num_ids)
     if num_ids > 0:
         file.write_bytes(
@@ -122,6 +158,8 @@ def _write_collection_snapshot(
             _write_string(file, documents[document_by_internal[internal_id]])
 
     _write_storage(file, storage, storage_kind)
+    if Int(file.seek(0, SEEK_END)) > MAX_COLLECTION_SNAPSHOT_BYTES:
+        raise Error("Collection snapshot exceeds the 256 GiB safety limit.")
     inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_PAYLOAD)
     file.close()
 
@@ -178,8 +216,14 @@ def _read_collection_snapshot(
     if mmap_threshold_bytes < 0:
         raise Error("mmap_threshold_bytes cannot be negative.")
     var file = open(path, "r")
-    var file_size = Int(file.seek(0, SEEK_END))
-    file_size = validate_snapshot_checksum(file, file_size)
+    var total_size = Int(file.seek(0, SEEK_END))
+    if (
+        total_size < SNAPSHOT_CHECKSUM_TRAILER_BYTES
+        or total_size
+        > MAX_COLLECTION_SNAPSHOT_BYTES + SNAPSHOT_CHECKSUM_TRAILER_BYTES
+    ):
+        raise Error("Collection snapshot size is outside safety limits.")
+    var file_size = validate_snapshot_checksum(file, total_size)
     _ = file.seek(0, SEEK_SET)
     if read_int(file) != COLLECTION_MAGIC:
         raise Error("Invalid Collection magic.")
@@ -203,24 +247,45 @@ def _read_collection_snapshot(
     if identity <= 0 or applied_sequence < 0:
         raise Error("Invalid Collection durability state.")
 
-    check_size_limit(dimension, 65_536)
+    _validate_vector_dimension(dimension)
     var num_ids = read_int(file)
-    check_size_limit(num_ids, 1_000_000_000)
+    check_size_limit(num_ids, MAX_COLLECTION_RECORDS)
+    var record_bytes = checked_byte_count(num_ids, 9)
+    if record_bytes > _remaining_snapshot_bytes(file, file_size):
+        raise Error("Collection record count exceeds the snapshot size.")
     var user_ids = List[Int](capacity=num_ids)
     var is_deleted = List[UInt8](capacity=num_ids)
     if num_ids > 0:
-        var ids_data = file.read_bytes(num_ids * 8)
+        var ids_byte_count = checked_byte_count(num_ids, 8)
+        var ids_data = file.read_bytes(ids_byte_count)
+        if len(ids_data) != ids_byte_count:
+            raise Error("Collection user ID array is truncated.")
         var ids_source = ids_data.unsafe_ptr().bitcast[Int]()
         var deleted_data = file.read_bytes(num_ids)
+        if len(deleted_data) != num_ids:
+            raise Error("Collection deletion array is truncated.")
         var deleted_source = deleted_data.unsafe_ptr()
+        var active_ids = Dict[Int, Bool]()
         for index in range(num_ids):
-            user_ids.append(ids_source[index])
-            is_deleted.append(deleted_source[index])
+            var user_id = ids_source[index]
+            var deleted = deleted_source[index]
+            if deleted > 1:
+                raise Error("Collection deletion flags must be 0 or 1.")
+            if deleted == 0:
+                if user_id in active_ids:
+                    raise Error("Active Collection user IDs must be unique.")
+                active_ids[user_id] = True
+            user_ids.append(user_id)
+            is_deleted.append(deleted)
         _ = len(ids_data)
         _ = len(deleted_data)
 
     var metadata_count = read_int(file)
-    check_size_limit(metadata_count, num_ids)
+    _validate_sparse_entry_count(
+        metadata_count,
+        num_ids,
+        _remaining_snapshot_bytes(file, file_size),
+    )
     var metadata_internal_ids = List[Int](capacity=metadata_count)
     var metadatas = List[Metadata](capacity=metadata_count)
     var previous_metadata_id = -1
@@ -240,7 +305,11 @@ def _read_collection_snapshot(
         metadatas.append(metadata^)
 
     var document_count = read_int(file)
-    check_size_limit(document_count, num_ids)
+    _validate_sparse_entry_count(
+        document_count,
+        num_ids,
+        _remaining_snapshot_bytes(file, file_size),
+    )
     var document_internal_ids = List[Int](capacity=document_count)
     var documents = List[String](capacity=document_count)
     var previous_document_id = -1
@@ -264,9 +333,12 @@ def _read_collection_snapshot(
         file_size,
         storage_kind,
         metric_type,
+        dimension,
         num_ids,
         memory_mapped and file_size >= mmap_threshold_bytes,
     )
+    if Int(file.seek(0, SEEK_CUR)) != file_size:
+        raise Error("Collection snapshot contains trailing payload data.")
     file.close()
     return CollectionSnapshot(
         name^,

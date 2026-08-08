@@ -158,17 +158,22 @@ def _read_storage(
     file_size: Int,
     kind: StorageKind,
     metric_type: MetricType,
+    expected_dimension: Int,
     expected_count: Int,
     use_mmap: Bool,
 ) raises -> HNSWStorage:
     var expected_metric = _index_metric(metric_type)
     if kind == STORAGE_SQ8:
-        var index = read_index_hnsw_sq8_mmap(file, file_size)
+        var index = read_index_hnsw_sq8_mmap(
+            file, file_size, expected_count
+        )
         if (
-            index.metric_type != expected_metric
+            index.d != expected_dimension
+            or index.storage.d != expected_dimension
+            or index.metric_type != expected_metric
             or index.storage.metric_type != expected_metric
         ):
-            raise Error("Collection and SQ8 index metrics differ.")
+            raise Error("Collection and SQ8 index headers differ.")
         if not use_mmap:
             index.storage._detach_mapped()
             index.hnsw._detach_mapped()
@@ -176,12 +181,14 @@ def _read_storage(
             raise Error("Collection metadata and SQ8 index size differ.")
         return HNSWStorage(index^)
 
-    var index = read_index_hnsw_mmap(file, file_size)
+    var index = read_index_hnsw_mmap(file, file_size, expected_count)
     if (
-        index.metric_type != expected_metric
+        index.d != expected_dimension
+        or index.storage.d != expected_dimension
+        or index.metric_type != expected_metric
         or index.storage.metric_type != expected_metric
     ):
-        raise Error("Collection and Flat index metrics differ.")
+        raise Error("Collection and Flat index headers differ.")
     if not use_mmap:
         index.storage._detach_mapped()
         index.hnsw._detach_mapped()

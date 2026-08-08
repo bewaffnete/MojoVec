@@ -127,14 +127,27 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
     var capacity: Int
     var _mapping: FileMemoryMap
 
-    def __init__(out self, d: Int, metric: MetricType = METRIC_L2) raises:
-        """Initializes the flat index."""
+    def __init__(
+        out self,
+        d: Int,
+        metric: MetricType = METRIC_L2,
+        initial_capacity: Int = 1024,
+    ) raises:
+        """Initializes the flat index.
+
+        Args:
+            d: The dimensionality of the vectors.
+            metric: The metric type used for distance computation.
+            initial_capacity: Initial owned allocation; loaders use zero.
+        """
         _validate_vector_dimension(d)
+        if initial_capacity < 0 or initial_capacity > 1024:
+            raise Error("initial_capacity must be between 0 and 1024.")
         self.d = d
         self.ntotal = 0
         self.metric_type = metric
-        self.capacity = 1024  # Initial capacity for 1024 vectors
-        self.codes = _alloc_aligned(self.capacity * d)
+        self.capacity = initial_capacity
+        self.codes = _alloc_aligned(max(self.capacity * d, 1))
         self._mapping = FileMemoryMap()
 
     def __del__(deinit self):

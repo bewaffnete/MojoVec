@@ -1,5 +1,6 @@
 from std.collections import List
 from std.algorithm import parallelize
+from std.memory.span import Span
 from std.os import SEEK_END, SEEK_SET
 from std.testing import (
     TestSuite,
@@ -15,6 +16,13 @@ from mojovec.io.fault_injection import (
     SNAPSHOT_FAULT_AFTER_PAYLOAD,
     SNAPSHOT_FAULT_AFTER_PUBLISH,
     SNAPSHOT_FAULT_BEFORE_PUBLISH,
+)
+from mojovec.io.serialization import write_int
+from mojovec.io.snapshot_file import (
+    SNAPSHOT_CHECKSUM_TRAILER_BYTES,
+    _checksum_prefix,
+    _write_uint64,
+    append_snapshot_checksum,
 )
 
 
@@ -66,6 +74,62 @@ def make_collection(quantized: Bool) raises -> Collection:
         ],
     )
     return collection^
+
+
+def refresh_snapshot_checksum(path: String) raises:
+    """Makes an intentional payload mutation pass checksum validation."""
+    var file = open(path, "rw")
+    var total_size = Int(file.seek(0, SEEK_END))
+    var payload_size = total_size - SNAPSHOT_CHECKSUM_TRAILER_BYTES
+    var checksum = _checksum_prefix(file, payload_size)
+    _ = file.seek(UInt64(payload_size + 8), SEEK_SET)
+    _write_uint64(file, checksum)
+    file.close()
+
+
+def patch_snapshot_int(path: String, offset: Int, value: Int) raises:
+    var file = open(path, "rw")
+    _ = file.seek(UInt64(offset), SEEK_SET)
+    write_int(file, value)
+    file.close()
+    refresh_snapshot_checksum(path)
+
+
+def patch_snapshot_byte(path: String, offset: Int, value: UInt8) raises:
+    var file = open(path, "rw")
+    _ = file.seek(UInt64(offset), SEEK_SET)
+    var storage = InlineArray[UInt8, 1](uninitialized=True)
+    storage[0] = value
+    file.write_all(Span[UInt8](ptr=storage.unsafe_ptr(), length=1))
+    file.close()
+    refresh_snapshot_checksum(path)
+
+
+def assert_snapshot_rejected(path: String) raises:
+    var rejected = False
+    try:
+        _ = Collection.load(path, mmap_threshold_bytes=0)
+    except:
+        rejected = True
+    assert_true(rejected)
+
+
+def append_checksumming_payload_byte(path: String) raises:
+    """Adds valid-checksum trailing payload data before the trailer."""
+    var reader = open(path, "r")
+    var total_size = Int(reader.seek(0, SEEK_END))
+    var payload_size = total_size - SNAPSHOT_CHECKSUM_TRAILER_BYTES
+    _ = reader.seek(0, SEEK_SET)
+    var payload = reader.read_bytes(payload_size)
+    reader.close()
+
+    var writer = open(path, "w")
+    writer.write_bytes(payload)
+    var extra = InlineArray[UInt8, 1](uninitialized=True)
+    extra[0] = 0
+    writer.write_all(Span[UInt8](ptr=extra.unsafe_ptr(), length=1))
+    writer.close()
+    append_snapshot_checksum(path)
 
 
 def check_mapped_round_trip(quantized: Bool, path: String) raises:
@@ -359,6 +423,49 @@ def test_empty_mapped_collections_can_grow() raises:
     check_empty_mapped_collection_can_grow(
         True, "/tmp/mojovec_test_mmap_empty_sq8.bin"
     )
+
+
+def test_valid_checksum_does_not_bypass_snapshot_validation() raises:
+    """Exercises adversarial headers whose checksum was recomputed."""
+    var path = "/tmp/mojovec_test_adversarial_snapshot.bin"
+    var writer = make_collection(False)
+    var name_size = String("mapped_records").byte_length()
+    var dimension_offset = 24 + name_size
+    var record_count_offset = 64 + name_size
+    var ids_offset = record_count_offset + 8
+    var deleted_offset = ids_offset + 3 * 8
+
+    # Oversized and overflowing counts are rejected before List reservation.
+    writer.save(path)
+    patch_snapshot_int(path, record_count_offset, 9_223_372_036_854_775_807)
+    assert_snapshot_rejected(path)
+
+    # A count below the hard limit must still fit the actual payload.
+    writer.save(path)
+    patch_snapshot_int(path, record_count_offset, 1_000_000)
+    assert_snapshot_rejected(path)
+
+    writer.save(path)
+    patch_snapshot_int(path, dimension_offset, 0)
+    assert_snapshot_rejected(path)
+
+    # A valid dimension must still agree with every nested index header.
+    writer.save(path)
+    patch_snapshot_int(path, dimension_offset, DIMENSION + 1)
+    assert_snapshot_rejected(path)
+
+    writer.save(path)
+    patch_snapshot_byte(path, deleted_offset + 1, 2)
+    assert_snapshot_rejected(path)
+
+    # Duplicate historical/deleted IDs are valid, but active IDs are not.
+    writer.save(path)
+    patch_snapshot_int(path, ids_offset + 8, 10)
+    assert_snapshot_rejected(path)
+
+    writer.save(path)
+    append_checksumming_payload_byte(path)
+    assert_snapshot_rejected(path)
 
 
 def main() raises:

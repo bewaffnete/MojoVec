@@ -59,6 +59,8 @@ def _read_string(mut file: FileHandle) raises -> String:
     var size = read_int(file)
     check_size_limit(size, 1_048_576)
     var data = file.read_bytes(size)
+    if len(data) != size:
+        raise Error("Unexpected end of serialized String.")
     return String(from_utf8=data)
 
 
@@ -71,6 +73,8 @@ def _write_float64(mut file: FileHandle, value: Float64) raises:
 
 def _read_float64(mut file: FileHandle) raises -> Float64:
     var data = file.read_bytes(8)
+    if len(data) != 8:
+        raise Error("Unexpected end of serialized Float64.")
     var value = data.unsafe_ptr().bitcast[Float64]()[0]
     _ = len(data)
     return value
@@ -108,6 +112,8 @@ def _read_metadata(mut file: FileHandle) raises -> Metadata:
     var metadata = Metadata()
     for _ in range(field_count):
         var key = _read_string(file)
+        if metadata.contains(key):
+            raise Error("Duplicate metadata keys are not allowed.")
         var kind = read_int(file)
         if kind == METADATA_STRING:
             metadata.set(key, _read_string(file))

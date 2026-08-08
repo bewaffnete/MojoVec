@@ -345,7 +345,12 @@ expose a half-written collection at the destination path, and existing mmap
 readers keep using the previous complete file while the new snapshot is
 published. Every snapshot includes a checksum trailer. `load()` validates the
 complete payload before parsing metadata or exposing memory-mapped arrays, so
-truncation and on-disk corruption fail closed.
+truncation and on-disk corruption fail closed. The loader also treats files as
+untrusted input: byte arithmetic is overflow-checked, section counts must fit
+the checksummed payload, deletion flags and active ID uniqueness are validated,
+and internal index headers must agree with the collection header. Snapshots are
+limited to 10 million records and 256 GiB to bound resource consumption before
+managed allocations or memory mapping.
 
 For one-writer/many-reader workloads, `snapshot()` publishes the writer's
 current state and returns an independent point-in-time collection:
