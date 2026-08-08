@@ -1,7 +1,7 @@
 from std.collections import List
 from std.algorithm import parallelize
 from std.memory.span import Span
-from std.os import SEEK_END, SEEK_SET
+from std.os import SEEK_END, SEEK_SET, mkdir, rmdir
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -10,7 +10,11 @@ from std.testing import (
 )
 
 from mojovec import Collection, Metadata
-from mojovec.io.atomic_file import atomic_replace
+from mojovec.io.atomic_file import (
+    atomic_replace,
+    atomic_temporary_path,
+    remove_file_best_effort,
+)
 from mojovec.io.fault_injection import (
     SNAPSHOT_FAULT_AFTER_HEADER,
     SNAPSHOT_FAULT_AFTER_PAYLOAD,
@@ -130,6 +134,16 @@ def append_checksumming_payload_byte(path: String) raises:
     writer.write_all(Span[UInt8](ptr=extra.unsafe_ptr(), length=1))
     writer.close()
     append_snapshot_checksum(path)
+
+
+def create_temporary_directory(prefix: String) raises -> String:
+    var path = atomic_temporary_path(prefix)
+    mkdir(path)
+    return path^
+
+
+def remove_empty_directory(path: String) raises:
+    rmdir(path)
 
 
 def check_mapped_round_trip(quantized: Bool, path: String) raises:
@@ -390,6 +404,32 @@ def test_snapshot_fault_injection_preserves_atomic_generations() raises:
         published.query(vector(40.0), n_results=1).ids[0][0],
         40,
     )
+
+
+def test_failed_snapshot_publication_removes_temporary_file() raises:
+    for fault_point in [
+        SNAPSHOT_FAULT_AFTER_HEADER,
+        SNAPSHOT_FAULT_AFTER_PAYLOAD,
+        SNAPSHOT_FAULT_BEFORE_PUBLISH,
+    ]:
+        var directory = create_temporary_directory(
+            "/tmp/mojovec_snapshot_cleanup"
+        )
+        var path = String(directory, "/snapshot.mojovec")
+        var writer = make_collection(False)
+        writer.save(path)
+
+        var failed = False
+        try:
+            writer._save_with_fault(path, fault_point)
+        except:
+            failed = True
+        assert_true(failed)
+
+        # Once the published destination is removed, rmdir succeeds only if
+        # the failed atomic save also removed its generated .tmp file.
+        remove_file_best_effort(path)
+        remove_empty_directory(directory)
 
 
 def check_empty_mapped_collection_can_grow(

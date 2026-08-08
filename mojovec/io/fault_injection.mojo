@@ -6,6 +6,7 @@ comptime SNAPSHOT_FAULT_AFTER_PAYLOAD: SnapshotFaultPoint = 2
 comptime SNAPSHOT_FAULT_BEFORE_PUBLISH: SnapshotFaultPoint = 3
 comptime SNAPSHOT_FAULT_AFTER_PUBLISH: SnapshotFaultPoint = 4
 comptime SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT: SnapshotFaultPoint = 5
+comptime SNAPSHOT_FAULT_AFTER_WAL_TEMPORARY: SnapshotFaultPoint = 6
 
 comptime BatchFaultPoint = Int
 

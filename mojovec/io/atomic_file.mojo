@@ -32,6 +32,16 @@ def atomic_replace(source: String, destination: String) raises:
         raise Error("Atomic collection file replacement failed.")
 
 
+def remove_file_best_effort(path: String):
+    """Unlinks one known temporary file without propagating cleanup errors."""
+    try:
+        var path_storage = _c_string(path)
+        var path_c = CStringSlice(path_storage)
+        _ = external_call["unlink", Int](path_c.unsafe_ptr())
+    except:
+        pass
+
+
 def sync_parent_directory(path: String) raises:
     """Persists the directory entry installed by atomic_replace."""
     var parent = dirname(path)

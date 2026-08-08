@@ -30,6 +30,7 @@ from mojovec.core.validation import _validate_vector_dimension
 from mojovec.io.atomic_file import (
     atomic_replace,
     atomic_temporary_path,
+    remove_file_best_effort,
     sync_parent_directory,
 )
 from mojovec.io.fault_injection import (
@@ -183,28 +184,34 @@ def _save_collection_snapshot(
 ) raises:
     """Writes, checksums, and atomically publishes a collection snapshot."""
     var temporary_path = atomic_temporary_path(path)
-    _write_collection_snapshot(
-        temporary_path,
-        fault_point,
-        name,
-        dimension,
-        storage_kind,
-        metric_type,
-        identity,
-        applied_sequence,
-        user_ids,
-        is_deleted,
-        metadata_by_internal,
-        metadatas,
-        document_by_internal,
-        documents,
-        storage,
-    )
-    append_snapshot_checksum(temporary_path)
-    inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_BEFORE_PUBLISH)
-    atomic_replace(temporary_path, path)
-    inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_PUBLISH)
-    sync_parent_directory(path)
+    try:
+        _write_collection_snapshot(
+            temporary_path,
+            fault_point,
+            name,
+            dimension,
+            storage_kind,
+            metric_type,
+            identity,
+            applied_sequence,
+            user_ids,
+            is_deleted,
+            metadata_by_internal,
+            metadatas,
+            document_by_internal,
+            documents,
+            storage,
+        )
+        append_snapshot_checksum(temporary_path)
+        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_BEFORE_PUBLISH)
+        atomic_replace(temporary_path, path)
+        inject_snapshot_fault(fault_point, SNAPSHOT_FAULT_AFTER_PUBLISH)
+        sync_parent_directory(path)
+    except error:
+        # After a successful rename this path no longer exists, so the same
+        # cleanup is safe for both pre- and post-publication failures.
+        remove_file_best_effort(temporary_path)
+        raise error^
 
 
 def _read_collection_snapshot(

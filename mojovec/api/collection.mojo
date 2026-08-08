@@ -1291,7 +1291,7 @@ struct Collection(Movable, Writable):
             SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT,
         )
         if self._wal:
-            self._wal[].reset(self._applied_sequence)
+            self._wal[].reset(self._applied_sequence, fault_point)
 
     def save(mut self, path: String) raises:
         """

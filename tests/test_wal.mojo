@@ -1,5 +1,5 @@
 from std.collections import List
-from std.os import SEEK_SET
+from std.os import SEEK_SET, mkdir, rmdir
 from std.testing import (
     TestSuite,
     assert_equal,
@@ -19,6 +19,11 @@ from mojovec.io.fault_injection import (
     BATCH_FAULT_AFTER_WAL_APPEND,
     BATCH_FAULT_DURING_PAYLOAD_PREPARE,
     SNAPSHOT_FAULT_AFTER_CHECKPOINT_SNAPSHOT,
+    SNAPSHOT_FAULT_AFTER_WAL_TEMPORARY,
+)
+from mojovec.io.atomic_file import (
+    atomic_temporary_path,
+    remove_file_best_effort,
 )
 
 
@@ -48,6 +53,16 @@ def metadata(label: String, year: Int) -> Metadata:
 def empty_file(path: String) raises:
     var file = open(path, "w")
     file.close()
+
+
+def create_temporary_directory(prefix: String) raises -> String:
+    var path = atomic_temporary_path(prefix)
+    mkdir(path)
+    return path^
+
+
+def remove_empty_directory(path: String) raises:
+    rmdir(path)
 
 
 def make_snapshot(snapshot_path: String, quantized: Bool = False) raises:
@@ -177,6 +192,34 @@ def test_checkpoint_fault_after_snapshot_keeps_wal_recoverable() raises:
     assert_equal(recovered.wal_sequence(), 1)
     assert_equal(recovered.query(vector(1.0), n_results=1).ids[0][0], 1)
     recovered.disable_wal()
+
+
+def test_failed_wal_rotation_removes_temporary_file() raises:
+    var directory = create_temporary_directory(
+        "/tmp/mojovec_wal_rotation_cleanup"
+    )
+    var snapshot_path = String(directory, "/snapshot.mojovec")
+    var wal_path = String(directory, "/collection.wal")
+    make_snapshot(snapshot_path)
+
+    var collection = Collection.load(snapshot_path)
+    collection.enable_wal(wal_path, durability=WAL_SYNC)
+    collection.add([1], vector(1.0))
+
+    var failed = False
+    try:
+        collection._checkpoint_with_fault(
+            snapshot_path,
+            SNAPSHOT_FAULT_AFTER_WAL_TEMPORARY,
+        )
+    except:
+        failed = True
+    assert_true(failed)
+    collection.disable_wal()
+
+    remove_file_best_effort(snapshot_path)
+    remove_file_best_effort(wal_path)
+    remove_empty_directory(directory)
 
 
 def test_recovery_skips_records_already_in_snapshot() raises:

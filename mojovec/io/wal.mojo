@@ -15,8 +15,13 @@ from mojovec.api.metadata import (
 from mojovec.io.atomic_file import (
     atomic_replace,
     atomic_temporary_path,
+    remove_file_best_effort,
     sync_file,
     sync_parent_directory,
+)
+from mojovec.io.fault_injection import (
+    SNAPSHOT_FAULT_AFTER_WAL_TEMPORARY,
+    inject_snapshot_fault,
 )
 
 
@@ -754,20 +759,32 @@ struct WriteAheadLog(Movable):
     def flush(mut self) raises:
         sync_file(self.file)
 
-    def reset(mut self, base_sequence: Int) raises:
+    def reset(
+        mut self,
+        base_sequence: Int,
+        fault_point: Int = 0,
+    ) raises:
         var temporary_path = atomic_temporary_path(self.path)
-        _write_file_header(
-            temporary_path,
-            self.dimension,
-            self.storage_kind,
-            self.identity,
-            base_sequence,
-            self.name,
-        )
-        var replacement = open(temporary_path, "a")
-        atomic_replace(temporary_path, self.path)
-        self.file.close()
-        self.file = replacement^
-        self.next_sequence = base_sequence + 1
-        self.usable = True
-        sync_parent_directory(self.path)
+        try:
+            _write_file_header(
+                temporary_path,
+                self.dimension,
+                self.storage_kind,
+                self.identity,
+                base_sequence,
+                self.name,
+            )
+            inject_snapshot_fault(
+                fault_point,
+                SNAPSHOT_FAULT_AFTER_WAL_TEMPORARY,
+            )
+            var replacement = open(temporary_path, "a")
+            atomic_replace(temporary_path, self.path)
+            self.file.close()
+            self.file = replacement^
+            self.next_sequence = base_sequence + 1
+            self.usable = True
+            sync_parent_directory(self.path)
+        except error:
+            remove_file_best_effort(temporary_path)
+            raise error^
