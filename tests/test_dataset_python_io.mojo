@@ -74,5 +74,22 @@ def test_npz_bridge_uses_numpy_decoder() raises:
     assert_equal(collection.count(), 2)
 
 
+def test_python_reader_propagates_decoder_errors() raises:
+    var path = "/tmp/mojovec_python_dataset_invalid.json"
+    var writer = open(path, "w")
+    writer.write('[{"embedding":[1,0,2]}]')
+    writer.close()
+
+    var reader = read_json(path, 2)
+    var collection = Collection(2, quantized=False)
+    var failed = False
+    try:
+        _ = reader.add_to(collection)
+    except:
+        failed = True
+    assert_true(failed)
+    assert_equal(collection.count(), 0)
+
+
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

@@ -179,7 +179,16 @@ struct PythonDatasetReader(Movable):
 
         var builtins = Python.import_module("builtins")
         var imported = 0
-        for batch in self._batches:
+        # Mojo's implicit PythonObject iteration can treat an exception raised
+        # while advancing a Python generator as normal exhaustion. Pulling
+        # batches through builtins.next preserves streaming while propagating
+        # decoder and missing-dependency errors to the caller.
+        var iterator = builtins.iter(self._batches)
+        var iterator_id = Int(py=builtins.id(iterator))
+        while True:
+            var batch = builtins.next(iterator, iterator)
+            if Int(py=builtins.id(batch)) == iterator_id:
+                break
             var ids = _ids_from_python(batch.ids)
             var embeddings = _embeddings_from_python(batch.embeddings)
             var has_metadatas = Bool(
