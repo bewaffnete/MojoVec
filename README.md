@@ -102,16 +102,6 @@ pixi run -- mojo run -I . examples/mojo/api_01_hnsw_fast_search.mojo
 `pixi.lock` pins their exact Apple Silicon and Linux x86-64 builds. The local
 `.pixi/` directory contains the installed toolchain and is ignored by Git.
 
-For a single precompiled package instead of a source checkout, download the
-release artifact and place it beside your Mojo program:
-
-```bash
-curl -LO https://github.com/bewaffnete/MojoVec/releases/latest/download/mojovec.mojoc
-mojo run your_script.mojo
-```
-
-Use `-I /path/to/package` when `mojovec.mojoc` is stored in another directory.
-
 ---
 
 ## Quick Start
