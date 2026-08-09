@@ -1,6 +1,7 @@
 include LICENSE
 include README.md
 include python/mojovec_build.py
+include python/mojovec_dataset_io.py
 include python/mojovec_python.mojo
 recursive-include mojovec *.mojo
 recursive-include python/mojovec *.py py.typed

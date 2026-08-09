@@ -27,11 +27,15 @@ Repository = "https://github.com/bewaffnete/MojoVec"
 Issues = "https://github.com/bewaffnete/MojoVec/issues"
 
 [project.optional-dependencies]
-test = ["pytest", "numpy"]
+io = ["numpy"]
+arrow = ["numpy", "pyarrow>=21"]
+huggingface = ["numpy", "pyarrow>=21", "datasets>=3,<5"]
+test = ["pytest", "numpy", "pyarrow>=21"]
 
 [tool.setuptools]
 package-dir = { "" = "python" }
 packages = ["mojovec", "mojovec._avx2", "mojovec._avx512"]
+py-modules = ["mojovec_dataset_io"]
 include-package-data = true
 
 [tool.setuptools.dynamic]

@@ -323,6 +323,8 @@ collection = mojovec.Collection(dimension=128)
 ids = np.arange(1000, 2000, dtype=np.int64)
 embeddings = np.ascontiguousarray(data, dtype=np.float32)
 collection.upsert_numpy(ids, embeddings)
+# add_numpy(ids, embeddings) provides insert-only semantics through the same
+# contiguous-buffer path.
 
 queries = np.ascontiguousarray(query_data, dtype=np.float32)
 result = collection.query_numpy(queries, n_results=10)
@@ -336,6 +338,32 @@ Requirements:
 - `query_numpy()` is vector-only and returns empty payload lists.
 - Supplying Python metadata or documents to `upsert_numpy()` intentionally
   uses the managed conversion path.
+
+### External dataset readers
+
+Use collection-level import methods instead of writing format-specific loops:
+
+```python
+collection.add_from(
+    "records.parquet",
+    id_column="id",
+    embedding_column="embedding",
+    document_column="text",
+    metadata_columns=["category"],
+    batch_size=8192,
+)
+collection.upsert_huggingface(
+    "owner/dataset",
+    split="train",
+    embedding_column="embedding",
+    document_column="text",
+)
+```
+
+`add_from`/`upsert_from` support CSV, TSV, JSON, JSONL, Parquet, Arrow IPC,
+NPY, NPZ, fvecs, and ivecs. Use `mojovec[io]` for NumPy-backed formats,
+`mojovec[arrow]` for Parquet/Arrow, and `mojovec[huggingface]` for datasets.
+Imports are atomic per batch, not across the complete file.
 
 ### Python inspection and compaction
 
@@ -537,6 +565,40 @@ The mutation semantics are the same as Python: `add` is insert-only,
 `upsert` inserts or replaces, `update` requires existing IDs, and `delete` is
 idempotent.
 
+Numeric vector formats can be read directly by Mojo:
+
+```mojo
+from mojovec import read_fvecs, read_npy_float32
+
+var dataset = read_fvecs("base.fvecs", id_start=0)
+var collection = Collection(dataset.dimension, quantized=True)
+collection.add(dataset.ids, dataset.embeddings)
+```
+
+Available direct readers are `read_fvecs`, `read_ivecs`,
+`read_npy_float32`, `read_csv`, and `read_tsv`. CSV/TSV must
+be numeric matrices, and NPY must be a C-contiguous little-endian float32
+matrix.
+
+For ecosystem formats, Mojo imports the lightweight Python adapter:
+
+```mojo
+from mojovec import DatasetImportOptions, read_parquet
+
+var options = DatasetImportOptions()
+options.id_column = "id"
+options.document_column = "text"
+options.metadata_columns.append("category")
+var reader = read_parquet("records.parquet", dimension, options)
+var count = reader.add_to(collection)
+```
+
+`read_json`, `read_jsonl`, `read_parquet`, `read_arrow`, `read_npz`, and
+`read_huggingface` return one-shot `PythonDatasetReader` values. `add_to` is
+insert-only and `upsert_to` inserts or replaces. The decoder dependencies must
+be installed into Mojo's embedded Python, and source checkouts must include
+the repository's `python/` directory in `PYTHONPATH`.
+
 ### Mojo typed filters
 
 ```mojo
@@ -733,7 +795,9 @@ Before returning MojoVec application code, verify:
 10. Concurrent mutation is synchronized or isolated behind snapshots.
 11. No internal binary import, pointer allocation, or manual release appears
     in high-level code.
-12. Tests cover shape validation, duplicate/existing ID behavior, result IDs,
+12. Large external imports use the built-in batched readers and acknowledge
+    that atomicity is per batch.
+13. Tests cover shape validation, duplicate/existing ID behavior, result IDs,
     filtering, persistence round-trip, and any required recall target.
 
 ## Repository references

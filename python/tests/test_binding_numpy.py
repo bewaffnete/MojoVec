@@ -6,6 +6,19 @@ import mojovec
 np = pytest.importorskip("numpy")
 
 
+def test_add_numpy_preserves_insert_only_semantics():
+    collection = mojovec.Collection(2, quantized=False)
+    ids = np.asarray([10, 20], dtype=np.int64)
+    embeddings = np.asarray(
+        [[1.0, 0.0], [0.0, 1.0]], dtype=np.float32
+    )
+
+    collection.add_numpy(ids, embeddings)
+    assert collection.query([[1.0, 0.0]], 1)["ids"] == [[10]]
+    with pytest.raises(Exception, match="already exists"):
+        collection.add_numpy(ids[:1], embeddings[:1])
+
+
 def test_numpy_fast_path_accepts_flat_and_matrix_buffers():
     collection = mojovec.Collection(3, quantized=False)
     ids = np.asarray([10, 20], dtype=np.int64)

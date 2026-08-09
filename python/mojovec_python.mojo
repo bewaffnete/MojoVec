@@ -739,6 +739,31 @@ struct PyCollection(Movable, Writable):
         return _query_results_to_python(results^)
 
     @staticmethod
+    def py_add_numpy(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_ids: PythonObject,
+        py_embeddings: PythonObject,
+    ) raises -> PythonObject:
+        var num_vectors = Int(py=py_ids.__len__())
+        var ids_ptr_int = Int(py=py_ids.__array_interface__["data"][0])
+        var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
+
+        var ids_ptr = UnsafePointer[Int, MutAnyOrigin](
+            unsafe_from_address=ids_ptr_int
+        )
+        var emb_ptr = UnsafePointer[Float32, MutAnyOrigin](
+            unsafe_from_address=emb_ptr_int
+        )
+
+        var ids = Span[Int, MutAnyOrigin](ptr=ids_ptr, length=num_vectors)
+        var embeddings = Span[Float32, MutAnyOrigin](
+            ptr=emb_ptr,
+            length=num_vectors * self_ptr[].ptr[].dimension(),
+        )
+        self_ptr[].ptr[]._add_from_spans(ids, embeddings)
+        return Python.none()
+
+    @staticmethod
     def py_upsert_numpy(
         self_ptr: UnsafePointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
@@ -983,6 +1008,7 @@ def PyInit__native() abi("C") -> PythonObject:
                 "query_hybrid_where"
             )
             .def_method[PyCollection.py_upsert]("upsert_batch")
+            .def_method[PyCollection.py_add_numpy]("add_numpy")
             .def_method[PyCollection.py_upsert_numpy]("upsert_numpy")
             .def_method[PyCollection.py_query_numpy]("query_numpy")
             .def_method[PyCollection.py_upsert_numpy]("upsert_batch_numpy")

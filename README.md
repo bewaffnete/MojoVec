@@ -2,9 +2,11 @@
 
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/bewaffnete/MojoVec/blob/main/examples/quickstart_mojovec.ipynb)
 
-**A Vector Database (HNSW) written entirely in Mojo.**
+**A vector database with a Mojo-native search core.**
 
-MojoVec is an Approximate Nearest Neighbor (ANN) search library built from scratch in pure Mojo — no C++ dependencies. HNSW, IVF, and Product Quantization (PQ) are implemented.
+MojoVec is an Approximate Nearest Neighbor (ANN) search library built from
+scratch around a Mojo-native core. HNSW, IVF, and Product Quantization (PQ)
+are implemented in Mojo; optional dataset adapters can use Python libraries.
 
 Using MojoVec through an AI coding agent? Give it the standalone
 [`AI_AGENT_GUIDE.md`](AI_AGENT_GUIDE.md) API and integration guide.
@@ -13,7 +15,11 @@ Using MojoVec through an AI coding agent? Give it the standalone
 
 ## Why
 
-FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narrower question: can a pure-Mojo implementation get close to hand-tuned C++ SIMD performance without dropping into C/C++/assembly, using only what the language and its `SIMD` type give you today. This was prompted by curiosity about Mojo's SIMD codegen and a desire to build a zero-dependency, bare-metal alternative to FAISS for the Mojo ecosystem.
+FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a
+narrower question: can a Mojo implementation get close to hand-tuned C++ SIMD
+performance using the language and its `SIMD` type. The vector indexes and hot
+query paths remain Mojo-native; Python interop is available for external data
+formats where mature ecosystem decoders are preferable.
 
 ## Features
 
@@ -28,7 +34,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 - compound `and_`, `or_`, `not_`, `in_`, and `not_in` expressions;
 - atomic save/load, optional WAL recovery, collection statistics, and graph
   compaction;
-- IVF-Flat and IVF-PQ lower-level indexes implemented in pure Mojo.
+- IVF-Flat and IVF-PQ lower-level indexes implemented in Mojo.
 
 
 ---
@@ -54,7 +60,7 @@ FAISS and hnswlib are C++ with Python bindings. MojoVec exists to answer a narro
 
 | Index | Build Time | QPS | Recall@10 |
 |---|---|---|---|
-| MojoVec (Pure Mojo) | **~367.1 s** | **~8,912** | 94.64% |
+| MojoVec | **~367.1 s** | **~8,912** | 94.64% |
 | FAISS (HNSW, C++ via Python) | ~693.2 s | ~4,773 | 95.88% |
 | ChromaDB (hnswlib, Python) | ~658.3 s | ~1,610 | 99.20% |
 
@@ -67,8 +73,8 @@ to thermal state. Recall is the exact intersection against SIFT1M's provided
 ground truth (`sift_groundtruth.ivecs`).
 
 On Apple Silicon, MojoVec Flat delivers **about 1.37x the QPS of FAISS Flat**,
-while MojoVec SQ8 delivers **about 2.47x the QPS of FAISS SQ8**, with no C/C++
-dependency or handwritten assembly.
+while MojoVec SQ8 delivers **about 2.47x the QPS of FAISS SQ8**, without
+handwritten assembly in the search kernels.
 
 
 
@@ -634,9 +640,125 @@ recovered = mojovec.recover(
 snapshot = loaded.snapshot("checkpoint.mojovec")
 ```
 
-For NumPy-heavy ingestion, `upsert_numpy()` and `query_numpy()` keep the
-zero-copy pointer fast path. They require contiguous `int64` IDs and `float32`
-embeddings; the managed list API accepts either flattened or nested vectors.
+For NumPy-heavy ingestion, `add_numpy()`, `upsert_numpy()`, and `query_numpy()`
+keep the zero-copy pointer fast path. They require contiguous `int64` IDs and
+`float32` embeddings; the managed list API accepts either flattened or nested
+vectors.
+
+### Import external datasets
+
+The Python collection API commits files in bounded batches and avoids turning
+numeric matrices into nested Python lists. Streaming sources such as CSV,
+JSONL, Parquet, Arrow, and Hugging Face also avoid materializing the complete
+dataset at once:
+
+```bash
+# NumPy, CSV/TSV, JSON/JSONL, NPY/NPZ, and fvecs/ivecs
+pip install "mojovec[io]"
+
+# Add the optional ecosystem reader you need
+pip install "mojovec[arrow]"        # Parquet and Arrow IPC
+pip install "mojovec[huggingface]" # Hugging Face Datasets
+```
+
+```python
+collection.add_from(
+    "documents.parquet",
+    id_column="id",
+    embedding_column="embedding",
+    document_column="text",
+    metadata_columns=["category", "year"],
+    batch_size=8192,
+)
+
+# Streaming is enabled by default; loader options are forwarded explicitly.
+collection.upsert_huggingface(
+    "owner/dataset",
+    split="train",
+    id_column="id",
+    embedding_column="embedding",
+    document_column="text",
+    load_kwargs={"revision": "main"},
+)
+```
+
+`add_from()` and `upsert_from()` support CSV, TSV, JSON, JSONL, Parquet,
+Arrow IPC/Feather, NPY, NPZ, fvecs, and ivecs. Named-column formats can import
+documents and typed scalar metadata. A single `embedding_column` accepts an
+array, a JSON-array string, or comma/whitespace-separated numbers;
+`embedding_columns` selects one scalar column per dimension. NPY and fvecs
+generate IDs from `id_start`; NPZ accepts configurable array names. Every
+individual batch is atomic, while the complete multi-batch import is not one
+transaction.
+
+Numeric interchange formats have direct Mojo readers:
+
+```mojo
+from mojovec import Collection, read_fvecs, read_npy_float32
+
+var dataset = read_fvecs("sift_base.fvecs", id_start=0)
+var collection = Collection(dataset.dimension, quantized=True)
+collection.add(dataset.ids, dataset.embeddings)
+
+var more = read_npy_float32("more_vectors.npy", id_start=dataset.count())
+collection.add(more.ids, more.embeddings)
+```
+
+The direct readers are `read_fvecs`, `read_ivecs`, `read_npy_float32`,
+`read_csv`, and `read_tsv`. NPY must be a little-endian, C-contiguous,
+two-dimensional float32 array. CSV/TSV readers accept a numeric matrix (no
+quoted fields) and assign sequential IDs.
+
+Mojo can also use Python decoders for JSON, JSONL, Parquet, Arrow IPC, NPZ, and
+Hugging Face Datasets. These functions return a one-shot reader that commits
+validated batches through the normal managed collection API:
+
+```mojo
+from mojovec import Collection, DatasetImportOptions, read_parquet
+
+var options = DatasetImportOptions()
+options.id_column = "id"
+options.embedding_column = "embedding"
+options.document_column = "text"
+options.metadata_columns.append("category")
+options.batch_size = 8192
+
+var reader = read_parquet("documents.parquet", 384, options)
+var collection = Collection(384, quantized=True, metric="cosine")
+var imported = reader.add_to(collection)
+```
+
+Available bridge functions are `read_json`, `read_jsonl`, `read_parquet`,
+`read_arrow`, `read_npz`, and `read_huggingface`. Use `add_to()` for
+insert-only semantics or `upsert_to()` to insert or replace. Readers are
+single-use and imports are atomic per batch, not across the complete source.
+
+`DatasetImportOptions` exposes the same schema controls across readers:
+
+| Fields | Purpose |
+|---|---|
+| `id_column`, `id_start` | Read explicit IDs or generate sequential IDs |
+| `embedding_column`, `embedding_columns` | Use one vector column or several scalar columns |
+| `document_column`, `metadata_columns` | Import aligned documents and scalar metadata |
+| `batch_size` | Bound conversion and collection mutation batches |
+| `embeddings_key`, `ids_key`, `documents_key` | Select arrays inside NPZ archives |
+| `split`, `config`, `streaming` | Select Hugging Face dataset input |
+| `revision`, `cache_dir`, `token`, `data_dir` | Forward common Hugging Face loader options |
+
+The optional packages must be installed for the Python interpreter embedded
+by Mojo. For a Pixi global Mojo installation:
+
+```bash
+pixi global add --environment mojo pip
+"$(dirname "$(which mojo)")/python3" -m pip install "mojovec[huggingface]"
+```
+
+From a source checkout, additionally make the lightweight adapter module
+visible without importing the native Python binding:
+
+```bash
+export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
+```
 
 ---
 
@@ -646,10 +768,11 @@ Executable tutorials are organized by language:
 
 - [`examples/mojo/`](examples/mojo/) — native Mojo lifecycle, IVF-PQ,
   persistence, compaction, metadata, filters, BM25, hybrid RRF, WAL, and
-  distance metrics;
+  distance metrics, plus native and Python-backed dataset files;
 - [`examples/python/`](examples/python/) — managed Python CRUD,
   metadata/documents, Chroma-style filters, BM25, hybrid RRF, mmap,
-  compaction, WAL recovery, NumPy fast paths, and distance metrics.
+  compaction, WAL recovery, NumPy fast paths, distance metrics, and external
+  dataset adapters.
 
 See [`examples/README.md`](examples/README.md) for the recommended order and
 commands.

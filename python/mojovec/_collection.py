@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from numbers import Real
 from os import PathLike
 from typing import Any
@@ -61,6 +61,35 @@ def _validate_payload_lengths(
         raise ValueError("metadatas length must match ids length")
     if documents is not None and len(documents) != len(ids):
         raise ValueError("documents length must match ids length")
+
+
+def _validated_numpy_vectors(
+    ids: Any,
+    embeddings: Any,
+    dimension: int,
+) -> tuple[Any, Any]:
+    """Validate the shared zero-copy add/upsert buffer contract."""
+    import numpy as np
+
+    ids_array = np.asarray(ids)
+    embeddings_array = np.asarray(embeddings)
+    if (
+        ids_array.dtype != np.int64
+        or ids_array.ndim != 1
+        or not ids_array.flags.c_contiguous
+    ):
+        raise TypeError(
+            "ids must be a contiguous one-dimensional numpy.int64 array"
+        )
+    if (
+        embeddings_array.dtype != np.float32
+        or embeddings_array.ndim not in (1, 2)
+        or not embeddings_array.flags.c_contiguous
+    ):
+        raise TypeError("embeddings must be a contiguous numpy.float32 array")
+    if embeddings_array.size != ids_array.size * dimension:
+        raise ValueError("embeddings shape does not match ids and dimension")
+    return ids_array, embeddings_array
 
 
 class Collection:
@@ -328,6 +357,243 @@ class Collection:
         """Compatibility wrapper for :meth:`update` with metadata."""
         self.update(ids, embeddings, metadatas=metadatas)
 
+    def _ingest_file(
+        self,
+        operation: str,
+        path: str | PathLike[str],
+        *,
+        file_format: str | None,
+        id_column: str | None,
+        embedding_column: str,
+        embedding_columns: Sequence[str] | None,
+        document_column: str | None,
+        metadata_columns: Sequence[str] | None,
+        batch_size: int,
+        id_start: int,
+        embeddings_key: str,
+        ids_key: str,
+        documents_key: str,
+    ) -> int:
+        from .io import ingest_batches, iter_file_batches
+
+        batches = iter_file_batches(
+            path,
+            file_format=file_format,
+            dimension=self.dimension(),
+            id_column=id_column,
+            embedding_column=embedding_column,
+            embedding_columns=embedding_columns,
+            document_column=document_column,
+            metadata_columns=metadata_columns,
+            batch_size=batch_size,
+            id_start=id_start,
+            embeddings_key=embeddings_key,
+            ids_key=ids_key,
+            documents_key=documents_key,
+        )
+        return ingest_batches(
+            self, batches, operation=operation  # type: ignore[arg-type]
+        )
+
+    def add_from(
+        self,
+        path: str | PathLike[str],
+        *,
+        file_format: str | None = None,
+        id_column: str | None = None,
+        embedding_column: str = "embedding",
+        embedding_columns: Sequence[str] | None = None,
+        document_column: str | None = None,
+        metadata_columns: Sequence[str] | None = None,
+        batch_size: int = 8192,
+        id_start: int = 0,
+        embeddings_key: str = "embeddings",
+        ids_key: str = "ids",
+        documents_key: str = "documents",
+    ) -> int:
+        """Add records from CSV, TSV, JSON, JSONL, Parquet, Arrow, NumPy, or vecs.
+
+        The format is inferred from the extension unless ``file_format`` is
+        provided. Named-column formats accept one array-like
+        ``embedding_column`` or multiple scalar ``embedding_columns``.
+        NPY/fvecs/ivecs generate IDs from ``id_start``. NPZ uses configurable
+        array keys. Readers remain optional: install ``mojovec[io]`` for
+        NumPy-backed formats and ``mojovec[arrow]`` for Parquet/Arrow.
+
+        Returns the number of imported rows. Each batch is atomic, but the
+        complete multi-batch import is not a transaction: earlier batches
+        remain committed if a later batch fails. Vector-only batches use the
+        contiguous NumPy fast path for both insert-only and upsert imports.
+        """
+        return self._ingest_file(
+            "add",
+            path,
+            file_format=file_format,
+            id_column=id_column,
+            embedding_column=embedding_column,
+            embedding_columns=embedding_columns,
+            document_column=document_column,
+            metadata_columns=metadata_columns,
+            batch_size=batch_size,
+            id_start=id_start,
+            embeddings_key=embeddings_key,
+            ids_key=ids_key,
+            documents_key=documents_key,
+        )
+
+    def upsert_from(
+        self,
+        path: str | PathLike[str],
+        *,
+        file_format: str | None = None,
+        id_column: str | None = None,
+        embedding_column: str = "embedding",
+        embedding_columns: Sequence[str] | None = None,
+        document_column: str | None = None,
+        metadata_columns: Sequence[str] | None = None,
+        batch_size: int = 8192,
+        id_start: int = 0,
+        embeddings_key: str = "embeddings",
+        ids_key: str = "ids",
+        documents_key: str = "documents",
+    ) -> int:
+        """Insert or replace records from a supported external dataset file.
+
+        Parameters match :meth:`add_from`. Vector-only numeric batches use the
+        contiguous NumPy fast path. Payload-bearing batches use the managed
+        API so documents and typed metadata remain aligned with returned IDs.
+        """
+        return self._ingest_file(
+            "upsert",
+            path,
+            file_format=file_format,
+            id_column=id_column,
+            embedding_column=embedding_column,
+            embedding_columns=embedding_columns,
+            document_column=document_column,
+            metadata_columns=metadata_columns,
+            batch_size=batch_size,
+            id_start=id_start,
+            embeddings_key=embeddings_key,
+            ids_key=ids_key,
+            documents_key=documents_key,
+        )
+
+    def _ingest_huggingface(
+        self,
+        operation: str,
+        dataset: str,
+        *,
+        split: str,
+        config: str | None,
+        id_column: str | None,
+        embedding_column: str,
+        embedding_columns: Sequence[str] | None,
+        document_column: str | None,
+        metadata_columns: Sequence[str] | None,
+        batch_size: int,
+        id_start: int,
+        streaming: bool,
+        load_kwargs: Mapping[str, Any] | None,
+    ) -> int:
+        from .io import ingest_batches, iter_huggingface_batches
+
+        batches = iter_huggingface_batches(
+            dataset,
+            split=split,
+            config=config,
+            dimension=self.dimension(),
+            id_column=id_column,
+            embedding_column=embedding_column,
+            embedding_columns=embedding_columns,
+            document_column=document_column,
+            metadata_columns=metadata_columns,
+            batch_size=batch_size,
+            id_start=id_start,
+            streaming=streaming,
+            load_kwargs=load_kwargs,
+        )
+        return ingest_batches(
+            self, batches, operation=operation  # type: ignore[arg-type]
+        )
+
+    def add_huggingface(
+        self,
+        dataset: str,
+        *,
+        split: str = "train",
+        config: str | None = None,
+        id_column: str | None = None,
+        embedding_column: str = "embedding",
+        embedding_columns: Sequence[str] | None = None,
+        document_column: str | None = None,
+        metadata_columns: Sequence[str] | None = None,
+        batch_size: int = 8192,
+        id_start: int = 0,
+        streaming: bool = True,
+        load_kwargs: Mapping[str, Any] | None = None,
+    ) -> int:
+        """Stream a Hugging Face dataset split into this collection.
+
+        Requires the optional ``datasets`` dependency, available through
+        ``pip install mojovec[huggingface]``. ``load_kwargs`` is forwarded to
+        ``datasets.load_dataset`` for authentication, revisions, data files,
+        and cache settings. Import atomicity is per batch.
+        """
+        return self._ingest_huggingface(
+            "add",
+            dataset,
+            split=split,
+            config=config,
+            id_column=id_column,
+            embedding_column=embedding_column,
+            embedding_columns=embedding_columns,
+            document_column=document_column,
+            metadata_columns=metadata_columns,
+            batch_size=batch_size,
+            id_start=id_start,
+            streaming=streaming,
+            load_kwargs=load_kwargs,
+        )
+
+    def upsert_huggingface(
+        self,
+        dataset: str,
+        *,
+        split: str = "train",
+        config: str | None = None,
+        id_column: str | None = None,
+        embedding_column: str = "embedding",
+        embedding_columns: Sequence[str] | None = None,
+        document_column: str | None = None,
+        metadata_columns: Sequence[str] | None = None,
+        batch_size: int = 8192,
+        id_start: int = 0,
+        streaming: bool = True,
+        load_kwargs: Mapping[str, Any] | None = None,
+    ) -> int:
+        """Stream and upsert a Hugging Face dataset split in batches.
+
+        Parameters and optional dependency behavior match
+        :meth:`add_huggingface`. Existing IDs are replaced by their latest
+        imported row; vector-only batches use the NumPy fast path.
+        """
+        return self._ingest_huggingface(
+            "upsert",
+            dataset,
+            split=split,
+            config=config,
+            id_column=id_column,
+            embedding_column=embedding_column,
+            embedding_columns=embedding_columns,
+            document_column=document_column,
+            metadata_columns=metadata_columns,
+            batch_size=batch_size,
+            id_start=id_start,
+            streaming=streaming,
+            load_kwargs=load_kwargs,
+        )
+
     def delete(self, ids: Sequence[int]) -> None:
         """Soft-delete active records and ignore unknown IDs."""
         self._inner.delete(ids)
@@ -524,29 +790,31 @@ class Collection:
         if metadatas is not None or documents is not None:
             self.upsert(ids.tolist(), embeddings, metadatas, documents)
             return
-        import numpy as np
-
-        ids_array = np.asarray(ids)
-        embeddings_array = np.asarray(embeddings)
-        if (
-            ids_array.dtype != np.int64
-            or ids_array.ndim != 1
-            or not ids_array.flags.c_contiguous
-        ):
-            raise TypeError(
-                "ids must be a contiguous one-dimensional numpy.int64 array"
-            )
-        if (
-            embeddings_array.dtype != np.float32
-            or embeddings_array.ndim not in (1, 2)
-            or not embeddings_array.flags.c_contiguous
-        ):
-            raise TypeError(
-                "embeddings must be a contiguous numpy.float32 array"
-            )
-        if embeddings_array.size != ids_array.size * self.dimension():
-            raise ValueError("embeddings shape does not match ids and dimension")
+        ids_array, embeddings_array = _validated_numpy_vectors(
+            ids, embeddings, self.dimension()
+        )
         self._inner.upsert_numpy(ids_array, embeddings_array)
+
+    def add_numpy(
+        self,
+        ids: Any,
+        embeddings: Any,
+        metadatas: Sequence[Metadata] | None = None,
+        documents: Sequence[str] | None = None,
+    ) -> None:
+        """Add contiguous NumPy arrays through the zero-copy fast path.
+
+        Existing IDs are rejected exactly as in :meth:`add`. Payload-bearing
+        calls use the managed path because Python objects cannot cross the
+        numeric zero-copy boundary.
+        """
+        if metadatas is not None or documents is not None:
+            self.add(ids.tolist(), embeddings, metadatas, documents)
+            return
+        ids_array, embeddings_array = _validated_numpy_vectors(
+            ids, embeddings, self.dimension()
+        )
+        self._inner.add_numpy(ids_array, embeddings_array)
 
     def query_numpy(
         self, query_embeddings: Any, n_results: int = 10

@@ -4,8 +4,8 @@ The examples are split by language:
 
 - [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) is the complete
   interactive Jupyter/Colab walkthrough;
-- [`mojo/`](mojo/) contains ten executable tutorials for the native Mojo API;
-- [`python/`](python/) contains seven executable tutorials for the managed
+- [`mojo/`](mojo/) contains twelve executable tutorials for the Mojo API;
+- [`python/`](python/) contains eight executable tutorials for the managed
   Python API.
 
 Both tracks use deterministic, locally generated vectors and require no
@@ -31,12 +31,22 @@ python examples/python/api_04_persistence_compaction.py
 python examples/python/api_05_wal_recovery.py
 python examples/python/api_06_numpy_fast_path.py
 python examples/python/api_07_distance_metrics.py
+python examples/python/api_08_dataset_io.py
 ```
 
-The NumPy fast-path example is optional and requires `numpy`. The other Python
-examples use only MojoVec and the Python standard library.
+The NumPy fast-path and dataset IO examples require the `io` extra. Parquet,
+Arrow, and Hugging Face imports use their separately documented extras.
 
 For the Mojo track, `-I .` resolves the local `mojovec` package:
+
+Example 12 additionally uses Mojo's embedded Python. Install the desired
+decoder extras into that interpreter and expose the source adapter:
+
+```bash
+pixi global add --environment mojo pip
+"$(dirname "$(which mojo)")/python3" -m pip install "mojovec[huggingface]"
+export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
+```
 
 ```bash
 mojo run -I . examples/mojo/api_01_hnsw_fast_search.mojo
@@ -49,6 +59,8 @@ mojo run -I . examples/mojo/api_07_bm25.mojo
 mojo run -I . examples/mojo/api_08_hybrid_rrf.mojo
 mojo run -I . examples/mojo/api_09_wal.mojo
 mojo run -I . examples/mojo/api_10_distance_metrics.mojo
+mojo run -I . examples/mojo/api_11_dataset_io.mojo
+mojo run -I . examples/mojo/api_12_python_dataset_io.mojo
 ```
 
 To compile without executing:
@@ -64,6 +76,8 @@ mojo build -I . examples/mojo/api_07_bm25.mojo
 mojo build -I . examples/mojo/api_08_hybrid_rrf.mojo
 mojo build -I . examples/mojo/api_09_wal.mojo
 mojo build -I . examples/mojo/api_10_distance_metrics.mojo
+mojo build -I . examples/mojo/api_11_dataset_io.mojo
+mojo build -I . examples/mojo/api_12_python_dataset_io.mojo
 ```
 
 ## Python tutorial track
@@ -79,6 +93,7 @@ Run the Python examples in numeric order:
 | [`api_05_wal_recovery.py`](python/api_05_wal_recovery.py) | Optional async/sync durability and restart recovery | `enable_wal`, `flush_wal`, `recover`, `checkpoint` |
 | [`api_06_numpy_fast_path.py`](python/api_06_numpy_fast_path.py) | Contiguous zero-copy vector buffers | `upsert_numpy`, `query_numpy` |
 | [`api_07_distance_metrics.py`](python/api_07_distance_metrics.py) | L2, cosine, and inner-product ordering | `metric`, `storage_kind` |
+| [`api_08_dataset_io.py`](python/api_08_dataset_io.py) | Batched local files and optional Hugging Face streaming | `add_from`, `upsert_from`, `add_huggingface` |
 | [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) | Complete interactive Jupyter/Colab quickstart | CRUD, `where`, BM25, hybrid RRF, Flat/SQ8, NumPy, compaction, mmap, WAL |
 
 The managed Python methods return ordinary Python values and own all native
