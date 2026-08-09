@@ -271,6 +271,64 @@ def test_arrow_file_and_stream_readers(tmp_path, stream):
     _assert_two_record_collection(collection)
 
 
+@pytest.mark.parametrize("file_format", ["parquet", "arrow"])
+def test_embedded_python_uses_synchronous_columnar_readers(
+    tmp_path, file_format
+):
+    pa = pytest.importorskip("pyarrow")
+    path = tmp_path / f"records.{file_format}"
+    table = pa.table(
+        {
+            "id": [10, 20],
+            "embedding": [[1.0, 0.0], [0.0, 1.0]],
+            "text": ["first document", "second document"],
+        }
+    )
+    if file_format == "parquet":
+        pq = pytest.importorskip("pyarrow.parquet")
+        pq.write_table(table, path)
+    else:
+        with pa.OSFile(str(path), "wb") as sink:
+            with pa.ipc.new_stream(sink, table.schema) as writer:
+                writer.write_table(table)
+
+    batches = list(
+        iter_file_batches(
+            path,
+            file_format=file_format,
+            dimension=2,
+            id_column="id",
+            document_column="text",
+            batch_size=1,
+            _embedded_python=True,
+        )
+    )
+
+    assert [batch.ids.tolist() for batch in batches] == [[10], [20]]
+    assert [batch.documents for batch in batches] == [
+        ["first document"],
+        ["second document"],
+    ]
+
+
+def test_embedded_python_rejects_random_access_arrow_file(tmp_path):
+    pa = pytest.importorskip("pyarrow")
+    path = tmp_path / "records.arrow"
+    table = pa.table({"embedding": [[1.0, 0.0]]})
+    with pa.OSFile(str(path), "wb") as sink:
+        with pa.ipc.new_file(sink, table.schema) as writer:
+            writer.write_table(table)
+
+    with pytest.raises(ValueError, match="write an Arrow IPC stream"):
+        list(
+            iter_file_batches(
+                path,
+                dimension=2,
+                _embedded_python=True,
+            )
+        )
+
+
 def test_huggingface_adapter_is_batched_and_forwards_loader_options(monkeypatch):
     calls = []
     fake = types.ModuleType("datasets")

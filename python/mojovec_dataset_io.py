@@ -470,6 +470,7 @@ def iter_file_batches(
     embeddings_key: str = "embeddings",
     ids_key: str = "ids",
     documents_key: str = "documents",
+    _embedded_python: bool = False,
 ) -> Iterator[ImportBatch]:
     """Yield validated batches from a supported local dataset file.
 
@@ -481,6 +482,8 @@ def iter_file_batches(
     NPY and fvecs/ivecs contain embeddings only and receive generated IDs.
     NPZ reads arrays from ``embeddings_key`` and optionally ``ids_key`` and
     ``documents_key``; names in ``metadata_columns`` select aligned NPZ arrays.
+    ``_embedded_python`` selects synchronous PyArrow I/O for Mojo's embedded
+    interpreter; normal Python callers retain threaded, memory-mapped reads.
     """
     _validate_batch_size(batch_size)
     normalized = _infer_format(path, file_format)
@@ -564,27 +567,65 @@ def iter_file_batches(
             metadata_columns=metadata_columns,
         )
         if normalized == "parquet":
-            batches = pq.ParquetFile(path).iter_batches(
-                batch_size=batch_size, columns=columns
+            batches = pq.ParquetFile(
+                path,
+                pre_buffer=not _embedded_python,
+            ).iter_batches(
+                batch_size=batch_size,
+                columns=columns,
+                use_threads=not _embedded_python,
             )
             rows: Iterable[Mapping[str, Any]] = (
                 row for batch in batches for row in batch.to_pylist()
             )
         else:
+            def rows_from_arrow_source(
+                source: Any,
+            ) -> Iterator[Mapping[str, Any]]:
+                read_options = pa.ipc.IpcReadOptions(
+                    use_threads=not _embedded_python
+                )
+                try:
+                    reader = pa.ipc.open_file(source, options=read_options)
+                    record_batches = (
+                        reader.get_batch(index)
+                        for index in range(reader.num_record_batches)
+                    )
+                except pa.ArrowInvalid:
+                    source.seek(0)
+                    reader = pa.ipc.open_stream(source, options=read_options)
+                    record_batches = iter(reader)
+                for record_batch in record_batches:
+                    yield from record_batch.select(columns).to_pylist()
+
             def arrow_rows() -> Iterator[Mapping[str, Any]]:
-                with pa.memory_map(str(path), "r") as source:
-                    try:
-                        reader = pa.ipc.open_file(source)
-                        record_batches = (
-                            reader.get_batch(index)
-                            for index in range(reader.num_record_batches)
+                if _embedded_python:
+                    with open(path, "rb") as input_file:
+                        payload = input_file.read()
+                    if payload[:6] == b"ARROW1":
+                        raise ValueError(
+                            "Arrow IPC files use asynchronous footer reads "
+                            "that are incompatible with Mojo embedded Python "
+                            "on macOS; write an Arrow IPC stream instead"
                         )
-                    except pa.ArrowInvalid:
-                        source.seek(0)
-                        reader = pa.ipc.open_stream(source)
-                        record_batches = iter(reader)
-                    for record_batch in record_batches:
-                        yield from record_batch.select(columns).to_pylist()
+                    # The stream reader is sequential and does not initialize
+                    # Arrow's Future/tracing runtime inside embedded Python.
+                    source = pa.BufferReader(payload)
+                    try:
+                        read_options = pa.ipc.IpcReadOptions(
+                            use_threads=False
+                        )
+                        reader = pa.ipc.open_stream(
+                            source,
+                            options=read_options,
+                        )
+                        for record_batch in reader:
+                            yield from record_batch.select(columns).to_pylist()
+                    finally:
+                        source.close()
+                    return
+                with pa.memory_map(str(path), "r") as source:
+                    yield from rows_from_arrow_source(source)
 
             rows = arrow_rows()
         yield from _mapping_batches(

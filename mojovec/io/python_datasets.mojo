@@ -264,6 +264,7 @@ def _read_python_file(
         embeddings_key=options.embeddings_key,
         ids_key=options.ids_key,
         documents_key=options.documents_key,
+        _embedded_python=True,
     )
     return PythonDatasetReader(batches, dimension)
 
