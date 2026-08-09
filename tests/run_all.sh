@@ -18,6 +18,7 @@ echo -e "${BOLD}${CYAN}       MojoVec - Running All Tests         ${NC}"
 echo -e "${BOLD}${CYAN}===========================================${NC}\n"
 
 cd "$REPO_ROOT"
+export PYTHONPATH="$REPO_ROOT/python${PYTHONPATH:+:$PYTHONPATH}"
 
 PASSED=0
 FAILED=0

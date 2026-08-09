@@ -82,12 +82,35 @@ handwritten assembly in the search kernels.
 
 ## Installation
 
+### Pure Mojo
+
+Clone the repository and let Pixi install the locked stable Mojo toolchain in
+the project itself. No global Mojo installation or external Python virtual
+environment is required:
+
 ```bash
-# Download the latest mojovec.mojoc
-curl -LO https://github.com/bewaffnete/MojoVec/releases/latest/download/mojovec.mojoc
+git clone https://github.com/bewaffnete/MojoVec.git
+cd MojoVec
+pixi install --locked
+pixi run mojo-version
+
+# Run a MojoVec program against the source package.
+pixi run -- mojo run -I . examples/mojo/api_01_hnsw_fast_search.mojo
 ```
 
-Place the `mojovec.mojoc` file in your project directory. You can now import it directly in your code. (If you place it elsewhere, pass the include path to the compiler: `mojo run -I /path/to/dir your_script.mojo`).
+`pixi.toml` declares Mojo and the Python-backed dataset decoders;
+`pixi.lock` pins their exact Apple Silicon and Linux x86-64 builds. The local
+`.pixi/` directory contains the installed toolchain and is ignored by Git.
+
+For a single precompiled package instead of a source checkout, download the
+release artifact and place it beside your Mojo program:
+
+```bash
+curl -LO https://github.com/bewaffnete/MojoVec/releases/latest/download/mojovec.mojoc
+mojo run your_script.mojo
+```
+
+Use `-I /path/to/package` when `mojovec.mojoc` is stored in another directory.
 
 ---
 
@@ -776,15 +799,17 @@ commands.
 
 ## Running Tests & Benchmarks
 
-Requires Mojo (via Pixi/Magic).
+The commands below use the stable project-local Mojo toolchain from
+`pixi.lock`:
 
 ```bash
-# Run all tests
-for f in tests/test_*.mojo; do mojo run -I . "$f"; done
+# Run the existing complete Mojo suite and the Python binding suite.
+pixi run test-mojo
+pixi run test-python
 
 # Run the SIFT1M HNSW benchmarks
-mojo run -I . benchmarks/suite/mojovec_sq8.mojo
-mojo run -I . benchmarks/suite/mojovec_flat.mojo
+pixi run -- mojo run -I . benchmarks/suite/mojovec_sq8.mojo
+pixi run -- mojo run -I . benchmarks/suite/mojovec_flat.mojo
 ```
 
 ---
