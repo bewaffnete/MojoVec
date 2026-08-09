@@ -118,7 +118,24 @@ jobs:
           pixi global install "mojo==$MOJO_VERSION" \
             -c https://conda.modular.com/max \
             -c conda-forge
+          pixi global add --environment mojo numpy
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
+
+          mojo_python_library="$(find "$HOME/.pixi/envs/mojo/lib" \
+            -maxdepth 1 -type f \
+            \( -name 'libpython*.dylib' -o -name 'libpython*.so*' \) \
+            -print -quit)"
+          if [ -z "$mojo_python_library" ]; then
+            echo "Unable to find the Pixi Mojo environment's shared libpython" >&2
+            exit 1
+          fi
+          mojo_python_site_packages="$(
+            "$HOME/.pixi/envs/mojo/bin/python" -c \
+              'import site; print(site.getsitepackages()[0])'
+          )"
+          echo "MOJO_PYTHON_LIBRARY=$mojo_python_library" >> "$GITHUB_ENV"
+          echo "PYTHONPATH=$GITHUB_WORKSPACE/python:$mojo_python_site_packages" \
+            >> "$GITHUB_ENV"
 
       - name: Build precompiled package
         run: |
