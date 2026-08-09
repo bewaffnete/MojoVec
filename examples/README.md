@@ -34,17 +34,15 @@ python examples/python/api_07_distance_metrics.py
 python examples/python/api_08_dataset_io.py
 ```
 
-The NumPy fast-path and dataset IO examples require the `io` extra. Parquet,
-Arrow, and Hugging Face imports use their separately documented extras.
+The standard MojoVec installation includes NumPy, PyArrow, and Hugging Face
+`datasets`, so every Python dataset example uses the same base installation.
 
 For the Mojo track, `-I .` resolves the local `mojovec` package:
 
-Example 12 additionally uses Mojo's embedded Python. Install the desired
-decoder extras into that interpreter and expose the source adapter:
+Example 12 additionally uses Mojo's embedded Python. When running from a source
+checkout, expose the source adapter to that interpreter:
 
 ```bash
-pixi global add --environment mojo pip
-"$(dirname "$(which mojo)")/python3" -m pip install "mojovec[huggingface]"
 export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
 ```
 
@@ -93,7 +91,7 @@ Run the Python examples in numeric order:
 | [`api_05_wal_recovery.py`](python/api_05_wal_recovery.py) | Optional async/sync durability and restart recovery | `enable_wal`, `flush_wal`, `recover`, `checkpoint` |
 | [`api_06_numpy_fast_path.py`](python/api_06_numpy_fast_path.py) | Contiguous zero-copy vector buffers | `upsert_numpy`, `query_numpy` |
 | [`api_07_distance_metrics.py`](python/api_07_distance_metrics.py) | L2, cosine, and inner-product ordering | `metric`, `storage_kind` |
-| [`api_08_dataset_io.py`](python/api_08_dataset_io.py) | Batched local files and optional Hugging Face streaming | `add_from`, `upsert_from`, `add_huggingface` |
+| [`api_08_dataset_io.py`](python/api_08_dataset_io.py) | Batched local files and Hugging Face streaming | `add_from`, `upsert_from`, `add_huggingface` |
 | [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) | Complete interactive Jupyter/Colab quickstart | CRUD, `where`, BM25, hybrid RRF, Flat/SQ8, NumPy, compaction, mmap, WAL |
 
 The managed Python methods return ordinary Python values and own all native

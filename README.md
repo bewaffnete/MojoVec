@@ -653,13 +653,12 @@ JSONL, Parquet, Arrow, and Hugging Face also avoid materializing the complete
 dataset at once:
 
 ```bash
-# NumPy, CSV/TSV, JSON/JSONL, NPY/NPZ, and fvecs/ivecs
-pip install "mojovec[io]"
-
-# Add the optional ecosystem reader you need
-pip install "mojovec[arrow]"        # Parquet and Arrow IPC
-pip install "mojovec[huggingface]" # Hugging Face Datasets
+pip install mojovec
 ```
+
+This single command installs NumPy, PyArrow, and Hugging Face `datasets`, so
+all Python-backed dataset readers are available without separate extras.
+Native Mojo CSV/TSV, NPY, fvecs, and ivecs readers do not invoke Python.
 
 ```python
 collection.add_from(
@@ -745,13 +744,9 @@ single-use and imports are atomic per batch, not across the complete source.
 | `split`, `config`, `streaming` | Select Hugging Face dataset input |
 | `revision`, `cache_dir`, `token`, `data_dir` | Forward common Hugging Face loader options |
 
-The optional packages must be installed for the Python interpreter embedded
-by Mojo. For a Pixi global Mojo installation:
-
-```bash
-pixi global add --environment mojo pip
-"$(dirname "$(which mojo)")/python3" -m pip install "mojovec[huggingface]"
-```
+Python-backed Mojo readers use the Python interpreter embedded by Mojo. When
+installing MojoVec for that interpreter, the same package dependencies are
+installed automatically.
 
 From a source checkout, additionally make the lightweight adapter module
 visible without importing the native Python binding:

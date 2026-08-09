@@ -10,6 +10,11 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "MojoVec contributors" }]
+dependencies = [
+    "numpy",
+    "pyarrow>=21",
+    "datasets>=3,<5",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Operating System :: MacOS :: MacOS X",
@@ -25,12 +30,6 @@ classifiers = [
 Homepage = "https://github.com/bewaffnete/MojoVec"
 Repository = "https://github.com/bewaffnete/MojoVec"
 Issues = "https://github.com/bewaffnete/MojoVec/issues"
-
-[project.optional-dependencies]
-io = ["numpy"]
-arrow = ["numpy", "pyarrow>=21"]
-huggingface = ["numpy", "pyarrow>=21", "datasets>=3,<5"]
-test = ["pytest", "numpy", "pyarrow>=21"]
 
 [tool.setuptools]
 package-dir = { "" = "python" }

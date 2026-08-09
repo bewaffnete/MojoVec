@@ -417,8 +417,7 @@ class Collection:
         provided. Named-column formats accept one array-like
         ``embedding_column`` or multiple scalar ``embedding_columns``.
         NPY/fvecs/ivecs generate IDs from ``id_start``. NPZ uses configurable
-        array keys. Readers remain optional: install ``mojovec[io]`` for
-        NumPy-backed formats and ``mojovec[arrow]`` for Parquet/Arrow.
+        array keys. NumPy and PyArrow are installed with MojoVec.
 
         Returns the number of imported rows. Each batch is atomic, but the
         complete multi-batch import is not a transaction: earlier batches
@@ -535,10 +534,10 @@ class Collection:
     ) -> int:
         """Stream a Hugging Face dataset split into this collection.
 
-        Requires the optional ``datasets`` dependency, available through
-        ``pip install mojovec[huggingface]``. ``load_kwargs`` is forwarded to
-        ``datasets.load_dataset`` for authentication, revisions, data files,
-        and cache settings. Import atomicity is per batch.
+        The ``datasets`` dependency is installed with MojoVec. ``load_kwargs``
+        is forwarded to ``datasets.load_dataset`` for authentication,
+        revisions, data files, and cache settings. Import atomicity is per
+        batch.
         """
         return self._ingest_huggingface(
             "add",
@@ -574,9 +573,9 @@ class Collection:
     ) -> int:
         """Stream and upsert a Hugging Face dataset split in batches.
 
-        Parameters and optional dependency behavior match
-        :meth:`add_huggingface`. Existing IDs are replaced by their latest
-        imported row; vector-only batches use the NumPy fast path.
+        Parameters and dependency behavior match :meth:`add_huggingface`.
+        Existing IDs are replaced by their latest imported row; vector-only
+        batches use the NumPy fast path.
         """
         return self._ingest_huggingface(
             "upsert",

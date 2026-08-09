@@ -65,8 +65,7 @@ def main() -> None:
     # NPZ can additionally provide arrays named embeddings, ids, documents,
     # plus any arrays selected by metadata_columns.
 
-    # Hugging Face Datasets is optional and streams by default. Install it
-    # with: pip install "mojovec[huggingface]"
+    # Hugging Face Datasets is installed with MojoVec and streams by default.
     #
     # collection.add_huggingface(
     #     "owner/dataset",

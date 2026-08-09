@@ -64,7 +64,7 @@ def _numpy() -> Any:
         import numpy as np
     except ImportError as error:  # pragma: no cover - environment dependent
         raise ImportError(
-            "This MojoVec reader requires NumPy; install mojovec[io]."
+            "NumPy is a MojoVec dependency but could not be imported."
         ) from error
     return np
 
@@ -75,8 +75,7 @@ def _pyarrow() -> tuple[Any, Any]:
         import pyarrow.parquet as pq
     except ImportError as error:  # pragma: no cover - environment dependent
         raise ImportError(
-            "Parquet and Arrow readers require PyArrow; install "
-            "mojovec[arrow]."
+            "PyArrow is a MojoVec dependency but could not be imported."
         ) from error
     return pa, pq
 
@@ -668,8 +667,8 @@ def iter_huggingface_batches(
 ) -> Iterator[ImportBatch]:
     """Yield batches from a Hugging Face dataset split.
 
-    Requires the optional ``datasets`` package. ``load_kwargs`` is forwarded
-    to ``datasets.load_dataset`` for options such as ``revision``, ``token``,
+    Uses the installed ``datasets`` package. ``load_kwargs`` is forwarded to
+    ``datasets.load_dataset`` for options such as ``revision``, ``token``,
     ``cache_dir``, or ``data_files``.
     """
     _validate_batch_size(batch_size)
@@ -677,8 +676,8 @@ def iter_huggingface_batches(
         from datasets import load_dataset
     except ImportError as error:  # pragma: no cover - environment dependent
         raise ImportError(
-            "Hugging Face import requires datasets; install "
-            "mojovec[huggingface]."
+            "Hugging Face datasets is a MojoVec dependency but could not be "
+            "imported."
         ) from error
     source = load_dataset(
         dataset,
