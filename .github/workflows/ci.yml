@@ -15,6 +15,8 @@ concurrency:
 
 env:
   MOJO_VERSION: 1.0.0b2
+  PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints/ci.txt
+  MALLOC_CHECK_: "3"
 
 jobs:
   mojo:
@@ -24,7 +26,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-22.04, macos-latest]
 
     steps:
       - name: Check out repository
@@ -125,6 +127,14 @@ jobs:
         run: |
           python -m build --wheel --outdir dist
           if [ "$RUNNER_OS" == "Linux" ]; then
+            raw_wheel="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
+            raw_smoke_dir="$(mktemp -d)"
+            python -m venv "$raw_smoke_dir/venv"
+            "$raw_smoke_dir/venv/bin/python" -m pip install --no-deps "$raw_wheel"
+            cd "$raw_smoke_dir"
+            "$raw_smoke_dir/venv/bin/python" -c \
+              'import mojovec; print("raw", mojovec.__version__, mojovec._native_backend)'
+            cd "$GITHUB_WORKSPACE"
             auditwheel repair \
               --plat manylinux_2_35_x86_64 \
               --wheel-dir repaired \
@@ -150,6 +160,10 @@ jobs:
           if [ "$RUNNER_OS" == "Linux" ]; then
             MOJOVEC_FORCE_BACKEND=avx2 "$smoke_dir/venv/bin/python" -c \
               'import importlib.util; import mojovec; assert mojovec._native_backend == "avx2"; assert importlib.util.find_spec("mojovec._avx2._native"); assert importlib.util.find_spec("mojovec._avx512._native"); print(mojovec._native_backend)'
+            if grep -qw avx512f /proc/cpuinfo; then
+              MOJOVEC_FORCE_BACKEND=avx512 "$smoke_dir/venv/bin/python" -c \
+                'import mojovec; assert mojovec._native_backend == "avx512"; print(mojovec._native_backend)'
+            fi
           fi
 
       - name: Run Python tests

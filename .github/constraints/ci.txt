@@ -1,0 +1,13 @@
+# Keep CI and release wheels reproducible. Update these deliberately in a
+# dedicated pull request after the complete Linux wheel lifecycle matrix passes.
+pip==26.2.1
+build==1.5.0
+pytest==9.1.1
+setuptools==83.0.0
+wheel==0.47.0
+packaging==26.3
+pyproject-hooks==1.2.0
+numpy==2.5.1
+pyarrow==25.0.0
+auditwheel==6.7.0
+pyelftools==0.33

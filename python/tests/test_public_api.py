@@ -1,4 +1,7 @@
 import inspect
+import os
+import subprocess
+import sys
 
 import mojovec
 
@@ -111,3 +114,25 @@ def test_public_signatures_are_python_introspectable():
 def test_native_backend_is_publicly_observable():
     assert mojovec.native_backend() in {"native", "avx2", "avx512"}
     assert mojovec.native_backend() == mojovec._native_backend
+
+
+def test_native_module_exits_cleanly_in_fresh_interpreter():
+    """Detect heap corruption during native-module shutdown."""
+    environment = os.environ.copy()
+    if sys.platform.startswith("linux"):
+        environment["MALLOC_CHECK_"] = "3"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import mojovec; "
+                "print(mojovec.__version__, mojovec.native_backend())"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=environment,
+    )
+    assert completed.returncode == 0, completed.stderr
