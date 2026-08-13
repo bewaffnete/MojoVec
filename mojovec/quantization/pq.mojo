@@ -1,4 +1,5 @@
 from std.collections import List
+from std.algorithm import parallelize
 from std.memory.span import Span
 from ..clustering.kmeans import KMeans
 from ..utils.distances import (
@@ -67,30 +68,40 @@ struct ProductQuantizer(Movable):
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()
 
-        # For each subspace, we need to extract the sub-vectors.
-        var sub_x = List[Float32](
-            unsafe_uninit_length=n * self.dsub
-        )
-        var sub_x_ptr = sub_x.unsafe_ptr()
-        
-        for m in range(self.M):
-            # Extract sub-vectors
+        var dimension = self.d
+        var sub_dimension = self.dsub
+        var centroid_count = self.ksub
+        var pq_centroids = self.centroids
+
+        # Train independent subspaces in one outer parallel region. Each
+        # worker owns its extraction buffer and K-Means state. The inner
+        # K-Means is deliberately serial: nesting/restarting its worker pool
+        # for every 4D subspace corrupts state in the Mojo 1.0.0b2 Linux x86
+        # runtime. Parallelism is preserved across M independent subspaces.
+        @parameter
+        def train_subspace(m: Int):
+            var sub_x = List[Float32](
+                unsafe_uninit_length=n * sub_dimension
+            )
+            var sub_x_ptr = sub_x.unsafe_ptr()
             for i in range(n):
-                for j in range(self.dsub):
-                    sub_x_ptr[i * self.dsub + j] = x_ptr[
-                        i * self.d + m * self.dsub + j
+                for j in range(sub_dimension):
+                    sub_x_ptr[i * sub_dimension + j] = x_ptr[
+                        i * dimension + m * sub_dimension + j
                     ]
-            
-            var kmeans = KMeans(self.dsub, self.ksub, 15)
-            kmeans.train(
+
+            var kmeans = KMeans(sub_dimension, centroid_count, 15)
+            kmeans.train_serial(
                 Span[mut=True, Float32](sub_x)
             )
-            
+
             # Copy learned centroids
-            var offset = m * self.ksub * self.dsub
-            for i in range(self.ksub * self.dsub):
-                self.centroids[offset + i] = kmeans.centroids[i]
-                
+            var offset = m * centroid_count * sub_dimension
+            for i in range(centroid_count * sub_dimension):
+                pq_centroids[offset + i] = kmeans.centroids[i]
+
+        parallelize[train_subspace](self.M)
+
         self.is_trained = True
 
     def compute_codes(

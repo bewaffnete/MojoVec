@@ -46,6 +46,17 @@ struct KMeans:
         Args:
             x: Contiguous flattened training vectors.
         """
+        self._train[True](x)
+
+    def train_serial(mut self, x: Span[Float32, _]):
+        """Trains without creating a nested worker pool.
+
+        Used when independent K-Means models are already scheduled in
+        parallel by a higher-level quantizer.
+        """
+        self._train[False](x)
+
+    def _train[PARALLEL: Bool](mut self, x: Span[Float32, _]):
         var n = len(x) // self.d
         if n == 0: return
         var data_ptr = x.unsafe_ptr()
@@ -148,7 +159,11 @@ struct KMeans:
                         c_ptr[j] += x_ptr[j]
                         j += 1
 
-            parallelize[process_chunk](num_chunks)
+            comptime if PARALLEL:
+                parallelize[process_chunk](num_chunks)
+            else:
+                for chunk_id in range(num_chunks):
+                    process_chunk(chunk_id)
             
             # Reduce phase
             for c in range(self.k):
