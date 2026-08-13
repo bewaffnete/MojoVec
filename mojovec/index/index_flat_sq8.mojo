@@ -574,3 +574,9 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
             A pointer to the requested uncompressed vector.
         """
         return self.codes_f32 + (id * self.d)
+
+    def get_vector_span(self, id: Int) -> Span[Float32, MutUntrackedOrigin]:
+        """Returns a borrowed view of the retained Float32 vector."""
+        return Span[Float32, MutUntrackedOrigin](
+            ptr=self.codes_f32 + (id * self.d), length=self.d
+        )

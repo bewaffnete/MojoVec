@@ -210,15 +210,21 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         self.ntotal = new_ntotal
         
     def get_vector(self, id: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:
-        """Retrieves a pointer to a specific vector in the index.
+        """Returns a raw vector pointer for the internal HNSW hot path."""
+        return self.codes + (id * self.d)
+
+    def get_vector_span(self, id: Int) -> Span[Float32, MutUntrackedOrigin]:
+        """Retrieves a borrowed view of a specific vector in the index.
         
         Args:
             id: The index of the vector to retrieve.
             
         Returns:
-            A pointer to the requested vector.
+            A view valid while the index storage remains unchanged.
         """
-        return self.codes + (id * self.d)
+        return Span[Float32, MutUntrackedOrigin](
+            ptr=self.codes + (id * self.d), length=self.d
+        )
 
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _]):
         """Searches for the k-nearest neighbors of the given query vectors."""

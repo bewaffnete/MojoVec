@@ -60,7 +60,7 @@ trait QuantizerTrait(Movable, ImplicitlyDeletable):
         """
         ...
         
-    def get_vector(self, id: Int) -> UnsafePointer[Float32, MutUntrackedOrigin]:
+    def get_vector_span(self, id: Int) -> Span[Float32, MutUntrackedOrigin]:
         """
         Retrieves a vector by its ID.
         
@@ -68,6 +68,6 @@ trait QuantizerTrait(Movable, ImplicitlyDeletable):
             id: The unique identifier of the vector.
             
         Returns:
-            A pointer to the corresponding vector.
+            A borrowed view of the corresponding vector.
         """
         ...

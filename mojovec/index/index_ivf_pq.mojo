@@ -127,7 +127,8 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                 var list_no = assign_labels[i]
                 if list_no < 0 or list_no >= self.nlist:
                     list_no = 0
-                var c_ptr = self.quantizer.get_vector(list_no)
+                var centroid = self.quantizer.get_vector_span(list_no)
+                var c_ptr = centroid.unsafe_ptr()
                 for j in range(self.d):
                     residuals[i * self.d + j] = (
                         x_ptr[i * self.d + j] - c_ptr[j]
@@ -188,7 +189,8 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                 var list_no = assign_labels[i]
                 if list_no < 0 or list_no >= self.nlist:
                     list_no = 0
-                var c_ptr = self.quantizer.get_vector(list_no)
+                var centroid = self.quantizer.get_vector_span(list_no)
+                var c_ptr = centroid.unsafe_ptr()
                 for j in range(self.d):
                     residuals[i * self.d + j] = x_ptr[i * self.d + j] - c_ptr[j]
             self.pq.compute_codes(
@@ -309,7 +311,8 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                 var coarse_distance: Float32 = 0.0
                 
                 if self.by_residual and self.metric_type == METRIC_L2:
-                    var c_ptr = self.quantizer.get_vector(list_no)
+                    var centroid = self.quantizer.get_vector_span(list_no)
+                    var c_ptr = centroid.unsafe_ptr()
                     for j in range(self.d):
                         q_residual_ptr[j] = q_ptr[j] - c_ptr[j]
                     self.pq.compute_distance_table(
@@ -321,7 +324,8 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                     # For inner product, x ~= coarse + residual. Candidate
                     # ranking therefore uses -(q·coarse + q·residual). The
                     # previous q-coarse table was only valid for squared L2.
-                    var c_ptr = self.quantizer.get_vector(list_no)
+                    var centroid = self.quantizer.get_vector_span(list_no)
+                    var c_ptr = centroid.unsafe_ptr()
                     coarse_distance = -inner_product_simd[8](
                         q_ptr, c_ptr, self.d
                     )
