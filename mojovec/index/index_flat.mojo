@@ -309,7 +309,14 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
                 for j in range(k):
                     res_dist_ptr[j] = -res_dist_ptr[j]
                     
-        parallelize[process_query](n, n)
+        # Let the runtime size the worker pool. Passing ``n`` as both the
+        # number of work items and workers attempted to create one worker per
+        # query. Large IVF training batches therefore requested thousands of
+        # workers while assigning vectors to their coarse centroids, which is
+        # both slower and unstable on Linux x86 runtimes. Every query remains
+        # parallel; only the amount of physical concurrency is bounded by the
+        # runtime.
+        parallelize[process_query](n)
                     
     def get_distance_computer(self, query: UnsafePointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector."""
