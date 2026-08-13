@@ -86,11 +86,28 @@ struct KMeans:
         var cluster_count = self.k
         # Main loop
         for iteration in range(self.niter):
-            # E-step: Assign points to centroids
+            # Clear the per-chunk accumulators before publishing them to the
+            # worker pool.
+            for i in range(num_chunks * self.k * self.d):
+                local_centroids_ptr[i] = 0.0
+            for i in range(num_chunks * self.k):
+                local_counts_ptr[i] = 0
+
+            # Fuse assignment and accumulation into one parallel region. Each
+            # worker owns a disjoint input range and accumulator slice, so no
+            # cross-thread assignment buffer hand-off is needed between the E
+            # and M steps. The expensive O(n * k * d) distance work remains
+            # parallel while reduction order stays deterministic below.
             @parameter
-            def process_assignment_chunk(chunk_id: Int):
+            def process_chunk(chunk_id: Int):
                 var start = chunk_id * chunk_size
                 var end = min(start + chunk_size, n)
+                var my_centroids = (
+                    local_centroids_ptr
+                    + chunk_id * cluster_count * dimension
+                )
+                var my_counts = local_counts_ptr + chunk_id * cluster_count
+
                 for i in range(start, end):
                     var min_dist: Float32 = 1e38
                     var best_c = -1
@@ -111,32 +128,11 @@ struct KMeans:
                     # Keep malformed numeric input from becoming an
                     # out-of-bounds cluster write. Finite input always selects
                     # a real centroid.
-                    assignments_ptr[i] = max(best_c, 0)
-
-            parallelize[process_assignment_chunk](num_chunks)
-            
-            # Zero out thread-local accumulators
-            for i in range(num_chunks * self.k * self.d):
-                local_centroids_ptr[i] = 0.0
-            for i in range(num_chunks * self.k):
-                local_counts_ptr[i] = 0
-                
-            # M-step: Update centroids in parallel
-            @parameter
-            def process_chunk(chunk_id: Int):
-                var start = chunk_id * chunk_size
-                var end = min(start + chunk_size, n)
-                var my_centroids = (
-                    local_centroids_ptr
-                    + chunk_id * cluster_count * dimension
-                )
-                var my_counts = local_counts_ptr + chunk_id * cluster_count
-                
-                for i in range(start, end):
-                    var c = assignments_ptr[i]
+                    var c = max(best_c, 0)
+                    assignments_ptr[i] = c
                     my_counts[c] += 1
                     var c_ptr = my_centroids + c * dimension
-                    var x_ptr = data_ptr + i * dimension
+                    x_ptr = data_ptr + i * dimension
                     
                     var j = 0
                     while j <= dimension - 4:
@@ -147,14 +143,8 @@ struct KMeans:
                     while j < dimension:
                         c_ptr[j] += x_ptr[j]
                         j += 1
-                        
-            # Assignment is the O(n * k * d) hot phase and remains fully
-            # parallel. Accumulation is only O(n * d); executing its 32
-            # disjoint chunks deterministically avoids a Mojo 1.0.0b2 x86
-            # worker-pool corruption observed when many small-subvector
-            # K-Means instances are trained back-to-back for PQ.
-            for chunk_id in range(num_chunks):
-                process_chunk(chunk_id)
+
+            parallelize[process_chunk](num_chunks)
             
             # Reduce phase
             for c in range(self.k):
