@@ -1,5 +1,6 @@
 from std.collections import List
-from std.algorithm import parallelize
+from std.ffi import external_call
+from std.memory import alloc
 from std.memory.span import Span
 from ..clustering.kmeans import KMeans
 from ..utils.distances import (
@@ -9,6 +10,72 @@ from ..utils.distances import (
     l2_distance_simd,
 )
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
+
+
+struct PQTrainContext(Movable):
+    """Arguments owned by one native PQ subspace training worker."""
+
+    var input_address: Int
+    var output_address: Int
+    var n: Int
+    var d: Int
+    var dsub: Int
+    var ksub: Int
+    var subspace: Int
+
+    def __init__(
+        out self,
+        input_address: Int,
+        output_address: Int,
+        n: Int,
+        d: Int,
+        dsub: Int,
+        ksub: Int,
+        subspace: Int,
+    ):
+        self.input_address = input_address
+        self.output_address = output_address
+        self.n = n
+        self.d = d
+        self.dsub = dsub
+        self.ksub = ksub
+        self.subspace = subspace
+
+
+def _train_pq_subspace(context: PQTrainContext):
+    """Extracts and trains one independent PQ subspace."""
+    var x_ptr = UnsafePointer[
+        Float32, MutUntrackedOrigin
+    ](unsafe_from_address=context.input_address)
+    var pq_centroids = UnsafePointer[
+        Float32, MutUntrackedOrigin
+    ](unsafe_from_address=context.output_address)
+    var sub_x = List[Float32](
+        unsafe_uninit_length=context.n * context.dsub
+    )
+    var sub_x_ptr = sub_x.unsafe_ptr()
+
+    for i in range(context.n):
+        for j in range(context.dsub):
+            sub_x_ptr[i * context.dsub + j] = x_ptr[
+                i * context.d + context.subspace * context.dsub + j
+            ]
+
+    var kmeans = KMeans(context.dsub, context.ksub, 15)
+    kmeans.train_serial(Span[mut=True, Float32](sub_x))
+
+    var offset = context.subspace * context.ksub * context.dsub
+    for i in range(context.ksub * context.dsub):
+        pq_centroids[offset + i] = kmeans.centroids[i]
+
+
+def mojovec_pq_pthread_worker(context_address: Int) abi("C") -> Int:
+    """Native pthread entry point for one PQ subspace."""
+    var context = UnsafePointer[
+        PQTrainContext, MutUntrackedOrigin
+    ](unsafe_from_address=context_address)
+    _train_pq_subspace(context[])
+    return 0
 
 struct ProductQuantizer(Movable):
     """Product Quantizer (PQ) for vector compression.
@@ -68,39 +135,45 @@ struct ProductQuantizer(Movable):
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()
 
-        var dimension = self.d
-        var sub_dimension = self.dsub
-        var centroid_count = self.ksub
-        var pq_centroids = self.centroids
-
-        # Train independent subspaces in one outer parallel region. Each
-        # worker owns its extraction buffer and K-Means state. The inner
-        # K-Means is deliberately serial: nesting/restarting its worker pool
-        # for every 4D subspace corrupts state in the Mojo 1.0.0b2 Linux x86
-        # runtime. Parallelism is preserved across M independent subspaces.
-        @parameter
-        def train_subspace(m: Int):
-            var sub_x = List[Float32](
-                unsafe_uninit_length=n * sub_dimension
+        # Train independent subspaces on native pthreads. This keeps the
+        # parallelism at the algorithm level while avoiding AsyncRT's repeated
+        # raw-pointer worker-pool corruption on Linux x86. Each context owns a
+        # disjoint output slice; the caller joins every worker before publish.
+        var threads = alloc[UInt](self.M)
+        var contexts = alloc[PQTrainContext](self.M)
+        for m in range(self.M):
+            var context = PQTrainContext(
+                Int(x_ptr),
+                Int(self.centroids),
+                n,
+                self.d,
+                self.dsub,
+                self.ksub,
+                m,
             )
-            var sub_x_ptr = sub_x.unsafe_ptr()
-            for i in range(n):
-                for j in range(sub_dimension):
-                    sub_x_ptr[i * sub_dimension + j] = x_ptr[
-                        i * dimension + m * sub_dimension + j
-                    ]
+            (contexts + m).init_pointee_move(context^)
+            threads[m] = 0
 
-            var kmeans = KMeans(sub_dimension, centroid_count, 15)
-            kmeans.train_serial(
-                Span[mut=True, Float32](sub_x)
+        for m in range(1, self.M):
+            var status = external_call["pthread_create", Int](
+                threads + m,
+                Int(0),
+                mojovec_pq_pthread_worker,
+                Int(contexts + m),
             )
+            if status != 0:
+                threads[m] = 0
 
-            # Copy learned centroids
-            var offset = m * centroid_count * sub_dimension
-            for i in range(centroid_count * sub_dimension):
-                pq_centroids[offset + i] = kmeans.centroids[i]
+        _train_pq_subspace(contexts[0])
 
-        parallelize[train_subspace](self.M)
+        for m in range(1, self.M):
+            if threads[m] == 0:
+                _train_pq_subspace(contexts[m])
+            else:
+                _ = external_call["pthread_join", Int](threads[m], Int(0))
+
+        contexts.free()
+        threads.free()
 
         self.is_trained = True
 
