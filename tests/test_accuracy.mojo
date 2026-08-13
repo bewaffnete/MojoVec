@@ -98,9 +98,9 @@ def test_accuracy_ivf_flat() raises:
     var gt_labels = get_ground_truth(ds)
     
     var nlist = 64
-    var quantizer = alloc[IndexFlat](1)
-    quantizer.init_pointee_move(IndexFlat(d, METRIC_L2))
-    var index = IndexIVFFlat[IndexFlat](quantizer, d, nlist, METRIC_L2)
+    var index = IndexIVFFlat[IndexFlat](
+        IndexFlat(d, METRIC_L2), d, nlist, METRIC_L2
+    )
     index.train(
         Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d)
     )
@@ -124,7 +124,6 @@ def test_accuracy_ivf_flat() raises:
     gt_labels.free()
     test_dist.free()
     test_labels.free()
-    index.quantizer.free()
 
 
 def test_accuracy_ivf_pq() raises:

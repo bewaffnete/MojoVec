@@ -28,9 +28,7 @@ def test_ivf_flat() raises:
             values = generator.step_uniform()
         queries[i] = values[i % 4] * 2.0 - 1.0
     pass  # print("Data and queries .")
-    var flat_quantizer = alloc[IndexFlat](1)
-    flat_quantizer.init_pointee_move(IndexFlat(d))
-    var ivf = IndexIVFFlat[IndexFlat](flat_quantizer, d, nlist)
+    var ivf = IndexIVFFlat[IndexFlat](IndexFlat(d), d, nlist)
     
     pass  # print("Training IVF...")
     ivf.train(
@@ -62,7 +60,6 @@ def test_ivf_flat() raises:
     # Keep ivf alive
     _ = ivf.ntotal
     
-    flat_quantizer.free()
     data.free()
     queries.free()
     ids.free()
@@ -73,9 +70,7 @@ def test_ivf_flat_exact_match() raises:
     var d = 4
     var data = alloc[Float32](4)
     for i in range(4): data[i] = Float32(i)
-    var flat_quantizer = alloc[IndexFlat](1)
-    flat_quantizer.init_pointee_move(IndexFlat(d))
-    var ivf = IndexIVFFlat[IndexFlat](flat_quantizer, d, 1)
+    var ivf = IndexIVFFlat[IndexFlat](IndexFlat(d), d, 1)
     
     ivf.train(Span[Float32, MutUntrackedOrigin](ptr=data, length=d))
     ivf.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=1 * d))
@@ -102,9 +97,7 @@ def test_ivf_flat_sparse_results_have_deterministic_tail() raises:
     var ids = alloc[Int](1)
     ids[0] = 42
 
-    var quantizer = alloc[IndexFlat](1)
-    quantizer.init_pointee_move(IndexFlat(d))
-    var index = IndexIVFFlat[IndexFlat](quantizer, d, 1)
+    var index = IndexIVFFlat[IndexFlat](IndexFlat(d), d, 1)
     var data_span = Span[Float32, MutUntrackedOrigin](
         ptr=data, length=d
     )
@@ -138,7 +131,6 @@ def test_ivf_flat_sparse_results_have_deterministic_tail() raises:
         assert_equal(labels[i], -1)
         assert_true(distances[i] == 1e38)
 
-    index.quantizer.free()
     data.free()
     ids.free()
     distances.free()

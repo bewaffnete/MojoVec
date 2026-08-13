@@ -963,7 +963,7 @@ def write_index_ivf_flat(mut f: FileHandle, index: IndexIVFFlat[IndexFlat]) rais
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
     
-    write_index_flat(f, index.quantizer[0])
+    write_index_flat(f, index.quantizer)
     write_invlists(f, index.invlists)
 
 def read_index_ivf_flat(mut f: FileHandle) raises -> IndexIVFFlat[IndexFlat]:
@@ -984,10 +984,8 @@ def read_index_ivf_flat(mut f: FileHandle) raises -> IndexIVFFlat[IndexFlat]:
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
         
-    var quantizer = alloc[IndexFlat](1)
-    quantizer.init_pointee_move(read_index_flat(f))
-    
-    var index = IndexIVFFlat[IndexFlat](quantizer, d, nlist, metric)
+    var quantizer = read_index_flat(f)
+    var index = IndexIVFFlat[IndexFlat](quantizer^, d, nlist, metric)
     index.nprobe = nprobe
     index.ntotal = ntotal
     index.is_trained = is_trained

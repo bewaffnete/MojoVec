@@ -160,9 +160,9 @@ def test_hnsw_io() raises:
 
 def test_ivf_flat_io() raises:
     var ds = Dataset()
-    var quantizer = alloc[IndexFlat](1)
-    quantizer.init_pointee_move(IndexFlat(d, METRIC_L2))
-    var index = IndexIVFFlat[IndexFlat](quantizer, d, 8, METRIC_L2)
+    var index = IndexIVFFlat[IndexFlat](
+        IndexFlat(d, METRIC_L2), d, 8, METRIC_L2
+    )
     index.train(
         Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=n * d)
     )
@@ -199,8 +199,6 @@ def test_ivf_flat_io() raises:
     labels1.free()
     dists2.free()
     labels2.free()
-    index.quantizer.free()
-    index2.quantizer.free()
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

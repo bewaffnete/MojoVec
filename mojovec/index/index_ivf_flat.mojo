@@ -21,14 +21,22 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
     var metric_type: MetricType
     var is_trained: Bool
     
-    var quantizer: UnsafePointer[Self.QuantizerType, MutUntrackedOrigin]
+    # The coarse quantizer has exactly one owner and the same lifetime as the
+    # IVF index. Store it inline instead of exposing manual heap ownership.
+    var quantizer: Self.QuantizerType
     var invlists: ArrayInvertedLists
     
-    def __init__(out self, quantizer: UnsafePointer[Self.QuantizerType, MutUntrackedOrigin], d: Int, nlist: Int, metric: MetricType = METRIC_L2):
+    def __init__(
+        out self,
+        var quantizer: Self.QuantizerType,
+        d: Int,
+        nlist: Int,
+        metric: MetricType = METRIC_L2,
+    ):
         """Initializes an IVF-Flat index.
         
         Args:
-            quantizer: Pointer to the coarse quantizer used for assigning vectors to inverted lists.
+            quantizer: Owned coarse quantizer used to assign vectors to lists.
             d: Dimensionality of the vectors.
             nlist: Number of inverted lists (cells/clusters).
             metric: The distance metric to use (e.g., L2 or Inner Product).
@@ -40,7 +48,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         self.metric_type = metric
         self.is_trained = False
         
-        self.quantizer = quantizer
+        self.quantizer = quantizer^
         self.invlists = ArrayInvertedLists(nlist, self.d * 4)
 
     def __init__(out self, *, deinit move: Self):
@@ -51,7 +59,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         self.ntotal = move.ntotal
         self.metric_type = move.metric_type
         self.is_trained = move.is_trained
-        self.quantizer = move.quantizer
+        self.quantizer = move.quantizer^
         self.invlists = move.invlists^
         
     def train(mut self, x: Span[Float32, _]):
@@ -65,7 +73,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var kmeans = KMeans(self.d, self.nlist, 15)
         kmeans.train(x)
         var coarse_centroids = kmeans.take_centroids()
-        self.quantizer[0].add(
+        self.quantizer.add(
             Span[Float32, MutUntrackedOrigin](
                 ptr=coarse_centroids,
                 length=self.nlist * self.d,
@@ -110,7 +118,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         
         var d_span = Span[mut=True, Float32](assign_distances)
         var l_span = Span[mut=True, Int](assign_labels)
-        self.quantizer[0].search(x, 1, d_span, l_span)
+        self.quantizer.search(x, 1, d_span, l_span)
         var assign_labels_ptr = assign_labels.unsafe_ptr()
         
         # In a real scenario we could group vectors by list_no to minimize resize calls.
@@ -184,7 +192,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var qd_span = Span[mut=True, Float32](q_distances)
         var ql_span = Span[mut=True, Int](q_labels)
         
-        self.quantizer[0].search(x, nprobe, qd_span, ql_span)
+        self.quantizer.search(x, nprobe, qd_span, ql_span)
         var q_labels_ptr = q_labels.unsafe_ptr()
         
         for i in range(n):
