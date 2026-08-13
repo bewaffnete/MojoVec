@@ -978,9 +978,10 @@ struct PyIVFPQCollection(Movable, Writable):
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
         var embeddings = _floats_from_python(py_embeddings)
-        var released = _ReleasedPythonThreadState()
+        # Mutations stay under the GIL so the Python-owned handle and any
+        # borrowed input buffers cannot be observed or finalized concurrently.
+        # K-Means/PQ still use Mojo's native worker pool internally.
         self_ptr[].ptr[].train(embeddings)
-        released.restore()
         return Python.none()
 
     @staticmethod
@@ -991,9 +992,7 @@ struct PyIVFPQCollection(Movable, Writable):
     ) raises -> PythonObject:
         var ids = _ids_from_python(py_ids)
         var embeddings = _floats_from_python(py_embeddings)
-        var released = _ReleasedPythonThreadState()
         self_ptr[].ptr[].add(ids, embeddings)
-        released.restore()
         return Python.none()
 
     @staticmethod
@@ -1008,14 +1007,12 @@ struct PyIVFPQCollection(Movable, Writable):
         var pointer = UnsafePointer[Float32, MutAnyOrigin](
             unsafe_from_address=pointer_value
         )
-        var released = _ReleasedPythonThreadState()
         self_ptr[].ptr[]._train_from_span(
             Span[Float32, MutAnyOrigin](
                 ptr=pointer,
                 length=num_vectors * self_ptr[].ptr[].dimension(),
             )
         )
-        released.restore()
         return Python.none()
 
     @staticmethod
@@ -1037,7 +1034,6 @@ struct PyIVFPQCollection(Movable, Writable):
         var embeddings_pointer = UnsafePointer[Float32, MutAnyOrigin](
             unsafe_from_address=embeddings_pointer_value
         )
-        var released = _ReleasedPythonThreadState()
         self_ptr[].ptr[]._add_from_spans(
             Span[Int, MutAnyOrigin](
                 ptr=ids_pointer, length=num_vectors
@@ -1047,7 +1043,6 @@ struct PyIVFPQCollection(Movable, Writable):
                 length=num_vectors * self_ptr[].ptr[].dimension(),
             ),
         )
-        released.restore()
         return Python.none()
 
     @staticmethod
