@@ -159,6 +159,32 @@ def read_unsafe_pointer_float32(mut f: FileHandle, mut ptr: UnsafePointer[Float3
         ptr[i] = src[i]
     _ = len(read_data)
 
+
+def write_float32_span(mut f: FileHandle, data: Span[Float32, _]) raises:
+    """Writes managed or borrowed Float32 storage without erasing its origin."""
+    if len(data) == 0:
+        return
+    var bytes = Span[UInt8](
+        ptr=data.unsafe_ptr().bitcast[UInt8](),
+        length=checked_byte_count(len(data), 4),
+    )
+    f.write_bytes(bytes)
+
+
+def read_float32_span(
+    mut f: FileHandle,
+    mut data: Span[mut=True, Float32, _],
+) raises:
+    """Reads Float32 values into caller-owned managed storage."""
+    if len(data) == 0:
+        return
+    var read_data = _read_exact_bytes(
+        f, checked_byte_count(len(data), 4)
+    )
+    var src = read_data.unsafe_ptr().bitcast[Float32]()
+    for i in range(len(data)):
+        data[i] = src[i]
+
 def write_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var span = Span[UInt8](ptr=ptr, length=count)
@@ -925,7 +951,7 @@ def write_pq(mut f: FileHandle, pq: ProductQuantizer) raises:
     write_int(f, pq.M)
     write_int(f, pq.ksub)
     write_bool(f, pq.is_trained)
-    write_unsafe_pointer_float32(f, pq.centroids, pq.M * pq.ksub * pq.dsub)
+    write_float32_span(f, Span(pq.centroids))
 
 def read_pq(mut f: FileHandle, mut pq: ProductQuantizer) raises:
     var magic = read_int(f)
@@ -945,9 +971,11 @@ def read_pq(mut f: FileHandle, mut pq: ProductQuantizer) raises:
         raise Error("ProductQuantizer shape does not match its index header.")
     pq.is_trained = read_bool(f)
     
-    if Int(pq.centroids) != 0: pq.centroids.free()
-    pq.centroids = alloc[Float32](pq.M * pq.ksub * pq.dsub)
-    read_unsafe_pointer_float32(f, pq.centroids, pq.M * pq.ksub * pq.dsub)
+    pq.centroids = List[Float32](
+        unsafe_uninit_length=pq.M * pq.ksub * pq.dsub
+    )
+    var centroid_storage = Span[mut=True, Float32](pq.centroids)
+    read_float32_span(f, centroid_storage)
 
 # --- IndexIVFFlat ---
 

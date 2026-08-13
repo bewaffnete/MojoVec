@@ -87,7 +87,7 @@ struct ProductQuantizer(Movable):
     var M: Int
     var ksub: Int
     var dsub: Int
-    var centroids: UnsafePointer[Float32, MutUntrackedOrigin]
+    var centroids: List[Float32]
     var is_trained: Bool
 
     def __init__(out self, d: Int, M: Int, ksub: Int = 256) raises:
@@ -108,7 +108,9 @@ struct ProductQuantizer(Movable):
         self.M = M
         self.ksub = ksub
         self.dsub = d // M
-        self.centroids = alloc[Float32](M * ksub * self.dsub)
+        self.centroids = List[Float32](
+            unsafe_uninit_length=M * ksub * self.dsub
+        )
         self.is_trained = False
 
     def __init__(out self, *, deinit move: Self):
@@ -117,13 +119,8 @@ struct ProductQuantizer(Movable):
         self.M = move.M
         self.ksub = move.ksub
         self.dsub = move.dsub
-        self.centroids = move.centroids
+        self.centroids = move.centroids^
         self.is_trained = move.is_trained
-
-    def __del__(deinit self):
-        """Deallocates the centroids array."""
-        if Int(self.centroids) != 0:
-            self.centroids.free()
 
     def train(mut self, x: Span[Float32, _]):
         """Trains the quantizer by finding centroids for each sub-space using K-Means.
@@ -134,6 +131,7 @@ struct ProductQuantizer(Movable):
         if self.is_trained: return
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()
+        var centroids_ptr = self.centroids.unsafe_ptr()
 
         # Train independent subspaces on native pthreads. This keeps the
         # parallelism at the algorithm level while avoiding AsyncRT's repeated
@@ -144,7 +142,7 @@ struct ProductQuantizer(Movable):
         for m in range(self.M):
             var context = PQTrainContext(
                 Int(x_ptr),
-                Int(self.centroids),
+                Int(centroids_ptr),
                 n,
                 self.d,
                 self.dsub,
@@ -191,6 +189,7 @@ struct ProductQuantizer(Movable):
         var n = len(x) // self.d
         var x_data = x.unsafe_ptr()
         var codes_data = codes.unsafe_ptr()
+        var centroid_data = self.centroids.unsafe_ptr()
         for i in range(n):
             var x_ptr = x_data + i * self.d
             var codes_ptr = codes_data + i * self.M
@@ -199,7 +198,7 @@ struct ProductQuantizer(Movable):
                 var min_dist: Float32 = 1e38
                 var best_k = -1
                 var sub_x = x_ptr + m * self.dsub
-                var centroids_m = self.centroids + m * self.ksub * self.dsub
+                var centroids_m = centroid_data + m * self.ksub * self.dsub
                 
                 for k in range(self.ksub):
                     var c_ptr = centroids_m + k * self.dsub
@@ -233,13 +232,18 @@ struct ProductQuantizer(Movable):
         var n = len(codes) // self.M
         var codes_data = codes.unsafe_ptr()
         var x_data = x.unsafe_ptr()
+        var centroid_data = self.centroids.unsafe_ptr()
         for i in range(n):
             var codes_ptr = codes_data + i * self.M
             var x_ptr = x_data + i * self.d
             
             for m in range(self.M):
                 var k = Int(codes_ptr[m])
-                var c_ptr = self.centroids + m * self.ksub * self.dsub + k * self.dsub
+                var c_ptr = (
+                    centroid_data
+                    + m * self.ksub * self.dsub
+                    + k * self.dsub
+                )
                 var sub_x = x_ptr + m * self.dsub
                 
                 for j in range(self.dsub):
@@ -260,9 +264,10 @@ struct ProductQuantizer(Movable):
         """
         var query_ptr = query.unsafe_ptr()
         var table_ptr = dis_table.unsafe_ptr()
+        var centroid_data = self.centroids.unsafe_ptr()
         for m in range(self.M):
             var sub_q = query_ptr + m * self.dsub
-            var centroids_m = self.centroids + m * self.ksub * self.dsub
+            var centroids_m = centroid_data + m * self.ksub * self.dsub
             var table_m = table_ptr + m * self.ksub
             
             for k in range(self.ksub):
