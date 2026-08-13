@@ -5,7 +5,7 @@ The examples are split by language:
 - [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) is the complete
   interactive Jupyter/Colab walkthrough;
 - [`mojo/`](mojo/) contains twelve executable tutorials for the Mojo API;
-- [`python/`](python/) contains eight executable tutorials for the managed
+- [`python/`](python/) contains nine executable tutorials for the managed
   Python API.
 
 Both tracks use deterministic, locally generated vectors and require no
@@ -32,6 +32,7 @@ python examples/python/api_05_wal_recovery.py
 python examples/python/api_06_numpy_fast_path.py
 python examples/python/api_07_distance_metrics.py
 python examples/python/api_08_dataset_io.py
+python examples/python/api_09_ivfpq.py
 ```
 
 The standard MojoVec installation includes NumPy, PyArrow, and Hugging Face
@@ -92,6 +93,7 @@ Run the Python examples in numeric order:
 | [`api_06_numpy_fast_path.py`](python/api_06_numpy_fast_path.py) | Contiguous zero-copy vector buffers | `upsert_numpy`, `query_numpy` |
 | [`api_07_distance_metrics.py`](python/api_07_distance_metrics.py) | L2, cosine, and inner-product ordering | `metric`, `storage_kind` |
 | [`api_08_dataset_io.py`](python/api_08_dataset_io.py) | Batched local files and Hugging Face streaming | `add_from`, `upsert_from`, `add_huggingface` |
+| [`api_09_ivfpq.py`](python/api_09_ivfpq.py) | Product-quantized training, probing, metrics, and persistence | `IVFPQCollection`, `train`, `set_nprobe`, `save`, `load` |
 | [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) | Complete interactive Jupyter/Colab quickstart | CRUD, `where`, BM25, hybrid RRF, Flat/SQ8, NumPy, compaction, mmap, WAL |
 
 The managed Python methods return ordinary Python values and own all native
@@ -147,13 +149,17 @@ This example explains:
 
 - what IVF and PQ contribute;
 - the meaning of `dimension`, `nlist`, and PQ `M`;
+- runtime `nprobe` recall/speed tuning and collection statistics;
+- L2, cosine, and inner-product distance semantics;
+- the equivalent managed `IVFPQCollection` Python API;
 - the requirement that `dimension` be divisible by PQ `M`;
 - explicit training on representative data;
 - automatic training during the first `add`;
 - why approximate distances should not be compared for exact equality.
 
-For production data, train on a representative sample. Training on a tiny or
-biased first ingestion batch usually reduces recall.
+Training requires at least `max(nlist, 256)` vectors because each eight-bit PQ
+subquantizer learns 256 centroids. For production data, use a larger,
+representative sample. A biased first ingestion batch usually reduces recall.
 
 ## Example 3: serialization and recovery
 

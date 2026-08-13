@@ -1,6 +1,7 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
+from ..utils.distances import inner_product_simd
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..clustering.kmeans import KMeans
 from ..quantization.pq import ProductQuantizer
@@ -23,21 +24,39 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
     var metric_type: MetricType
     var is_trained: Bool
     
-    var quantizer: UnsafePointer[Self.QuantizerType, MutUntrackedOrigin]
+    # The coarse quantizer is owned by the index. Keeping it inline makes the
+    # whole IVF-PQ index one movable ownership tree and avoids pointer rebinding
+    # during collection moves and snapshot loading.
+    var quantizer: Self.QuantizerType
     var invlists: ArrayInvertedLists
     var pq: ProductQuantizer
     var by_residual: Bool
     
-    def __init__(out self, quantizer: UnsafePointer[Self.QuantizerType, MutUntrackedOrigin], d: Int, nlist: Int, M: Int, metric: MetricType = METRIC_L2):
+    def __init__(
+        out self,
+        var quantizer: Self.QuantizerType,
+        d: Int,
+        nlist: Int,
+        M: Int,
+        metric: MetricType = METRIC_L2,
+    ) raises:
         """Initializes an IVF-PQ index.
         
         Args:
-            quantizer: Pointer to the coarse quantizer used for assigning vectors to lists.
+            quantizer: Owned coarse quantizer used to assign vectors to lists.
             d: Dimensionality of the original vectors.
             nlist: Number of inverted lists (cells/clusters).
             M: Number of sub-vector spaces for product quantization.
             metric: The distance metric to use.
         """
+        if d <= 0:
+            raise Error("IVF-PQ dimension must be positive.")
+        if nlist <= 0 or nlist > 1_000_000:
+            raise Error("IVF-PQ nlist must be between 1 and 1000000.")
+        if M <= 0 or M > d or d % M != 0:
+            raise Error(
+                "IVF-PQ M must divide dimension and be between 1 and dimension."
+            )
         self.d = d
         self.nlist = nlist
         self.M = M
@@ -46,7 +65,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         self.metric_type = metric
         self.is_trained = False
         
-        self.quantizer = quantizer
+        self.quantizer = quantizer^
         self.invlists = ArrayInvertedLists(nlist, M)  # Bucket element size is M bytes!
         self.pq = ProductQuantizer(d, M, 256)
         self.by_residual = True
@@ -60,7 +79,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         self.ntotal = move.ntotal
         self.metric_type = move.metric_type
         self.is_trained = move.is_trained
-        self.quantizer = move.quantizer
+        self.quantizer = move.quantizer^
         self.invlists = move.invlists^
         self.pq = move.pq^
         self.by_residual = move.by_residual
@@ -78,7 +97,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         # 1. Train Coarse Quantizer (K-Means)
         var kmeans = KMeans(self.d, self.nlist, 15)
         kmeans.train(x)
-        self.quantizer[0].add(Span[Float32, MutUntrackedOrigin](ptr=kmeans.centroids, length=self.nlist * self.d))
+        self.quantizer.add(Span[Float32, MutUntrackedOrigin](ptr=kmeans.centroids, length=self.nlist * self.d))
         
         # 2. Train PQ 
         if self.by_residual:
@@ -90,7 +109,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
             
             var d_span = Span[mut=True, Float32](assign_distances)
             var l_span = Span[mut=True, Int](assign_labels)
-            self.quantizer[0].search(x, 1, d_span, l_span)
+            self.quantizer.search(x, 1, d_span, l_span)
             
 
             # Use IndexFlat's get_vector method to compute residuals against coarse centroids.
@@ -98,7 +117,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                 var list_no = assign_labels[i]
                 if list_no < 0 or list_no >= self.nlist:
                     list_no = 0
-                var c_ptr = self.quantizer[0].get_vector(list_no)
+                var c_ptr = self.quantizer.get_vector(list_no)
                 for j in range(self.d):
                     residuals[i * self.d + j] = (
                         x_ptr[i * self.d + j] - c_ptr[j]
@@ -146,7 +165,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         
         var d_span = Span[mut=True, Float32](assign_distances)
         var l_span = Span[mut=True, Int](assign_labels)
-        self.quantizer[0].search(x, 1, d_span, l_span)
+        self.quantizer.search(x, 1, d_span, l_span)
         
         var pq_codes = List[UInt8](unsafe_uninit_length=n * self.M)
         var pq_codes_span = Span[mut=True, UInt8](pq_codes)
@@ -159,7 +178,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                 var list_no = assign_labels[i]
                 if list_no < 0 or list_no >= self.nlist:
                     list_no = 0
-                var c_ptr = self.quantizer[0].get_vector(list_no)
+                var c_ptr = self.quantizer.get_vector(list_no)
                 for j in range(self.d):
                     residuals[i * self.d + j] = x_ptr[i * self.d + j] - c_ptr[j]
             self.pq.compute_codes(
@@ -237,7 +256,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         var qd_span = Span[mut=True, Float32](q_distances)
         var ql_span = Span[mut=True, Int](q_labels)
         
-        self.quantizer[0].search(x, nprobe, qd_span, ql_span)
+        self.quantizer.search(x, nprobe, qd_span, ql_span)
         
         var dis_table = List[Float32](
             unsafe_uninit_length=self.M * self.pq.ksub
@@ -261,7 +280,7 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                 res_dist_ptr[j] = 1e38
                 res_labels_ptr[j] = -1
             
-            if not self.by_residual:
+            if not self.by_residual or self.metric_type == METRIC_INNER_PRODUCT:
                 self.pq.compute_distance_table(
                     Span[Float32, _](ptr=q_ptr, length=self.d),
                     dis_table_span,
@@ -277,9 +296,10 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                 
                 var list_codes = self.invlists.get_codes(list_no).unsafe_ptr()
                 var list_ids = self.invlists.get_ids(list_no).unsafe_ptr()
+                var coarse_distance: Float32 = 0.0
                 
-                if self.by_residual:
-                    var c_ptr = self.quantizer[0].get_vector(list_no)
+                if self.by_residual and self.metric_type == METRIC_L2:
+                    var c_ptr = self.quantizer.get_vector(list_no)
                     for j in range(self.d):
                         q_residual_ptr[j] = q_ptr[j] - c_ptr[j]
                     self.pq.compute_distance_table(
@@ -287,10 +307,26 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
                         dis_table_span,
                         self.metric_type,
                     )
+                elif self.by_residual:
+                    # For inner product, x ~= coarse + residual. Candidate
+                    # ranking therefore uses -(q·coarse + q·residual). The
+                    # previous q-coarse table was only valid for squared L2.
+                    var c_ptr = self.quantizer.get_vector(list_no)
+                    coarse_distance = -inner_product_simd[8](
+                        q_ptr, c_ptr, self.d
+                    )
                 
                 for j in range(list_size):
+                    var candidate_id = list_ids[j]
+                    if (
+                        len(filter) > 0
+                        and candidate_id >= 0
+                        and candidate_id < len(filter)
+                        and filter[candidate_id] != 0
+                    ):
+                        continue
                     var c_ptr = list_codes + j * self.M
-                    var dist: Float32 = 0.0
+                    var dist = coarse_distance
                     
                     # O(M) distance computation!
                     for m in range(self.M):

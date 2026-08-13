@@ -58,10 +58,13 @@ struct KMeans:
         # here makes concurrent index training race and platform-dependent.
         var generator = Random(seed=UInt64(0x4D4F4A4F564543))
         var random_words = generator.step()
+        # Reduce while the PRNG word is unsigned. Casting first can produce a
+        # negative signed index on platforms where the high bit is set.
+        var sample_offset = Int(random_words[0] % UInt32(n))
         for i in range(self.k):
             if i != 0 and i % 4 == 0:
                 random_words = generator.step()
-            var src_idx = Int(random_words[i % 4]) % n
+            var src_idx = Int(random_words[i % 4] % UInt32(n))
             var src_ptr = data_ptr + src_idx * self.d
             var dst_ptr = self.centroids + i * self.d
             for j in range(self.d):
@@ -81,9 +84,12 @@ struct KMeans:
         var assignments_ptr = self.assignments
         var dimension = self.d
         var cluster_count = self.k
+        # Both parallel phases use the same bounded topology. This avoids
+        # nested runtime oversubscription while retaining parallel training.
+        var worker_count = min(num_chunks, n)
         
         # Main loop
-        for _ in range(self.niter):
+        for iteration in range(self.niter):
             # E-step: Assign points to centroids
             @parameter
             def process_point(i: Int):
@@ -107,7 +113,7 @@ struct KMeans:
                 # cluster write. Finite input always selects a real centroid.
                 assignments_ptr[i] = max(best_c, 0)
                 
-            parallelize[process_point](n)
+            parallelize[process_point](n, worker_count)
             
             # Zero out thread-local accumulators
             for i in range(num_chunks * self.k * self.d):
@@ -142,7 +148,7 @@ struct KMeans:
                         c_ptr[j] += x_ptr[j]
                         j += 1
                         
-            parallelize[process_chunk](num_chunks)
+            parallelize[process_chunk](num_chunks, worker_count)
             
             # Reduce phase
             for c in range(self.k):
@@ -186,3 +192,13 @@ struct KMeans:
                     while j < self.d:
                         c_ptr[j] *= inv_count
                         j += 1
+                else:
+                    # A zero centroid is especially destructive for residual
+                    # PQ. Deterministically reseed empty clusters from data.
+                    var src_idx = (
+                        sample_offset + (iteration + 1) * self.k + c
+                    ) % n
+                    var src_ptr = data_ptr + src_idx * self.d
+                    var c_ptr = self.centroids + c * self.d
+                    for j in range(self.d):
+                        c_ptr[j] = src_ptr[j]

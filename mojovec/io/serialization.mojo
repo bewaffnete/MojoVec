@@ -897,11 +897,8 @@ def read_invlists(mut f: FileHandle, mut invlists: ArrayInvertedLists) raises:
     check_size_limit(nlist, 1_000_000)
     var code_size = read_int(f)
     check_size_limit(code_size, 65536)
-    
-    # We assume invlists is already initialized. Just update it.
-    # Need to free old lists if any? Wait, we can just let it resize.
-    invlists.nlist = nlist
-    invlists.code_size = code_size
+    if nlist != invlists.nlist or code_size != invlists.code_size:
+        raise Error("Inverted-list shape does not match its index header.")
     
     for i in range(nlist):
         var size = read_int(f)
@@ -934,13 +931,18 @@ def read_pq(mut f: FileHandle, mut pq: ProductQuantizer) raises:
     var magic = read_int(f)
     if magic != MAGIC_PQ: raise Error("Invalid magic for ProductQuantizer")
     
-    pq.d = read_int(f)
-    check_size_limit(pq.d, 65536)
-    pq.M = read_int(f)
-    check_size_limit(pq.M, 65536)
-    pq.ksub = read_int(f)
-    check_size_limit(pq.ksub, 65536)
-    pq.dsub = pq.d // pq.M
+    var d = read_int(f)
+    check_size_limit(d, 65536)
+    var M = read_int(f)
+    check_size_limit(M, 65536)
+    var ksub = read_int(f)
+    check_size_limit(ksub, 256)
+    if d <= 0 or M <= 0 or M > d or d % M != 0:
+        raise Error("Invalid ProductQuantizer shape.")
+    if ksub <= 0 or ksub > 256:
+        raise Error("Invalid ProductQuantizer centroid count.")
+    if d != pq.d or M != pq.M or ksub != pq.ksub:
+        raise Error("ProductQuantizer shape does not match its index header.")
     pq.is_trained = read_bool(f)
     
     if Int(pq.centroids) != 0: pq.centroids.free()
@@ -1008,7 +1010,7 @@ def write_index_ivf_pq(mut f: FileHandle, index: IndexIVFPQ[IndexFlat]) raises:
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
     
-    write_index_flat(f, index.quantizer[0])
+    write_index_flat(f, index.quantizer)
     write_invlists(f, index.invlists)
     write_pq(f, index.pq)
 
@@ -1021,25 +1023,44 @@ def read_index_ivf_pq(mut f: FileHandle) raises -> IndexIVFPQ[IndexFlat]:
     var nlist = read_int(f)
     check_size_limit(nlist, 1_000_000)
     var M = read_int(f)
-    check_size_limit(M, 65536)
+    check_size_limit(M, d)
+    if M <= 0 or d % M != 0:
+        raise Error("Invalid IndexIVFPQ subvector count.")
     var nprobe = read_int(f)
-    check_size_limit(nprobe, 1_000_000)
+    check_size_limit(nprobe, nlist)
+    if nprobe <= 0:
+        raise Error("Invalid IndexIVFPQ nprobe.")
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
+    if metric_int != 0 and metric_int != 1:
+        raise Error("Invalid IndexIVFPQ metric.")
     
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
         
-    var quantizer = alloc[IndexFlat](1)
-    quantizer.init_pointee_move(read_index_flat(f))
-    
-    var index = IndexIVFPQ[IndexFlat](quantizer, d, nlist, M, metric)
+    var quantizer = read_index_flat(f)
+    if (
+        quantizer.d != d
+        or (
+            is_trained and quantizer.ntotal != nlist
+        )
+        or (
+            not is_trained and quantizer.ntotal != 0
+        )
+        or quantizer.metric_type != metric
+    ):
+        raise Error("IndexIVFPQ coarse quantizer header mismatch.")
+    var index = IndexIVFPQ[IndexFlat](quantizer^, d, nlist, M, metric)
     index.nprobe = nprobe
     index.ntotal = ntotal
     index.is_trained = is_trained
     
     read_invlists(f, index.invlists)
     read_pq(f, index.pq)
+    if index.invlists.code_size != M:
+        raise Error("IndexIVFPQ code size does not match M.")
+    if index.pq.is_trained != is_trained:
+        raise Error("IndexIVFPQ training state mismatch.")
     return index^

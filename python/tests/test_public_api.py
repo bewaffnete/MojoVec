@@ -57,6 +57,8 @@ PUBLIC_COLLECTION_METHODS = (
 def test_root_module_is_a_small_explicit_facade():
     assert mojovec.__all__ == [
         "Collection",
+        "IVFPQCollection",
+        "IVFPQStats",
         "DEFAULT_MMAP_THRESHOLD_BYTES",
         "Metadata",
         "QueryResult",
@@ -69,6 +71,7 @@ def test_root_module_is_a_small_explicit_facade():
         "recover",
     ]
     assert mojovec.Collection.__module__ == "mojovec"
+    assert mojovec.IVFPQCollection.__module__ == "mojovec"
     assert mojovec.load.__module__ == "mojovec"
     assert mojovec.recover.__module__ == "mojovec"
     assert not hasattr(mojovec, "ctypes")
@@ -83,6 +86,28 @@ def test_public_callables_have_runtime_docstrings():
     assert inspect.getdoc(mojovec.native_backend)
     for method_name in PUBLIC_COLLECTION_METHODS:
         assert inspect.getdoc(getattr(mojovec.Collection, method_name)), method_name
+    assert inspect.getdoc(mojovec.IVFPQCollection)
+    for method_name in (
+        "load",
+        "name",
+        "dimension",
+        "metric",
+        "count",
+        "is_trained",
+        "nlist",
+        "pq_subvectors",
+        "nprobe",
+        "set_nprobe",
+        "stats",
+        "train",
+        "train_numpy",
+        "add",
+        "add_numpy",
+        "query",
+        "query_numpy",
+        "save",
+    ):
+        assert inspect.getdoc(getattr(mojovec.IVFPQCollection, method_name))
 
 
 def test_public_signatures_are_python_introspectable():
@@ -109,6 +134,25 @@ def test_public_signatures_are_python_introspectable():
     ]
     assert query.parameters["query_texts"].kind is inspect.Parameter.KEYWORD_ONLY
     assert query.parameters["where"].kind is inspect.Parameter.KEYWORD_ONLY
+
+    ivfpq_constructor = inspect.signature(mojovec.IVFPQCollection)
+    assert list(ivfpq_constructor.parameters) == [
+        "dimension",
+        "nlist",
+        "pq_subvectors",
+        "nprobe",
+        "metric",
+        "name",
+    ]
+    assert ivfpq_constructor.parameters["nprobe"].default is None
+    assert ivfpq_constructor.parameters["metric"].default == "l2"
+
+    ivfpq_query = inspect.signature(mojovec.IVFPQCollection.query)
+    assert list(ivfpq_query.parameters) == [
+        "self",
+        "query_embeddings",
+        "n_results",
+    ]
 
 
 def test_native_backend_is_publicly_observable():

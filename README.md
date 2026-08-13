@@ -34,7 +34,9 @@ formats where mature ecosystem decoders are preferable.
 - compound `and_`, `or_`, `not_`, `in_`, and `not_in` expressions;
 - atomic save/load, optional WAL recovery, collection statistics, and graph
   compaction;
-- IVF-Flat and IVF-PQ lower-level indexes implemented in Mojo.
+- managed IVF-PQ collections in Mojo and Python with explicit or automatic
+  training, runtime `nprobe` tuning, L2/cosine/IP, and persistence;
+- IVF-Flat lower-level index implemented in Mojo.
 
 
 ---

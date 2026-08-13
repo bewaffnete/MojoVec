@@ -723,12 +723,12 @@ complete point-in-time state.
   revisions unless the project explicitly establishes that contract.
 - Failed save and WAL-rotation paths perform best-effort temporary-file cleanup.
 
-## IVF-PQ is a separate Mojo-only collection
+## IVF-PQ is a separate managed collection
 
 The fully managed HNSW `Collection` supports metadata, documents, filters,
 BM25, hybrid search, mutations, compaction, mmap, and WAL. `CollectionIVFPQ`
-is a separate Mojo API intended for extreme compression and approximate L2
-vector search. It is not the default and is not exposed by the Python facade.
+is a separate Mojo and Python API intended for extreme compression. It is not
+the default and deliberately has a smaller record-management surface.
 
 Use it only when explicitly requested:
 
@@ -739,6 +739,8 @@ var collection = client.create_ivfpq_collection(
     dimension=128,
     nlist=256,
     M=16,
+    nprobe=16,
+    metric="cosine",
 )
 
 collection.train(representative_training_embeddings)
@@ -746,12 +748,30 @@ collection.add(ids, embeddings)
 var result = collection.query(queries, n_results=10)
 ```
 
+The equivalent Python API is:
+
+```python
+collection = mojovec.IVFPQCollection(
+    dimension=128,
+    nlist=256,
+    pq_subvectors=16,
+    nprobe=16,
+    metric="cosine",
+    name="compressed",
+)
+collection.train(training_embeddings)
+collection.add(ids, embeddings)
+result = collection.query(query_embeddings, n_results=10)
+```
+
 Here IVF-PQ `M` means the number of PQ subvectors, not HNSW graph connectivity,
-and `dimension` must be divisible by it. Train on a sufficiently large,
-representative sample. The first `add()` can auto-train, but explicit training
-is preferable. Always evaluate recall on the real dataset. Do not assume the
-HNSW collection's metadata, BM25, filter, mutation, mmap, WAL, metric, or exact
-reranking behavior exists on `CollectionIVFPQ`.
+and `dimension` must be divisible by it. Training requires at least
+`max(nlist, 256)` representative vectors. The first `add()` can auto-train,
+but explicit training is preferable. Tune `nprobe` between 1 and `nlist` and
+always evaluate recall on the real dataset. L2, cosine, inner product,
+statistics, unique-ID insertion, and owned save/load are supported. Do not
+assume the HNSW collection's metadata, BM25, filters, update/upsert/delete,
+compaction, mmap, WAL, or exact reranking exists on `CollectionIVFPQ`.
 
 ## Common agent mistakes
 

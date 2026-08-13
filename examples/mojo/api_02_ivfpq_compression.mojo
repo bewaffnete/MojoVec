@@ -104,6 +104,8 @@ def main() raises:
         dimension=dimension,
         nlist=nlist,
         M=pq_subvectors,
+        nprobe=4,
+        metric="l2",
     )
 
     # ---------------------------------------------------------------------
@@ -119,10 +121,15 @@ def main() raises:
     # Application IDs are stored separately and returned by query().
     print("Adding", num_vectors, "vectors...")
     collection.add(ids, embeddings)
+    print("Collection stats:", collection.stats())
 
     comptime k = 5
     var results = collection.query(queries, n_results=k)
     print_results("Explicitly trained IVF-PQ results", results)
+
+    # Increase nprobe at runtime to trade query work for recall.
+    collection.set_nprobe(nlist)
+    print("Tuned nprobe:", collection.nprobe())
 
     # ---------------------------------------------------------------------
     # Automatic training workflow.

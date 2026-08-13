@@ -17,7 +17,7 @@ struct ProductQuantizer(Movable):
     var centroids: UnsafePointer[Float32, MutUntrackedOrigin]
     var is_trained: Bool
 
-    def __init__(out self, d: Int, M: Int, ksub: Int = 256):
+    def __init__(out self, d: Int, M: Int, ksub: Int = 256) raises:
         """Initializes the Product Quantizer.
         
         Args:
@@ -25,6 +25,12 @@ struct ProductQuantizer(Movable):
             M: Number of sub-vector spaces (must divide d).
             ksub: Number of centroids per sub-space (typically 256 for byte-sized codes).
         """
+        if d <= 0:
+            raise Error("PQ dimension must be positive.")
+        if M <= 0 or M > d or d % M != 0:
+            raise Error("PQ M must divide dimension and be between 1 and dimension.")
+        if ksub <= 0 or ksub > 256:
+            raise Error("PQ ksub must be between 1 and 256 for byte codes.")
         self.d = d
         self.M = M
         self.ksub = ksub

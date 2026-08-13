@@ -5,6 +5,7 @@ from std.ffi import external_call
 from std.memory import alloc
 from std.collections import List
 from mojovec.api.collection import Collection
+from mojovec.api.collection_ivfpq import CollectionIVFPQ
 from mojovec.api.metadata import (
     METADATA_BOOL,
     METADATA_FLOAT,
@@ -12,7 +13,12 @@ from mojovec.api.metadata import (
     METADATA_STRING,
     Metadata,
 )
-from mojovec.api.results import CollectionStats, CompactReport, QueryResults
+from mojovec.api.results import (
+    CollectionStats,
+    CompactReport,
+    IVFPQStats,
+    QueryResults,
+)
 from mojovec.api.where import Where
 
 
@@ -58,6 +64,19 @@ def _report_to_python(report: CompactReport) raises -> PythonObject:
     result["after"] = _stats_to_python(report.after.copy())
     result["reclaimed_records"] = report.reclaimed_records
     result["elapsed_seconds"] = report.elapsed_seconds
+    return result
+
+
+def _ivfpq_stats_to_python(stats: IVFPQStats) raises -> PythonObject:
+    var result = Python.dict()
+    result["count"] = stats.count
+    result["dimension"] = stats.dimension
+    result["nlist"] = stats.nlist
+    result["M"] = stats.M
+    result["nprobe"] = stats.nprobe
+    result["trained"] = stats.trained
+    result["metric"] = stats.metric
+    result["code_size_bytes"] = stats.code_size_bytes
     return result
 
 
@@ -911,6 +930,238 @@ struct PyCollection(Movable, Writable):
         return PythonObject(alloc=py_col^)
 
 
+struct PyIVFPQCollection(Movable, Writable):
+    """Python-owned wrapper for the managed Mojo IVF-PQ collection."""
+
+    var ptr: UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
+
+    def __init__(
+        out self, ptr: UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
+    ):
+        self.ptr = ptr
+
+    def __init__(out self, *, deinit take: Self):
+        self.ptr = take.ptr
+
+    def __del__(deinit self):
+        self.ptr.destroy_pointee()
+        self.ptr.free()
+
+    def write_to[W: Writer](self, mut writer: W):
+        writer.write("IVFPQCollection()")
+
+    @staticmethod
+    def py_init(
+        out self: PyIVFPQCollection,
+        args: PythonObject,
+        kwargs: PythonObject,
+    ) raises:
+        # Complete every validating/allocation-sensitive constructor step
+        # before allocating the Python-owned handle.
+        var collection = CollectionIVFPQ(
+            Int(py=args[0]),
+            Int(py=args[1]),
+            Int(py=args[2]),
+            Int(py=args[3]),
+            String(py=args[4]),
+            String(py=args[5]),
+        )
+        var ptr = rebind[
+            UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
+        ](alloc[CollectionIVFPQ](1))
+        ptr.init_pointee_move(collection^)
+        self = Self(ptr)
+
+    @staticmethod
+    def py_train(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_embeddings: PythonObject,
+    ) raises -> PythonObject:
+        var embeddings = _floats_from_python(py_embeddings)
+        self_ptr[].ptr[].train(embeddings)
+        return Python.none()
+
+    @staticmethod
+    def py_add(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_ids: PythonObject,
+        py_embeddings: PythonObject,
+    ) raises -> PythonObject:
+        var ids = _ids_from_python(py_ids)
+        var embeddings = _floats_from_python(py_embeddings)
+        self_ptr[].ptr[].add(ids, embeddings)
+        return Python.none()
+
+    @staticmethod
+    def py_train_numpy(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_embeddings: PythonObject,
+    ) raises -> PythonObject:
+        var num_vectors = Int(py=py_embeddings.shape[0])
+        var pointer_value = Int(
+            py=py_embeddings.__array_interface__["data"][0]
+        )
+        var pointer = UnsafePointer[Float32, MutAnyOrigin](
+            unsafe_from_address=pointer_value
+        )
+        self_ptr[].ptr[]._train_from_span(
+            Span[Float32, MutAnyOrigin](
+                ptr=pointer,
+                length=num_vectors * self_ptr[].ptr[].dimension(),
+            )
+        )
+        return Python.none()
+
+    @staticmethod
+    def py_add_numpy(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_ids: PythonObject,
+        py_embeddings: PythonObject,
+    ) raises -> PythonObject:
+        var num_vectors = Int(py=py_ids.__len__())
+        var ids_pointer_value = Int(
+            py=py_ids.__array_interface__["data"][0]
+        )
+        var embeddings_pointer_value = Int(
+            py=py_embeddings.__array_interface__["data"][0]
+        )
+        var ids_pointer = UnsafePointer[Int, MutAnyOrigin](
+            unsafe_from_address=ids_pointer_value
+        )
+        var embeddings_pointer = UnsafePointer[Float32, MutAnyOrigin](
+            unsafe_from_address=embeddings_pointer_value
+        )
+        self_ptr[].ptr[]._add_from_spans(
+            Span[Int, MutAnyOrigin](
+                ptr=ids_pointer, length=num_vectors
+            ),
+            Span[Float32, MutAnyOrigin](
+                ptr=embeddings_pointer,
+                length=num_vectors * self_ptr[].ptr[].dimension(),
+            ),
+        )
+        return Python.none()
+
+    @staticmethod
+    def py_query(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_embeddings: PythonObject,
+        py_n_results: PythonObject,
+    ) raises -> PythonObject:
+        var embeddings = _floats_from_python(py_embeddings)
+        var n_results = Int(py=py_n_results)
+        var released = _ReleasedPythonThreadState()
+        var results = self_ptr[].ptr[].query(embeddings, n_results)
+        released.restore()
+        return _query_results_to_python(results^)
+
+    @staticmethod
+    def py_query_numpy(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_embeddings: PythonObject,
+        py_n_results: PythonObject,
+    ) raises -> PythonObject:
+        var num_queries = Int(py=py_embeddings.shape[0])
+        var pointer_value = Int(
+            py=py_embeddings.__array_interface__["data"][0]
+        )
+        var pointer = UnsafePointer[Float32, MutAnyOrigin](
+            unsafe_from_address=pointer_value
+        )
+        var released = _ReleasedPythonThreadState()
+        var results = self_ptr[].ptr[]._query_from_span(
+            Span[Float32, MutAnyOrigin](
+                ptr=pointer,
+                length=num_queries * self_ptr[].ptr[].dimension(),
+            ),
+            Int(py=py_n_results),
+        )
+        released.restore()
+        return _query_results_to_python(results^)
+
+    @staticmethod
+    def py_name(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) raises -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].name())
+
+    @staticmethod
+    def py_dimension(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].dimension())
+
+    @staticmethod
+    def py_metric(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) raises -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].metric())
+
+    @staticmethod
+    def py_count(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].count())
+
+    @staticmethod
+    def py_is_trained(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].is_trained())
+
+    @staticmethod
+    def py_nlist(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].nlist())
+
+    @staticmethod
+    def py_pq_subvectors(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].pq_subvectors())
+
+    @staticmethod
+    def py_nprobe(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) -> PythonObject:
+        return PythonObject(self_ptr[].ptr[].nprobe())
+
+    @staticmethod
+    def py_set_nprobe(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_nprobe: PythonObject,
+    ) raises -> PythonObject:
+        self_ptr[].ptr[].set_nprobe(Int(py=py_nprobe))
+        return Python.none()
+
+    @staticmethod
+    def py_stats(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+    ) raises -> PythonObject:
+        var stats = self_ptr[].ptr[].stats()
+        return _ivfpq_stats_to_python(stats^)
+
+    @staticmethod
+    def py_save(
+        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        py_path: PythonObject,
+    ) raises -> PythonObject:
+        self_ptr[].ptr[].save(String(py=py_path))
+        return Python.none()
+
+    @staticmethod
+    def _wrap_collection(
+        var collection: CollectionIVFPQ
+    ) raises -> PythonObject:
+        var ptr = rebind[
+            UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
+        ](alloc[CollectionIVFPQ](1))
+        ptr.init_pointee_move(collection^)
+        var py_collection = PyIVFPQCollection(ptr)
+        return PythonObject(alloc=py_collection^)
+
+
 def py_load(
     path: PythonObject,
     memory_mapped: PythonObject,
@@ -922,6 +1173,11 @@ def py_load(
         Int(py=mmap_threshold_bytes),
     )
     return PyCollection._wrap_collection(col^)
+
+
+def py_load_ivfpq(path: PythonObject) raises -> PythonObject:
+    var collection = CollectionIVFPQ.load(String(py=path))
+    return PyIVFPQCollection._wrap_collection(collection^)
 
 
 def py_recover(
@@ -1023,9 +1279,33 @@ def PyInit__native() abi("C") -> PythonObject:
             .def_method[PyCollection.py_snapshot]("snapshot")
         )
         _ = m.add_type[PyWhere]("_Where")
+        _ = (
+            m.add_type[PyIVFPQCollection]("_IVFPQCollection")
+            .def_py_init[PyIVFPQCollection.py_init]()
+            .def_method[PyIVFPQCollection.py_train]("train")
+            .def_method[PyIVFPQCollection.py_add]("add")
+            .def_method[PyIVFPQCollection.py_query]("query")
+            .def_method[PyIVFPQCollection.py_train_numpy]("train_numpy")
+            .def_method[PyIVFPQCollection.py_add_numpy]("add_numpy")
+            .def_method[PyIVFPQCollection.py_query_numpy]("query_numpy")
+            .def_method[PyIVFPQCollection.py_name]("name")
+            .def_method[PyIVFPQCollection.py_dimension]("dimension")
+            .def_method[PyIVFPQCollection.py_metric]("metric")
+            .def_method[PyIVFPQCollection.py_count]("count")
+            .def_method[PyIVFPQCollection.py_is_trained]("is_trained")
+            .def_method[PyIVFPQCollection.py_nlist]("nlist")
+            .def_method[PyIVFPQCollection.py_pq_subvectors](
+                "pq_subvectors"
+            )
+            .def_method[PyIVFPQCollection.py_nprobe]("nprobe")
+            .def_method[PyIVFPQCollection.py_set_nprobe]("set_nprobe")
+            .def_method[PyIVFPQCollection.py_stats]("stats")
+            .def_method[PyIVFPQCollection.py_save]("save")
+        )
         m.def_function[py_where_predicate]("_where_predicate")
         m.def_function[py_where_combine]("_where_combine")
         m.def_function[py_load]("_load")
+        m.def_function[py_load_ivfpq]("_load_ivfpq")
         m.def_function[py_recover]("_recover")
         return m.finalize()
     except e:

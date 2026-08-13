@@ -30,6 +30,7 @@ from mojovec.api import (
     CollectionIVFPQ,
     CollectionStats,
     CompactReport,
+    IVFPQStats,
     Metadata,
     MetadataValue,
     QueryResults,

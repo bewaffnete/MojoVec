@@ -86,3 +86,38 @@ struct CompactReport(Copyable, Movable, Writable):
             self.after,
             ")",
         )
+
+
+@fieldwise_init
+struct IVFPQStats(Copyable, Movable, Writable):
+    """Current IVF-PQ collection and search configuration."""
+
+    var count: Int
+    var dimension: Int
+    var nlist: Int
+    var M: Int
+    var nprobe: Int
+    var trained: Bool
+    var metric: String
+    var code_size_bytes: Int
+
+    def write_to[W: Writer](self, mut writer: W):
+        writer.write(
+            "IVFPQStats(count=",
+            self.count,
+            ", dimension=",
+            self.dimension,
+            ", nlist=",
+            self.nlist,
+            ", M=",
+            self.M,
+            ", nprobe=",
+            self.nprobe,
+            ", trained=",
+            self.trained,
+            ", metric=",
+            self.metric,
+            ", code_size_bytes=",
+            self.code_size_bytes,
+            ")",
+        )

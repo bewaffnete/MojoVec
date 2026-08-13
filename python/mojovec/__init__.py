@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from ._version import __version__
 from ._collection import Collection, load, recover
+from ._ivfpq import IVFPQCollection, IVFPQStats
 from ._runtime import _native_backend
 from ._types import (
     DEFAULT_MMAP_THRESHOLD_BYTES,
@@ -31,11 +32,15 @@ def native_backend() -> str:
 # Re-exported objects should appear to users and documentation tools as members
 # of the public package rather than implementation modules.
 Collection.__module__ = __name__
+IVFPQCollection.__module__ = __name__
+IVFPQStats.__module__ = __name__
 load.__module__ = __name__
 recover.__module__ = __name__
 
 __all__ = [
     "Collection",
+    "IVFPQCollection",
+    "IVFPQStats",
     "DEFAULT_MMAP_THRESHOLD_BYTES",
     "Metadata",
     "QueryResult",

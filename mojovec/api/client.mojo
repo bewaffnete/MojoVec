@@ -38,8 +38,23 @@ struct Client:
             metric,
         )
 
-    def create_ivfpq_collection(self, name: String, dimension: Int, nlist: Int = 100, M: Int = 16) raises -> CollectionIVFPQ:
+    def create_ivfpq_collection(
+        self,
+        name: String,
+        dimension: Int,
+        nlist: Int = 100,
+        M: Int = 16,
+        nprobe: Int = 0,
+        metric: String = "l2",
+    ) raises -> CollectionIVFPQ:
         """
         Creates a new IVF-PQ vector collection for extreme compression.
         """
-        return CollectionIVFPQ(dimension, nlist, M)
+        return CollectionIVFPQ(
+            dimension,
+            nlist,
+            M,
+            nprobe,
+            name,
+            metric,
+        )
