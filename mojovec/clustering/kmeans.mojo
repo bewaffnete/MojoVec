@@ -56,6 +56,16 @@ struct KMeans:
         """
         self._train[False](x)
 
+    def take_centroids(
+        mut self,
+    ) -> UnsafePointer[Float32, MutUntrackedOrigin]:
+        """Transfers ownership of the trained centroid buffer to the caller."""
+        var result = self.centroids
+        # UnsafePointer is non-nullable. Leave behind an empty allocation so
+        # the regular destructor remains valid without freeing `result`.
+        self.centroids = alloc[Float32](0)
+        return result
+
     def _train[PARALLEL: Bool](mut self, x: Span[Float32, _]):
         var n = len(x) // self.d
         if n == 0: return
