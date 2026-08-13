@@ -1,7 +1,7 @@
 """Collection metric and sparse payload serialization helpers."""
 
 from std.io.file import FileHandle
-from std.memory import alloc
+from std.collections import InlineArray
 from std.memory.span import Span
 
 from mojovec.api.metadata import (
@@ -65,10 +65,13 @@ def _read_string(mut file: FileHandle) raises -> String:
 
 
 def _write_float64(mut file: FileHandle, value: Float64) raises:
-    var storage = alloc[Float64](1)
+    var storage = InlineArray[Float64, 1](uninitialized=True)
     storage[0] = value
-    file.write_bytes(Span[UInt8](ptr=storage.bitcast[UInt8](), length=8))
-    storage.free()
+    file.write_bytes(
+        Span[UInt8](
+            ptr=storage.unsafe_ptr().bitcast[UInt8](), length=8
+        )
+    )
 
 
 def _read_float64(mut file: FileHandle) raises -> Float64:

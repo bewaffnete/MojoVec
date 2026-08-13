@@ -1,5 +1,5 @@
 from std.io.file import FileHandle
-from std.collections import List
+from std.collections import InlineArray, List
 from std.memory.span import Span
 from std.memory import alloc
 from std.os import SEEK_CUR, SEEK_SET
@@ -64,11 +64,12 @@ def _read_exact_bytes(mut f: FileHandle, byte_count: Int) raises -> List[UInt8]:
 
 
 def write_int(mut f: FileHandle, val: Int) raises:
-    var ptr = alloc[Int](1)
-    ptr[0] = val
-    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=8)
+    var storage = InlineArray[Int, 1](uninitialized=True)
+    storage[0] = val
+    var span = Span[UInt8](
+        ptr=storage.unsafe_ptr().bitcast[UInt8](), length=8
+    )
     f.write_bytes(span)
-    ptr.free()
 
 def read_int(mut f: FileHandle) raises -> Int:
     var read_data = _read_exact_bytes(f, 8)
@@ -133,11 +134,10 @@ def _validate_mmap_region(
         raise Error("Invalid memory-mapped index region.")
 
 def write_bool(mut f: FileHandle, val: Bool) raises:
-    var ptr = alloc[Bool](1)
-    ptr[0] = val
-    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=1)
+    var storage = InlineArray[UInt8, 1](uninitialized=True)
+    storage[0] = 1 if val else 0
+    var span = Span[UInt8](ptr=storage.unsafe_ptr(), length=1)
     f.write_bytes(span)
-    ptr.free()
 
 def read_bool(mut f: FileHandle) raises -> Bool:
     var read_data = _read_exact_bytes(f, 1)
@@ -271,12 +271,11 @@ def write_index_flat_sq8(mut f: FileHandle, index: IndexFlatSQ8) raises:
     write_int(f, metric)
     
     # Write SQ8 params
-    var float32_params = alloc[Float32](3)
+    var float32_params = InlineArray[Float32, 3](uninitialized=True)
     float32_params[0] = index.global_min
     float32_params[1] = index.global_max
     float32_params[2] = index.scale
-    write_unsafe_pointer_float32(f, float32_params, 3)
-    float32_params.free()
+    write_float32_span(f, Span(float32_params))
     
     # Write data
     if index.capacity > 0:
@@ -303,12 +302,12 @@ def read_index_flat_sq8(mut f: FileHandle) raises -> IndexFlatSQ8:
     index.ntotal = ntotal
     index.capacity = capacity
     
-    var float32_params = alloc[Float32](3)
-    read_unsafe_pointer_float32(f, float32_params, 3)
+    var float32_params = InlineArray[Float32, 3](uninitialized=True)
+    var float32_params_span = Span[mut=True, Float32](float32_params)
+    read_float32_span(f, float32_params_span)
     index.global_min = float32_params[0]
     index.global_max = float32_params[1]
     index.scale = float32_params[2]
-    float32_params.free()
     
     if Int(index.codes_f32) != 0: index.codes_f32.free()
     if Int(index.codes_u8) != 0: index.codes_u8.free()
@@ -553,12 +552,11 @@ def write_index_flat_sq8_mmap(
     write_int(f, index.ntotal)
     write_int(f, serialized_capacity)
     write_int(f, 1 if index.metric_type == METRIC_INNER_PRODUCT else 0)
-    var parameters = alloc[Float32](3)
+    var parameters = InlineArray[Float32, 3](uninitialized=True)
     parameters[0] = index.global_min
     parameters[1] = index.global_max
     parameters[2] = index.scale
-    write_unsafe_pointer_float32(f, parameters, 3)
-    parameters.free()
+    write_float32_span(f, Span(parameters))
     write_int(f, f32_offset)
     write_int(f, f32_count)
     write_int(f, u8_offset)
@@ -591,12 +589,12 @@ def read_index_flat_sq8_mmap(
     var metric_int = read_int(f)
     if metric_int != 0 and metric_int != 1:
         raise Error("Invalid IndexFlatSQ8 metric.")
-    var parameters = alloc[Float32](3)
-    read_unsafe_pointer_float32(f, parameters, 3)
+    var parameters = InlineArray[Float32, 3](uninitialized=True)
+    var parameters_span = Span[mut=True, Float32](parameters)
+    read_float32_span(f, parameters_span)
     var global_min = parameters[0]
     var global_max = parameters[1]
     var scale = parameters[2]
-    parameters.free()
     var f32_offset = read_int(f)
     var f32_count = read_int(f)
     var u8_offset = read_int(f)
