@@ -165,7 +165,7 @@ def test_accuracy_sq8() raises:
     var gt_labels = get_ground_truth(ds)
     
     var index = IndexScalarQuantizer(d, QT_8bit, METRIC_L2)
-    index.train(nb, ds.db)
+    index.train(Span[Float32](ptr=ds.db, length=nb * d))
     index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
     
     var test_dist = alloc[Float32](nq * k)

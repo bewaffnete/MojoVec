@@ -17,19 +17,19 @@ def test_sq8_bounds() raises:
     # vmax = [100, 10, 150, 10]
     data[8] = 100.0; data[9] = 10.0; data[10] = 150.0; data[11] = 10.0
     
-    index.train(n, data)
+    index.train(Span[Float32](ptr=data, length=n * d))
     
     # Verify trained vmin and vdiff
-    assert_almost_equal(index.sq.vmin[0], 0.0, atol=1e-5)
-    assert_almost_equal(index.sq.vmin[1], -10.0, atol=1e-5)
-    assert_almost_equal(index.sq.vmin[2], 50.0, atol=1e-5)
-    assert_almost_equal(index.sq.vmin[3], 0.0, atol=1e-5)
+    assert_almost_equal(index.sq.vmin_at(0), 0.0, atol=1e-5)
+    assert_almost_equal(index.sq.vmin_at(1), -10.0, atol=1e-5)
+    assert_almost_equal(index.sq.vmin_at(2), 50.0, atol=1e-5)
+    assert_almost_equal(index.sq.vmin_at(3), 0.0, atol=1e-5)
     
     # vdiff = vmax - vmin
-    assert_almost_equal(index.sq.vdiff[0], 100.0, atol=1e-5)
-    assert_almost_equal(index.sq.vdiff[1], 20.0, atol=1e-5)
-    assert_almost_equal(index.sq.vdiff[2], 100.0, atol=1e-5)
-    assert_almost_equal(index.sq.vdiff[3], 10.0, atol=1e-5)
+    assert_almost_equal(index.sq.vdiff_at(0), 100.0, atol=1e-5)
+    assert_almost_equal(index.sq.vdiff_at(1), 20.0, atol=1e-5)
+    assert_almost_equal(index.sq.vdiff_at(2), 100.0, atol=1e-5)
+    assert_almost_equal(index.sq.vdiff_at(3), 10.0, atol=1e-5)
     
     # Add exactly the vmin and vmax to see their encoded bytes
     index.add(Span[Float32, MutUntrackedOrigin](ptr=data, length=n * d))
@@ -80,6 +80,19 @@ def test_sq16_fp16_conversion() raises:
     
     data.free()
     decoded.free()
+
+
+def test_sq_distance_computer_shared_calibration_lifetime() raises:
+    """Repeated query contexts share calibration without sharing ownership bugs."""
+    var index = IndexScalarQuantizer(2, QT_8bit, METRIC_L2)
+    var data: List[Float32] = [0.0, 0.0, 1.0, 1.0]
+    index.train(Span(data))
+    index.add(Span(data))
+
+    var query: List[Float32] = [0.0, 0.0]
+    for _ in range(1024):
+        var computer = index.get_distance_computer(query.unsafe_ptr())
+        assert_almost_equal(computer.distance(0), 0.0, atol=1e-5)
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

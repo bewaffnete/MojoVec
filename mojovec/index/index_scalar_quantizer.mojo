@@ -180,14 +180,13 @@ struct IndexScalarQuantizer(Index, StorageTrait):
         if Int(self.codes) != 0:
             self.codes.free()
         
-    def train(mut self, n: Int, x: UnsafePointer[Float32, MutUntrackedOrigin]):
+    def train(mut self, x: Span[Float32, _]):
         """Trains the scalar quantizer on a representative dataset.
         
         Args:
-            n: The number of training vectors.
-            x: A pointer to the training vectors.
+            x: A safe Span containing flattened training vectors.
         """
-        self.sq.train(n, x)
+        self.sq.train(x)
         self.is_trained = self.sq.is_trained
 
     def add(mut self, x: Span[Float32, _]):
@@ -312,4 +311,4 @@ struct IndexScalarQuantizer(Index, StorageTrait):
             An instance of the associated distance computer.
         """
         var q_ptr = rebind[UnsafePointer[Float32, MutUntrackedOrigin]](query)
-        return SQDistanceComputer(self.d, self.code_size, self.metric_type, self.sq.copy(), self.codes, q_ptr)
+        return SQDistanceComputer(self.d, self.code_size, self.metric_type, self.sq, self.codes, q_ptr)
