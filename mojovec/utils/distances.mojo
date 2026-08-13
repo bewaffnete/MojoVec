@@ -14,10 +14,14 @@ def l2_distance_simd[simd_width: Int](
     Computes the squared L2 distance between two vectors of dimension `d` using SIMD instructions.
     Supports early termination if threshold is exceeded.
     """
-    var dist0 = SIMD[DType.float32, simd_width]()
-    var dist1 = SIMD[DType.float32, simd_width]()
-    var dist2 = SIMD[DType.float32, simd_width]()
-    var dist3 = SIMD[DType.float32, simd_width]()
+    # These accumulators must be initialized explicitly. A default-constructed
+    # SIMD value is not a portable zero and dimensions below ``simd_width``
+    # reach the tail path without executing an FMA first (PQ commonly has
+    # four-dimensional subvectors with an eight-lane kernel).
+    var dist0 = SIMD[DType.float32, simd_width](0.0)
+    var dist1 = SIMD[DType.float32, simd_width](0.0)
+    var dist2 = SIMD[DType.float32, simd_width](0.0)
+    var dist3 = SIMD[DType.float32, simd_width](0.0)
 
     var i = 0
     # Unroll 4x for Instruction Level Parallelism
@@ -104,10 +108,10 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, _], y: UnsafeP
     Returns:
         The computed inner product.
     """
-    var prod0 = SIMD[DType.float32, simd_width]()
-    var prod1 = SIMD[DType.float32, simd_width]()
-    var prod2 = SIMD[DType.float32, simd_width]()
-    var prod3 = SIMD[DType.float32, simd_width]()
+    var prod0 = SIMD[DType.float32, simd_width](0.0)
+    var prod1 = SIMD[DType.float32, simd_width](0.0)
+    var prod2 = SIMD[DType.float32, simd_width](0.0)
+    var prod3 = SIMD[DType.float32, simd_width](0.0)
     var i = 0
 
     while i <= d - (simd_width * 4):
@@ -143,7 +147,7 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, _], y: UnsafeP
         while i <= d - 16:
             var vx = x.load[width=16](i)
             var vy = y.load[width=16](i)
-            var r = fma(vx, vy, SIMD[DType.float32, 16]())
+            var r = fma(vx, vy, SIMD[DType.float32, 16](0.0))
             res += r.reduce_add()
             i += 16
 
@@ -151,7 +155,7 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, _], y: UnsafeP
         while i <= d - 8:
             var vx = x.load[width=8](i)
             var vy = y.load[width=8](i)
-            var r = fma(vx, vy, SIMD[DType.float32, 8]())
+            var r = fma(vx, vy, SIMD[DType.float32, 8](0.0))
             res += r.reduce_add()
             i += 8
 
@@ -159,7 +163,7 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, _], y: UnsafeP
         while i <= d - 4:
             var vx = x.load[width=4](i)
             var vy = y.load[width=4](i)
-            var r = fma(vx, vy, SIMD[DType.float32, 4]())
+            var r = fma(vx, vy, SIMD[DType.float32, 4](0.0))
             res += r.reduce_add()
             i += 4
 
@@ -489,10 +493,10 @@ def l2_distance_simd_batch4[simd_width: Int](
     y: UnsafePointer[Float32, MutUntrackedOrigin],
     d: Int
 ) -> InlineArray[Float32, 4]:
-    var dist0 = SIMD[DType.float32, simd_width]()
-    var dist1 = SIMD[DType.float32, simd_width]()
-    var dist2 = SIMD[DType.float32, simd_width]()
-    var dist3 = SIMD[DType.float32, simd_width]()
+    var dist0 = SIMD[DType.float32, simd_width](0.0)
+    var dist1 = SIMD[DType.float32, simd_width](0.0)
+    var dist2 = SIMD[DType.float32, simd_width](0.0)
+    var dist3 = SIMD[DType.float32, simd_width](0.0)
 
     var i = 0
     while i <= d - simd_width:
@@ -556,10 +560,10 @@ def inner_product_simd_batch4[simd_width: Int](
     y: UnsafePointer[Float32, MutUntrackedOrigin],
     d: Int
 ) -> InlineArray[Float32, 4]:
-    var ip0 = SIMD[DType.float32, simd_width]()
-    var ip1 = SIMD[DType.float32, simd_width]()
-    var ip2 = SIMD[DType.float32, simd_width]()
-    var ip3 = SIMD[DType.float32, simd_width]()
+    var ip0 = SIMD[DType.float32, simd_width](0.0)
+    var ip1 = SIMD[DType.float32, simd_width](0.0)
+    var ip2 = SIMD[DType.float32, simd_width](0.0)
+    var ip3 = SIMD[DType.float32, simd_width](0.0)
 
     var i = 0
     while i <= d - simd_width:

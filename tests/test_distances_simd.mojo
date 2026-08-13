@@ -65,6 +65,25 @@ def test_distances_exact_simd_multiples() raises:
     check_distance(64)
 
 
+def test_distance_accumulators_are_zero_for_sub_simd_vectors() raises:
+    # PQ uses width-eight kernels for subvectors that can contain only four
+    # components. This exercises the tail-only path that exposed undefined
+    # default SIMD accumulator values in Linux optimized wheels.
+    var x = alloc[Float32](4)
+    var y = alloc[Float32](4)
+    for index in range(4):
+        x[index] = Float32(index + 1)
+        y[index] = Float32(index) * 0.25
+    assert_almost_equal(
+        l2_distance_simd[8](x, y, 4), l2_scalar(x, y, 4), atol=1e-6
+    )
+    assert_almost_equal(
+        inner_product_simd[8](x, y, 4), ip_scalar(x, y, 4), atol=1e-6
+    )
+    x.free()
+    y.free()
+
+
 def test_signed_sq8_dot_handles_vector_tails() raises:
     for dimension in [1, 7, 16, 63, 64, 127, 128, 129]:
         var x = alloc[Int8](dimension)
