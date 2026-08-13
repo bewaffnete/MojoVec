@@ -144,7 +144,13 @@ struct KMeans:
                         c_ptr[j] += x_ptr[j]
                         j += 1
                         
-            parallelize[process_chunk](num_chunks)
+            # Assignment is the O(n * k * d) hot phase and remains fully
+            # parallel. Accumulation is only O(n * d); executing its 32
+            # disjoint chunks deterministically avoids a Mojo 1.0.0b2 x86
+            # worker-pool corruption observed when many small-subvector
+            # K-Means instances are trained back-to-back for PQ.
+            for chunk_id in range(num_chunks):
+                process_chunk(chunk_id)
             
             # Reduce phase
             for c in range(self.k):
