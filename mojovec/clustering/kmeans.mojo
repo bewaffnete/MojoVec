@@ -88,28 +88,32 @@ struct KMeans:
         for iteration in range(self.niter):
             # E-step: Assign points to centroids
             @parameter
-            def process_point(i: Int):
-                var min_dist: Float32 = 1e38
-                var best_c = -1
-                var x_ptr = data_ptr + i * dimension
-                
-                for c in range(cluster_count):
-                    var c_ptr = centroids_ptr + c * dimension
-                    var dist = l2_distance_simd[8](
-                        x_ptr,
-                        c_ptr,
-                        dimension,
-                    )
-                    
-                    if dist < min_dist:
-                        min_dist = dist
-                        best_c = c
+            def process_assignment_chunk(chunk_id: Int):
+                var start = chunk_id * chunk_size
+                var end = min(start + chunk_size, n)
+                for i in range(start, end):
+                    var min_dist: Float32 = 1e38
+                    var best_c = -1
+                    var x_ptr = data_ptr + i * dimension
 
-                # Keep malformed numeric input from becoming an out-of-bounds
-                # cluster write. Finite input always selects a real centroid.
-                assignments_ptr[i] = max(best_c, 0)
-                
-            parallelize[process_point](n)
+                    for c in range(cluster_count):
+                        var c_ptr = centroids_ptr + c * dimension
+                        var dist = l2_distance_simd[8](
+                            x_ptr,
+                            c_ptr,
+                            dimension,
+                        )
+
+                        if dist < min_dist:
+                            min_dist = dist
+                            best_c = c
+
+                    # Keep malformed numeric input from becoming an
+                    # out-of-bounds cluster write. Finite input always selects
+                    # a real centroid.
+                    assignments_ptr[i] = max(best_c, 0)
+
+            parallelize[process_assignment_chunk](num_chunks)
             
             # Zero out thread-local accumulators
             for i in range(num_chunks * self.k * self.d):
