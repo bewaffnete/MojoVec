@@ -97,17 +97,10 @@ struct IndexIVFPQ[QuantizerType: QuantizerTrait](Index, Movable):
         # 1. Train Coarse Quantizer (K-Means)
         var kmeans = KMeans(self.d, self.nlist, 15)
         kmeans.train(x)
-        # Transfer the raw buffer explicitly. A Span borrows memory but does
-        # not extend the KMeans lifetime, and optimized Linux builds may run
-        # its destructor before the quantizer finishes copying the centroids.
+        # Move the managed centroid buffer out of KMeans so its lifetime is
+        # explicit across the quantizer copy on optimized Linux builds.
         var coarse_centroids = kmeans.take_centroids()
-        self.quantizer.add(
-            Span[Float32, MutUntrackedOrigin](
-                ptr=coarse_centroids,
-                length=self.nlist * self.d,
-            )
-        )
-        coarse_centroids.free()
+        self.quantizer.add(Span(coarse_centroids))
         
         # 2. Train PQ 
         if self.by_residual:

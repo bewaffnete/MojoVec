@@ -1,6 +1,5 @@
 from std.algorithm import parallelize
 from std.collections import List
-from std.memory import alloc
 from std.memory.span import Span
 from std.random.philox import Random
 from ..utils.distances import l2_distance_short4, l2_distance_simd
@@ -15,9 +14,9 @@ struct KMeans:
     var d: Int
     var k: Int
     var niter: Int
-    var centroids: UnsafePointer[Float32, MutUntrackedOrigin]
-    var assignments: UnsafePointer[Int, MutUntrackedOrigin]
-    var counts: UnsafePointer[Int, MutUntrackedOrigin]
+    var centroids: List[Float32]
+    var assignments: List[Int]
+    var counts: List[Int]
     
     def __init__(out self, d: Int, k: Int, niter: Int = 15):
         """Initializes the K-Means clustering algorithm.
@@ -30,15 +29,9 @@ struct KMeans:
         self.d = d
         self.k = k
         self.niter = niter
-        self.centroids = alloc[Float32](k * d)
-        self.assignments = alloc[Int](1)
-        self.counts = alloc[Int](k)
-        
-    def __del__(deinit self):
-        """Deallocates memory used for centroids and assignments."""
-        if Int(self.centroids) != 0: self.centroids.free()
-        if Int(self.assignments) != 0: self.assignments.free()
-        if Int(self.counts) != 0: self.counts.free()
+        self.centroids = List[Float32](unsafe_uninit_length=k * d)
+        self.assignments = List[Int]()
+        self.counts = List[Int](unsafe_uninit_length=k)
             
     def train(mut self, x: Span[Float32, _]):
         """Trains the K-Means model to find cluster centroids.
@@ -58,21 +51,18 @@ struct KMeans:
 
     def take_centroids(
         mut self,
-    ) -> UnsafePointer[Float32, MutUntrackedOrigin]:
-        """Transfers ownership of the trained centroid buffer to the caller."""
-        var result = self.centroids
-        # UnsafePointer is non-nullable. Leave behind an empty allocation so
-        # the regular destructor remains valid without freeing `result`.
-        self.centroids = alloc[Float32](0)
-        return result
+    ) -> List[Float32]:
+        """Transfers managed ownership of trained centroids to the caller."""
+        var result = self.centroids^
+        self.centroids = List[Float32]()
+        return result^
 
     def _train[PARALLEL: Bool](mut self, x: Span[Float32, _]):
         var n = len(x) // self.d
         if n == 0: return
         var data_ptr = x.unsafe_ptr()
             
-        if Int(self.assignments) != 0: self.assignments.free()
-        self.assignments = alloc[Int](n)
+        self.assignments = List[Int](unsafe_uninit_length=n)
         
         # 1. Initialize centroids from a private deterministic PRNG. The
         # package-level std.random state is shared across threads, so using it
@@ -87,7 +77,7 @@ struct KMeans:
                 random_words = generator.step()
             var src_idx = Int(random_words[i % 4] % UInt32(n))
             var src_ptr = data_ptr + src_idx * self.d
-            var dst_ptr = self.centroids + i * self.d
+            var dst_ptr = self.centroids.unsafe_ptr() + i * self.d
             for j in range(self.d):
                 dst_ptr[j] = src_ptr[j]
                 
@@ -101,8 +91,9 @@ struct KMeans:
         )
         var local_centroids_ptr = local_centroids.unsafe_ptr()
         var local_counts_ptr = local_counts.unsafe_ptr()
-        var centroids_ptr = self.centroids
-        var assignments_ptr = self.assignments
+        var centroids_ptr = self.centroids.unsafe_ptr()
+        var assignments_ptr = self.assignments.unsafe_ptr()
+        var counts_ptr = self.counts.unsafe_ptr()
         var dimension = self.d
         var cluster_count = self.k
         # Main loop
@@ -177,8 +168,8 @@ struct KMeans:
             
             # Reduce phase
             for c in range(self.k):
-                self.counts[c] = 0
-                var c_ptr = self.centroids + c * self.d
+                counts_ptr[c] = 0
+                var c_ptr = centroids_ptr + c * self.d
                 for j in range(self.d):
                     c_ptr[j] = 0.0
                     
@@ -189,8 +180,8 @@ struct KMeans:
                 var my_counts = local_counts_ptr + chunk_id * self.k
                 
                 for c in range(self.k):
-                    self.counts[c] += my_counts[c]
-                    var c_ptr = self.centroids + c * self.d
+                    counts_ptr[c] += my_counts[c]
+                    var c_ptr = centroids_ptr + c * self.d
                     var src_ptr = my_centroids + c * self.d
                     
                     var j = 0
@@ -204,9 +195,9 @@ struct KMeans:
                         j += 1
             
             for c in range(self.k):
-                var count = self.counts[c]
+                var count = counts_ptr[c]
                 if count > 0:
-                    var c_ptr = self.centroids + c * self.d
+                    var c_ptr = centroids_ptr + c * self.d
                     var inv_count: Float32 = 1.0 / Float32(count)
                     
                     var j = 0
@@ -224,6 +215,6 @@ struct KMeans:
                         sample_offset + (iteration + 1) * self.k + c
                     ) % n
                     var src_ptr = data_ptr + src_idx * self.d
-                    var c_ptr = self.centroids + c * self.d
+                    var c_ptr = centroids_ptr + c * self.d
                     for j in range(self.d):
                         c_ptr[j] = src_ptr[j]

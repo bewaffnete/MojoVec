@@ -73,13 +73,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var kmeans = KMeans(self.d, self.nlist, 15)
         kmeans.train(x)
         var coarse_centroids = kmeans.take_centroids()
-        self.quantizer.add(
-            Span[Float32, MutUntrackedOrigin](
-                ptr=coarse_centroids,
-                length=self.nlist * self.d,
-            )
-        )
-        coarse_centroids.free()
+        self.quantizer.add(Span(coarse_centroids))
         self.is_trained = True
 
     def add(mut self, x: Span[Float32, _]):
