@@ -84,10 +84,6 @@ struct KMeans:
         var assignments_ptr = self.assignments
         var dimension = self.d
         var cluster_count = self.k
-        # Both parallel phases use the same bounded topology. This avoids
-        # nested runtime oversubscription while retaining parallel training.
-        var worker_count = min(num_chunks, n)
-        
         # Main loop
         for iteration in range(self.niter):
             # E-step: Assign points to centroids
@@ -113,7 +109,7 @@ struct KMeans:
                 # cluster write. Finite input always selects a real centroid.
                 assignments_ptr[i] = max(best_c, 0)
                 
-            parallelize[process_point](n, worker_count)
+            parallelize[process_point](n)
             
             # Zero out thread-local accumulators
             for i in range(num_chunks * self.k * self.d):
@@ -148,7 +144,7 @@ struct KMeans:
                         c_ptr[j] += x_ptr[j]
                         j += 1
                         
-            parallelize[process_chunk](num_chunks, worker_count)
+            parallelize[process_chunk](num_chunks)
             
             # Reduce phase
             for c in range(self.k):

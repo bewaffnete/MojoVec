@@ -14,6 +14,17 @@ def l2_distance_simd[simd_width: Int](
     Computes the squared L2 distance between two vectors of dimension `d` using SIMD instructions.
     Supports early termination if threshold is exceeded.
     """
+    # A subvector shorter than one SIMD register is common in PQ. Keep that
+    # path entirely scalar: it avoids constructing/reducing an otherwise
+    # unused vector register and works around incorrect tail-only codegen in
+    # optimized x86 builds of Mojo 1.0.0b2.
+    if d < simd_width:
+        var scalar_result: Float32 = 0.0
+        for index in range(d):
+            var scalar_diff = x[index] - y[index]
+            scalar_result += scalar_diff * scalar_diff
+        return scalar_result
+
     # These accumulators must be initialized explicitly. A default-constructed
     # SIMD value is not a portable zero and dimensions below ``simd_width``
     # reach the tail path without executing an FMA first (PQ commonly has
@@ -108,6 +119,12 @@ def inner_product_simd[simd_width: Int](x: UnsafePointer[Float32, _], y: UnsafeP
     Returns:
         The computed inner product.
     """
+    if d < simd_width:
+        var scalar_result: Float32 = 0.0
+        for index in range(d):
+            scalar_result += x[index] * y[index]
+        return scalar_result
+
     var prod0 = SIMD[DType.float32, simd_width](0.0)
     var prod1 = SIMD[DType.float32, simd_width](0.0)
     var prod2 = SIMD[DType.float32, simd_width](0.0)
