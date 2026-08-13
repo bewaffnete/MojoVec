@@ -1,7 +1,12 @@
 from std.collections import List
 from std.memory.span import Span
 from ..clustering.kmeans import KMeans
-from ..utils.distances import l2_distance_simd, inner_product_simd
+from ..utils.distances import (
+    inner_product_short4,
+    inner_product_simd,
+    l2_distance_short4,
+    l2_distance_simd,
+)
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 
 struct ProductQuantizer(Movable):
@@ -114,7 +119,15 @@ struct ProductQuantizer(Movable):
                 
                 for k in range(self.ksub):
                     var c_ptr = centroids_m + k * self.dsub
-                    var dist = l2_distance_simd[8](sub_x, c_ptr, self.dsub)
+                    var dist: Float32
+                    if self.dsub <= 4:
+                        dist = l2_distance_short4(
+                            sub_x, c_ptr, self.dsub
+                        )
+                    else:
+                        dist = l2_distance_simd[8](
+                            sub_x, c_ptr, self.dsub
+                        )
                     
                     if dist < min_dist:
                         min_dist = dist
@@ -171,6 +184,20 @@ struct ProductQuantizer(Movable):
             for k in range(self.ksub):
                 var c_ptr = centroids_m + k * self.dsub
                 if metric_type == METRIC_L2:
-                    table_m[k] = l2_distance_simd[8](sub_q, c_ptr, self.dsub)
+                    if self.dsub <= 4:
+                        table_m[k] = l2_distance_short4(
+                            sub_q, c_ptr, self.dsub
+                        )
+                    else:
+                        table_m[k] = l2_distance_simd[8](
+                            sub_q, c_ptr, self.dsub
+                        )
                 else:
-                    table_m[k] = -inner_product_simd[4](sub_q, c_ptr, self.dsub)
+                    if self.dsub <= 4:
+                        table_m[k] = -inner_product_short4(
+                            sub_q, c_ptr, self.dsub
+                        )
+                    else:
+                        table_m[k] = -inner_product_simd[4](
+                            sub_q, c_ptr, self.dsub
+                        )

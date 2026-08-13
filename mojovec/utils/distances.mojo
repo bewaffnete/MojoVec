@@ -3,6 +3,42 @@ Provides optimized SIMD implementations for computing various vector distances.
 """
 
 from std.math import fma
+
+
+@always_inline
+def l2_distance_short4(
+    x: UnsafePointer[Float32, _],
+    y: UnsafePointer[Float32, _],
+    d: Int,
+) -> Float32:
+    """Squared L2 kernel specialized for PQ subvectors of up to 4 values."""
+    if d == 4:
+        var diff = x.load[width=4]() - y.load[width=4]()
+        return (diff * diff).reduce_add()
+
+    var result: Float32 = 0.0
+    for index in range(d):
+        var diff = x[index] - y[index]
+        result += diff * diff
+    return result
+
+
+@always_inline
+def inner_product_short4(
+    x: UnsafePointer[Float32, _],
+    y: UnsafePointer[Float32, _],
+    d: Int,
+) -> Float32:
+    """Inner-product kernel specialized for PQ subvectors up to 4 values."""
+    if d == 4:
+        return (x.load[width=4]() * y.load[width=4]()).reduce_add()
+
+    var result: Float32 = 0.0
+    for index in range(d):
+        result += x[index] * y[index]
+    return result
+
+
 @always_inline
 def l2_distance_simd[simd_width: Int](
     x: UnsafePointer[Float32, _],

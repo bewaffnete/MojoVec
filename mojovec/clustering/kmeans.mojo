@@ -3,7 +3,7 @@ from std.collections import List
 from std.memory import alloc
 from std.memory.span import Span
 from std.random.philox import Random
-from ..utils.distances import l2_distance_simd
+from ..utils.distances import l2_distance_short4, l2_distance_simd
 from std.math import max, min
 
 struct KMeans:
@@ -115,11 +115,15 @@ struct KMeans:
 
                     for c in range(cluster_count):
                         var c_ptr = centroids_ptr + c * dimension
-                        var dist = l2_distance_simd[8](
-                            x_ptr,
-                            c_ptr,
-                            dimension,
-                        )
+                        var dist: Float32
+                        if dimension <= 4:
+                            dist = l2_distance_short4(
+                                x_ptr, c_ptr, dimension
+                            )
+                        else:
+                            dist = l2_distance_simd[8](
+                                x_ptr, c_ptr, dimension
+                            )
 
                         if dist < min_dist:
                             min_dist = dist
