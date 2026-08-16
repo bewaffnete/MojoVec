@@ -11,8 +11,8 @@ from mojovec.utils.distances import (
 
 @always_inline
 def _encode_sq8_vector[SYMMETRIC: Bool](
-    source: UnsafePointer[Float32, _],
-    destination: UnsafePointer[UInt8, MutUntrackedOrigin],
+    source: Pointer[Float32, _],
+    destination: Pointer[UInt8, MutUntrackedOrigin],
     dimension: Int,
     minimum: Float32,
     inverse_scale: Float32,
@@ -20,28 +20,28 @@ def _encode_sq8_vector[SYMMETRIC: Bool](
     """Encodes one vector with the metric-selected SQ8 codec."""
     var norm: UInt32 = 0
     comptime if SYMMETRIC:
-        var signed_destination = destination.bitcast[Int8]()
+        var signed_destination = destination.unsafe_bitcast[Int8]()
         for component in range(dimension):
-            var scaled = math.round(source[component] * inverse_scale)
+            var scaled = math.round(source[unsafe_offset=component] * inverse_scale)
             var code = Int8(math.clamp(scaled, -127, 127))
-            signed_destination[component] = code
+            signed_destination[unsafe_offset=component] = code
             var wide_code = Int32(code)
             norm += UInt32(wide_code * wide_code)
     else:
         for component in range(dimension):
             var scaled = math.round(
-                (source[component] - minimum) * inverse_scale
+                (source[unsafe_offset=component] - minimum) * inverse_scale
             )
             var code = UInt8(math.clamp(scaled, 0, 255))
-            destination[component] = code
+            destination[unsafe_offset=component] = code
             norm += UInt32(code) * UInt32(code)
     return norm
 
 
 def _encode_sq8_batch[SYMMETRIC: Bool](
-    source: UnsafePointer[Float32, _],
-    destination: UnsafePointer[UInt8, MutUntrackedOrigin],
-    norms: UnsafePointer[UInt32, MutUntrackedOrigin],
+    source: Pointer[Float32, _],
+    destination: Pointer[UInt8, MutUntrackedOrigin],
+    norms: Pointer[UInt32, MutUntrackedOrigin],
     vector_count: Int,
     dimension: Int,
     minimum: Float32,
@@ -49,9 +49,9 @@ def _encode_sq8_batch[SYMMETRIC: Bool](
 ):
     """Encodes a contiguous vector batch without a metric branch per value."""
     for vector_index in range(vector_count):
-        norms[vector_index] = _encode_sq8_vector[SYMMETRIC](
-            source + vector_index * dimension,
-            destination + vector_index * dimension,
+        norms[unsafe_offset=vector_index] = _encode_sq8_vector[SYMMETRIC](
+            source.unsafe_offset(vector_index * dimension),
+            destination.unsafe_offset(vector_index * dimension),
             dimension,
             minimum,
             inverse_scale,
@@ -60,8 +60,8 @@ def _encode_sq8_batch[SYMMETRIC: Bool](
 
 @always_inline
 def _sq8_code_distance[INNER_PRODUCT: Bool](
-    query: UnsafePointer[UInt8, _],
-    database: UnsafePointer[UInt8, _],
+    query: Pointer[UInt8, _],
+    database: Pointer[UInt8, _],
     query_norm: UInt32,
     database_norm: UInt32,
     dimension: Int,
@@ -70,7 +70,7 @@ def _sq8_code_distance[INNER_PRODUCT: Bool](
     """Runs the metric-specialized byte kernel used by Flat and HNSW."""
     comptime if INNER_PRODUCT:
         var dot = sq8_signed_dot_product_simd(
-            query.bitcast[Int8](), database.bitcast[Int8](), dimension
+            query.unsafe_bitcast[Int8](), database.unsafe_bitcast[Int8](), dimension
         )
         return -Float32(dot) * scale_squared
     else:

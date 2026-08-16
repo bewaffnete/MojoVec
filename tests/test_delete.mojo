@@ -1,6 +1,6 @@
 from std.testing import assert_equal, assert_not_equal, assert_true, TestSuite
 from std.collections import List
-from std.memory.span import Span
+from std.collections.span import Span
 from mojovec.api.collection import Collection
 
 def get_test_data() -> Tuple[List[Int], List[Float32]]:

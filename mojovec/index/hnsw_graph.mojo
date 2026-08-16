@@ -1,3 +1,4 @@
+from std.memory.alloc import unsafe_alloc
 from std.random import rand
 from std.math import log
 from std.atomic import Atomic
@@ -17,11 +18,11 @@ from mojovec.core.validation import _validate_hnsw_parameters
 
 struct NeighborsInfo:
     """Contains information about a node's neighbors in the HNSW graph."""
-    var ptr: UnsafePointer[Int32, MutUntrackedOrigin]
+    var ptr: Pointer[Int32, MutUntrackedOrigin]
     var max_links: Int
 
     def __init__(
-        out self, ptr: UnsafePointer[Int32, MutUntrackedOrigin], max_links: Int
+        out self, ptr: Pointer[Int32, MutUntrackedOrigin], max_links: Int
     ):
         """Initializes neighbor information with a pointer to the links and the maximum allowed links."""
         self.ptr = ptr
@@ -38,16 +39,16 @@ struct HNSWGraph(Movable):
     var entry_point: Int
     var ntotal: Int
 
-    var levels: UnsafePointer[Int, MutUntrackedOrigin]
-    var offsets: UnsafePointer[Int, MutUntrackedOrigin]
-    var neighbors: UnsafePointer[Int32, MutUntrackedOrigin]
-    var cum_nneighbor_per_level: UnsafePointer[Int, MutUntrackedOrigin]
+    var levels: Pointer[Int, MutUntrackedOrigin]
+    var offsets: Pointer[Int, MutUntrackedOrigin]
+    var neighbors: Pointer[Int32, MutUntrackedOrigin]
+    var cum_nneighbor_per_level: Pointer[Int, MutUntrackedOrigin]
 
     var capacity: Int
     var neighbors_capacity: Int
 
-    var next_tickets: UnsafePointer[UInt32, MutUntrackedOrigin]
-    var now_serving: UnsafePointer[UInt32, MutUntrackedOrigin]
+    var next_tickets: Pointer[UInt32, MutUntrackedOrigin]
+    var now_serving: Pointer[UInt32, MutUntrackedOrigin]
     var num_locks: Int
     var _mapping: FileMemoryMap
 
@@ -64,49 +65,49 @@ struct HNSWGraph(Movable):
         self.ntotal = 0
 
         self.capacity = 1024
-        self.cum_nneighbor_per_level = alloc[Int](33)
-        self.cum_nneighbor_per_level[0] = 0
-        self.cum_nneighbor_per_level[1] = self.M * 2
+        self.cum_nneighbor_per_level = unsafe_alloc[Int](33)
+        self.cum_nneighbor_per_level[unsafe_offset=0] = 0
+        self.cum_nneighbor_per_level[unsafe_offset=1] = self.M * 2
         for i in range(2, 33):
-            self.cum_nneighbor_per_level[i] = (
-                self.cum_nneighbor_per_level[i - 1] + self.M
+            self.cum_nneighbor_per_level[unsafe_offset=i] = (
+                self.cum_nneighbor_per_level[unsafe_offset=i - 1] + self.M
             )
 
         self.neighbors_capacity = (
-            self.capacity * self.cum_nneighbor_per_level[4]
+            self.capacity * self.cum_nneighbor_per_level[unsafe_offset=4]
         )
 
-        self.levels = alloc[Int](self.capacity)
-        self.offsets = alloc[Int](self.capacity + 1)
-        self.offsets[0] = 0
-        self.neighbors = alloc[Int32](self.neighbors_capacity)
+        self.levels = unsafe_alloc[Int](self.capacity)
+        self.offsets = unsafe_alloc[Int](self.capacity + 1)
+        self.offsets[unsafe_offset=0] = 0
+        self.neighbors = unsafe_alloc[Int32](self.neighbors_capacity)
         for i in range(self.neighbors_capacity):
-            self.neighbors[i] = -1
+            self.neighbors[unsafe_offset=i] = -1
 
         self.num_locks = 65536
-        self.next_tickets = alloc[UInt32](self.num_locks)
-        self.now_serving = alloc[UInt32](self.num_locks)
+        self.next_tickets = unsafe_alloc[UInt32](self.num_locks)
+        self.now_serving = unsafe_alloc[UInt32](self.num_locks)
         for i in range(self.num_locks):
-            self.next_tickets[i] = 0
-            self.now_serving[i] = 0
+            self.next_tickets[unsafe_offset=i] = 0
+            self.now_serving[unsafe_offset=i] = 0
         self._mapping = FileMemoryMap()
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         """Frees the underlying memory of the HNSW graph."""
         if not self._mapping.is_active():
             if Int(self.levels) != 0:
-                self.levels.free()
+                self.levels.unsafe_free()
             if Int(self.offsets) != 0:
-                self.offsets.free()
+                self.offsets.unsafe_free()
             if Int(self.neighbors) != 0:
-                self.neighbors.free()
+                self.neighbors.unsafe_free()
             if Int(self.cum_nneighbor_per_level) != 0:
-                self.cum_nneighbor_per_level.free()
+                self.cum_nneighbor_per_level.unsafe_free()
         self._mapping.close()
         if Int(self.next_tickets) != 0:
-            self.next_tickets.free()
+            self.next_tickets.unsafe_free()
         if Int(self.now_serving) != 0:
-            self.now_serving.free()
+            self.now_serving.unsafe_free()
 
     def __init__(out self, *, deinit move: Self):
         """Moves the HNSW graph."""
@@ -134,18 +135,18 @@ struct HNSWGraph(Movable):
     def _detach_mapped(mut self):
         if not self._mapping.is_active():
             return
-        var new_levels = alloc[Int](max(self.capacity, 1))
-        var new_offsets = alloc[Int](max(self.capacity + 1, 1))
-        var new_neighbors = alloc[Int32](max(self.neighbors_capacity, 1))
-        var new_cumulative = alloc[Int](33)
+        var new_levels = unsafe_alloc[Int](max(self.capacity, 1))
+        var new_offsets = unsafe_alloc[Int](max(self.capacity + 1, 1))
+        var new_neighbors = unsafe_alloc[Int32](max(self.neighbors_capacity, 1))
+        var new_cumulative = unsafe_alloc[Int](33)
         for i in range(self.capacity):
-            new_levels[i] = self.levels[i]
+            new_levels[unsafe_offset=i] = self.levels[unsafe_offset=i]
         for i in range(self.capacity + 1):
-            new_offsets[i] = self.offsets[i]
+            new_offsets[unsafe_offset=i] = self.offsets[unsafe_offset=i]
         for i in range(self.neighbors_capacity):
-            new_neighbors[i] = self.neighbors[i]
+            new_neighbors[unsafe_offset=i] = self.neighbors[unsafe_offset=i]
         for i in range(33):
-            new_cumulative[i] = self.cum_nneighbor_per_level[i]
+            new_cumulative[unsafe_offset=i] = self.cum_nneighbor_per_level[unsafe_offset=i]
         self._mapping.close()
         self.levels = new_levels
         self.offsets = new_offsets
@@ -157,7 +158,7 @@ struct HNSWGraph(Movable):
         var arr = InlineArray[Float64, 1](uninitialized=True)
         var ptr = arr.unsafe_ptr()
         rand(ptr, 1)
-        var f = ptr[0]
+        var f = ptr[unsafe_offset=0]
         if f < 1e-10:
             f = 1e-10
         var mult = 1.0 / log(Float64(self.M))
@@ -169,11 +170,11 @@ struct HNSWGraph(Movable):
     @always_inline
     def get_neighbors(self, node: Int, level: Int) -> NeighborsInfo:
         """Retrieves the neighbor information for a given node at a specific level."""
-        var base_offset = self.offsets[node]
-        var level_offset = self.cum_nneighbor_per_level[level]
-        var max_size = self.cum_nneighbor_per_level[level + 1] - level_offset
+        var base_offset = self.offsets[unsafe_offset=node]
+        var level_offset = self.cum_nneighbor_per_level[unsafe_offset=level]
+        var max_size = self.cum_nneighbor_per_level[unsafe_offset=level + 1] - level_offset
         return NeighborsInfo(
-            self.neighbors + (base_offset + level_offset), max_size
+            self.neighbors.unsafe_offset(base_offset + level_offset), max_size
         )
 
     @always_inline
@@ -182,37 +183,37 @@ struct HNSWGraph(Movable):
         var info = self.get_neighbors(node, level)
         # We store the sentinel -1 to mark the end of the neighbor list
         if new_len < info.max_links:
-            info.ptr[new_len] = -1
+            info.ptr[unsafe_offset=new_len] = -1
 
     @always_inline
     def lock_node(self, node: Int):
         """Acquires a ticket lock for a specific node to allow thread-safe updates."""
         var lock_idx = node % self.num_locks
-        var ticket = Atomic.fetch_add(self.next_tickets + lock_idx, 1)
-        while Atomic.load(self.now_serving + lock_idx) != ticket:
+        var ticket = Atomic.fetch_add(self.next_tickets.unsafe_offset(lock_idx), 1)
+        while Atomic.load(self.now_serving.unsafe_offset(lock_idx)) != ticket:
             pass
 
     @always_inline
     def unlock_node(self, node: Int):
         """Releases the ticket lock for a specific node."""
         var lock_idx = node % self.num_locks
-        _ = Atomic.fetch_add(self.now_serving + lock_idx, 1)
+        _ = Atomic.fetch_add(self.now_serving.unsafe_offset(lock_idx), 1)
 
     def _grow(mut self):
         """Doubles the capacity of the node level and offset arrays."""
         self._detach_mapped()
         var new_capacity = max(self.capacity * 2, 1)
 
-        var new_levels = alloc[Int](new_capacity)
+        var new_levels = unsafe_alloc[Int](new_capacity)
         for i in range(self.capacity):
-            new_levels[i] = self.levels[i]
-        self.levels.free()
+            new_levels[unsafe_offset=i] = self.levels[unsafe_offset=i]
+        self.levels.unsafe_free()
         self.levels = new_levels
 
-        var new_offsets = alloc[Int](new_capacity + 1)
+        var new_offsets = unsafe_alloc[Int](new_capacity + 1)
         for i in range(self.capacity + 1):
-            new_offsets[i] = self.offsets[i]
-        self.offsets.free()
+            new_offsets[unsafe_offset=i] = self.offsets[unsafe_offset=i]
+        self.offsets.unsafe_free()
         self.offsets = new_offsets
 
         self.capacity = new_capacity
@@ -221,18 +222,18 @@ struct HNSWGraph(Movable):
         """Grows the neighbor links array to accommodate more links."""
         self._detach_mapped()
         var new_capacity = max(self.neighbors_capacity * 2, required_capacity)
-        var new_neighbors = alloc[Int32](new_capacity)
+        var new_neighbors = unsafe_alloc[Int32](new_capacity)
         for i in range(new_capacity):
-            new_neighbors[i] = -1
+            new_neighbors[unsafe_offset=i] = -1
 
         var old_total_size = current_offset
 
         if old_total_size > 0:
             for i in range(old_total_size):
-                new_neighbors[i] = self.neighbors[i]
+                new_neighbors[unsafe_offset=i] = self.neighbors[unsafe_offset=i]
 
         if Int(self.neighbors) != 0:
-            self.neighbors.free()
+            self.neighbors.unsafe_free()
         self.neighbors = new_neighbors
         self.neighbors_capacity = new_capacity
 
@@ -249,10 +250,10 @@ struct HNSWGraph(Movable):
         ep_dist: Float32,
         ef: Int,
         level: Int,
-        vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
-        mut res_dist: UnsafePointer[Float32, origin1],
-        mut res_labels: UnsafePointer[Int32, origin2],
-        filter: UnsafePointer[UInt8, _],
+        vt: Pointer[VisitedTable, MutUntrackedOrigin],
+        mut res_dist: Pointer[Float32, origin1],
+        mut res_labels: Pointer[Int32, origin2],
+        filter: Pointer[UInt8, _],
     ) -> Int:
         """Performs a greedy beam search on a specific layer of the HNSW graph."""
         var safe_ef = ef
@@ -277,7 +278,7 @@ struct HNSWGraph(Movable):
         C_size += 1
 
         comptime if HAS_FILTER:
-            if filter[ep_id] == 0:
+            if filter[unsafe_offset=ep_id] == 0:
                 max_heap_push(W_dist, W_labels, W_size, ep_dist, Int32(ep_id))
                 W_size += 1
         else:
@@ -290,16 +291,16 @@ struct HNSWGraph(Movable):
             var c_id = popped.label
             C_size -= 1
 
-            var worst_w_dist = W_dist[0]
+            var worst_w_dist = W_dist[unsafe_offset=0]
             if W_size == safe_ef and c_dist > worst_w_dist:
                 break
 
             # Prefetch the next node's neighbor list if there are still candidates left
             if C_size > 0:
-                var next_c_id = C_labels[0]
+                var next_c_id = C_labels[unsafe_offset=0]
                 var next_info = self.get_neighbors(Int(next_c_id), level)
                 comptime opts_list = PrefetchOptions().for_read().low_locality().to_data_cache()
-                prefetch[opts_list](next_info.ptr.bitcast[UInt8]())
+                prefetch[opts_list](next_info.ptr.unsafe_bitcast[UInt8]())
 
             var neighbors_info = self.get_neighbors(Int(c_id), level)
             var neighbors = neighbors_info.ptr
@@ -312,11 +313,11 @@ struct HNSWGraph(Movable):
             @parameter
             def process_buffered_ids():
                 if n_buffered == 4:
-                    var d0123 = comp.distance_batch4(Int(buffered_e[0]), Int(buffered_e[1]), Int(buffered_e[2]), Int(buffered_e[3]))
+                    var d0123 = comp.distance_batch4(Int(buffered_e[unsafe_offset=0]), Int(buffered_e[unsafe_offset=1]), Int(buffered_e[unsafe_offset=2]), Int(buffered_e[unsafe_offset=3]))
                     for j in range(4):
-                        var e_id = buffered_e[j]
+                        var e_id = buffered_e[unsafe_offset=j]
                         var e_dist = d0123[j]
-                        var worst_w_dist = W_dist[0]
+                        var worst_w_dist = W_dist[unsafe_offset=0]
                         if W_size < safe_ef or e_dist < worst_w_dist:
                             if C_size >= C_cap:
                                 pass
@@ -326,13 +327,13 @@ struct HNSWGraph(Movable):
 
                             if W_size < safe_ef:
                                 comptime if HAS_FILTER:
-                                    if filter[Int(e_id)] > 0:
+                                    if filter[unsafe_offset=Int(e_id)] > 0:
                                         continue
                                 max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
                                 W_size += 1
                             else:
                                 comptime if HAS_FILTER:
-                                    if filter[Int(e_id)] > 0:
+                                    if filter[unsafe_offset=Int(e_id)] > 0:
                                         continue
                                 max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
                     n_buffered = 0
@@ -340,9 +341,9 @@ struct HNSWGraph(Movable):
             @parameter
             def process_remainder():
                 for j in range(n_buffered):
-                    var e_id = buffered_e[j]
+                    var e_id = buffered_e[unsafe_offset=j]
                     var threshold: Float32 = Float32.MAX
-                    var worst_w_dist = W_dist[0]
+                    var worst_w_dist = W_dist[unsafe_offset=0]
                     if W_size >= safe_ef:
                         threshold = worst_w_dist
 
@@ -356,13 +357,13 @@ struct HNSWGraph(Movable):
 
                         if W_size < safe_ef:
                             comptime if HAS_FILTER:
-                                if filter[Int(e_id)] > 0:
+                                if filter[unsafe_offset=Int(e_id)] > 0:
                                     continue
                             max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
                             W_size += 1
                         else:
                             comptime if HAS_FILTER:
-                                if filter[Int(e_id)] > 0:
+                                if filter[unsafe_offset=Int(e_id)] > 0:
                                     continue
                             max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
 
@@ -370,7 +371,7 @@ struct HNSWGraph(Movable):
                 var look_ahead_idx = 0
                 var prefetched_count = 0
                 while look_ahead_idx < MAX_LINKS and prefetched_count < 4:
-                    var next_e = neighbors[look_ahead_idx]
+                    var next_e = neighbors[unsafe_offset=look_ahead_idx]
                     if next_e < 0:
                         break
                     if not vt[].is_visited(Int(next_e)):
@@ -379,13 +380,13 @@ struct HNSWGraph(Movable):
                     look_ahead_idx += 1
 
                 for i in range(MAX_LINKS):
-                    var e = neighbors[i]
+                    var e = neighbors[unsafe_offset=i]
                     if e < 0:
                         break
 
                     # Prefetch the visited table flag for the next neighbor
                     if i + 1 < MAX_LINKS:
-                        var next_e = neighbors[i + 1]
+                        var next_e = neighbors[unsafe_offset=i + 1]
                         if next_e >= 0:
                             vt[].prefetch(Int(next_e))
 
@@ -394,7 +395,7 @@ struct HNSWGraph(Movable):
 
                         # Advance look_ahead_idx to prefetch 1 new unvisited neighbor
                         while look_ahead_idx < MAX_LINKS:
-                            var next_e = neighbors[look_ahead_idx]
+                            var next_e = neighbors[unsafe_offset=look_ahead_idx]
                             look_ahead_idx += 1
                             if next_e < 0:
                                 break
@@ -402,7 +403,7 @@ struct HNSWGraph(Movable):
                                 comp.prefetch_vector(Int(next_e))
                                 break
 
-                        buffered_e[n_buffered] = e
+                        buffered_e[unsafe_offset=n_buffered] = e
                         n_buffered += 1
                         if n_buffered == 4:
                             process_buffered_ids()
@@ -412,7 +413,7 @@ struct HNSWGraph(Movable):
                 var look_ahead_idx = 0
                 var prefetched_count = 0
                 while look_ahead_idx < max_links and prefetched_count < 4:
-                    var next_e = neighbors[look_ahead_idx]
+                    var next_e = neighbors[unsafe_offset=look_ahead_idx]
                     if next_e < 0:
                         break
                     if not vt[].is_visited(Int(next_e)):
@@ -421,13 +422,13 @@ struct HNSWGraph(Movable):
                     look_ahead_idx += 1
 
                 for i in range(max_links):
-                    var e = neighbors[i]
+                    var e = neighbors[unsafe_offset=i]
                     if e < 0:
                         break
 
                     # Prefetch the visited table flag for the next neighbor
                     if i + 1 < max_links:
-                        var next_e = neighbors[i + 1]
+                        var next_e = neighbors[unsafe_offset=i + 1]
                         if next_e >= 0:
                             vt[].prefetch(Int(next_e))
 
@@ -436,7 +437,7 @@ struct HNSWGraph(Movable):
 
                         # Advance look_ahead_idx to prefetch 1 new unvisited neighbor
                         while look_ahead_idx < max_links:
-                            var next_e = neighbors[look_ahead_idx]
+                            var next_e = neighbors[unsafe_offset=look_ahead_idx]
                             look_ahead_idx += 1
                             if next_e < 0:
                                 break
@@ -444,7 +445,7 @@ struct HNSWGraph(Movable):
                                 comp.prefetch_vector(Int(next_e))
                                 break
 
-                        buffered_e[n_buffered] = e
+                        buffered_e[unsafe_offset=n_buffered] = e
                         n_buffered += 1
                         if n_buffered == 4:
                             process_buffered_ids()
@@ -462,7 +463,7 @@ struct HNSWGraph(Movable):
 
         # Count current links
         var current_links = 0
-        while current_links < info.max_links and neighbors[current_links] != -1:
+        while current_links < info.max_links and neighbors[unsafe_offset=current_links] != -1:
             current_links += 1
 
         if current_links <= max_links:
@@ -476,28 +477,28 @@ struct HNSWGraph(Movable):
         var labels = labels_array.unsafe_ptr()
 
         for i in range(current_links):
-            labels[i] = neighbors[i]
-            dists[i] = comp.distance(Int(neighbors[i]))
+            labels[unsafe_offset=i] = neighbors[unsafe_offset=i]
+            dists[unsafe_offset=i] = comp.distance(Int(neighbors[unsafe_offset=i]))
 
         # We can just sort them manually (selection sort since M is small)
         for i in range(current_links):
             var best_idx = i
-            var best_d = dists[i]
+            var best_d = dists[unsafe_offset=i]
             for j in range(i + 1, current_links):
-                if dists[j] < best_d:
-                    best_d = dists[j]
+                if dists[unsafe_offset=j] < best_d:
+                    best_d = dists[unsafe_offset=j]
                     best_idx = j
             if best_idx != i:
-                var t_d = dists[i]
-                dists[i] = dists[best_idx]
-                dists[best_idx] = t_d
-                var t_l = labels[i]
-                labels[i] = labels[best_idx]
-                labels[best_idx] = t_l
+                var t_d = dists[unsafe_offset=i]
+                dists[unsafe_offset=i] = dists[unsafe_offset=best_idx]
+                dists[unsafe_offset=best_idx] = t_d
+                var t_l = labels[unsafe_offset=i]
+                labels[unsafe_offset=i] = labels[unsafe_offset=best_idx]
+                labels[unsafe_offset=best_idx] = t_l
 
         # Write back
         for i in range(max_links):
-            neighbors[i] = labels[i]
+            neighbors[unsafe_offset=i] = labels[unsafe_offset=i]
         self.set_neighbors_len(node, level, max_links)
 
     def add_link[
@@ -508,7 +509,7 @@ struct HNSWGraph(Movable):
         src: Int,
         dest: Int,
         level: Int,
-        vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
+        vt: Pointer[VisitedTable, MutUntrackedOrigin],
     ):
         """Adds a bidirectional link between two nodes, applying heuristics to maintain graph quality."""
         self.lock_node(src)
@@ -516,16 +517,16 @@ struct HNSWGraph(Movable):
         var neighbors = info.ptr
 
         var i = 0
-        while i < info.max_links and neighbors[i] != -1:
-            if neighbors[i] == Int32(dest):
+        while i < info.max_links and neighbors[unsafe_offset=i] != -1:
+            if neighbors[unsafe_offset=i] == Int32(dest):
                 self.unlock_node(src)
                 return  # Already linked
             i += 1
 
         if i < info.max_links:
-            neighbors[i] = Int32(dest)
+            neighbors[unsafe_offset=i] = Int32(dest)
             if i + 1 < info.max_links:
-                neighbors[i + 1] = -1
+                neighbors[unsafe_offset=i + 1] = -1
             self.unlock_node(src)
         else:
             var C_size = info.max_links + 1
@@ -537,8 +538,8 @@ struct HNSWGraph(Movable):
             var C_dists = c_dists_array.unsafe_ptr()
 
             for j in range(info.max_links):
-                var node_dist = comp.symmetric_distance(src, Int(neighbors[j]))
-                min_heap_push(C_dists, C_nodes, j, node_dist, neighbors[j])
+                var node_dist = comp.symmetric_distance(src, Int(neighbors[unsafe_offset=j]))
+                min_heap_push(C_dists, C_nodes, j, node_dist, neighbors[unsafe_offset=j])
 
             var dest_dist = comp.symmetric_distance(src, dest)
             min_heap_push(C_dists, C_nodes, info.max_links, dest_dist, Int32(dest))
@@ -563,11 +564,11 @@ struct HNSWGraph(Movable):
                 comp.prefetch_vector(Int(c))
 
                 for r in range(return_size):
-                    var e = return_list[r]
+                    var e = return_list[unsafe_offset=r]
 
                     # Prefetch the next 'e' vector to hide memory latency
                     if r + 1 < return_size:
-                        comp.prefetch_vector(Int(return_list[r + 1]))
+                        comp.prefetch_vector(Int(return_list[unsafe_offset=r + 1]))
 
                     var e_c_dist = comp.symmetric_distance(Int(c), Int(e))
                     if e_c_dist < c_dist:
@@ -575,13 +576,13 @@ struct HNSWGraph(Movable):
                         break
 
                 if keep:
-                    return_list[return_size] = c
+                    return_list[unsafe_offset=return_size] = c
                     return_size += 1
 
             for j in range(return_size):
-                neighbors[j] = return_list[j]
+                neighbors[unsafe_offset=j] = return_list[unsafe_offset=j]
 
             if return_size < info.max_links:
-                neighbors[return_size] = -1
+                neighbors[unsafe_offset=return_size] = -1
 
             self.unlock_node(src)

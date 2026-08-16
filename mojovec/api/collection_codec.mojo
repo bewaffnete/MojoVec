@@ -2,7 +2,7 @@
 
 from std.io.file import FileHandle
 from std.collections import InlineArray
-from std.memory.span import Span
+from std.collections.span import Span
 
 from mojovec.api.metadata import (
     METADATA_BOOL,
@@ -69,7 +69,7 @@ def _write_float64(mut file: FileHandle, value: Float64) raises:
     storage[0] = value
     file.write_bytes(
         Span[UInt8](
-            ptr=storage.unsafe_ptr().bitcast[UInt8](), length=8
+            unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=8
         )
     )
 
@@ -78,7 +78,7 @@ def _read_float64(mut file: FileHandle) raises -> Float64:
     var data = file.read_bytes(8)
     if len(data) != 8:
         raise Error("Unexpected end of serialized Float64.")
-    var value = data.unsafe_ptr().bitcast[Float64]()[0]
+    var value = data.unsafe_ptr().unsafe_bitcast[Float64]()[unsafe_offset=0]
     _ = len(data)
     return value
 

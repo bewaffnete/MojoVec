@@ -1,5 +1,5 @@
 from std.io.file import FileHandle
-from std.memory.span import Span
+from std.collections.span import Span
 from std.os import SEEK_END, SEEK_SET
 
 from mojovec.io.atomic_file import sync_file
@@ -26,9 +26,9 @@ def _checksum_update(
     var words = len(bytes) // 8
     for index in range(words):
         var address = Int(pointer) + index * 8
-        var word = UnsafePointer[UInt64, MutUntrackedOrigin](
+        var word = Pointer[UInt64, MutUntrackedOrigin](
             unsafe_from_address=address
-        )[0]
+        )[unsafe_offset=0]
         result ^= word
         result = _rotate_left(result, 27) ^ _rotate_left(word, 17)
         result ^= result >> 23
@@ -36,7 +36,7 @@ def _checksum_update(
     var tail: UInt64 = 0
     var tail_start = words * 8
     for index in range(tail_start, len(bytes)):
-        tail |= UInt64(pointer[index]) << UInt64((index - tail_start) * 8)
+        tail |= UInt64(pointer[unsafe_offset=index]) << UInt64((index - tail_start) * 8)
     result ^= tail
     result ^= UInt64(len(bytes)) << 32
     return _rotate_left(result, 11)
@@ -63,7 +63,7 @@ def _write_uint64(mut file: FileHandle, value: UInt64) raises:
     storage[0] = value
     file.write_all(
         Span[UInt8](
-            ptr=storage.unsafe_ptr().bitcast[UInt8](),
+            unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](),
             length=8,
         )
     )
@@ -91,13 +91,13 @@ def validate_snapshot_checksum(
     if total_size < SNAPSHOT_CHECKSUM_TRAILER_BYTES:
         raise Error("Snapshot checksum trailer is missing.")
     var payload_size = total_size - SNAPSHOT_CHECKSUM_TRAILER_BYTES
-    _ = file.seek(UInt64(payload_size), SEEK_SET)
+    _ = file.seek(payload_size, SEEK_SET)
     var trailer = file.read_bytes(SNAPSHOT_CHECKSUM_TRAILER_BYTES)
     if len(trailer) != SNAPSHOT_CHECKSUM_TRAILER_BYTES:
         raise Error("Snapshot checksum trailer is truncated.")
-    var values = trailer.unsafe_ptr().bitcast[UInt64]()
-    var magic = values[0]
-    var expected = values[1]
+    var values = trailer.unsafe_ptr().unsafe_bitcast[UInt64]()
+    var magic = values[unsafe_offset=0]
+    var expected = values[unsafe_offset=1]
     _ = len(trailer)
     if magic != SNAPSHOT_CHECKSUM_MAGIC:
         raise Error("Invalid snapshot checksum trailer.")

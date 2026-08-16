@@ -1,7 +1,7 @@
 """Flat/SQ8 HNSW storage dispatch for the managed Collection API."""
 
 from std.io.file import FileHandle
-from std.memory.span import Span
+from std.collections.span import Span
 from std.utils import Variant
 
 from mojovec.api.collection_codec import _index_metric
@@ -94,11 +94,11 @@ def _storage_vector(
 ) -> Span[Float32, MutUntrackedOrigin]:
     if kind == STORAGE_SQ8:
         return Span[Float32, MutUntrackedOrigin](
-            ptr=storage.unsafe_get[SQ8HNSW]().storage.get_vector(internal_id),
+            unsafe_ptr=storage.unsafe_get[SQ8HNSW]().storage.get_vector(internal_id),
             length=dimension,
         )
     return Span[Float32, MutUntrackedOrigin](
-        ptr=storage.unsafe_get[FlatHNSW]().storage.get_vector(internal_id),
+        unsafe_ptr=storage.unsafe_get[FlatHNSW]().storage.get_vector(internal_id),
         length=dimension,
     )
 

@@ -17,11 +17,11 @@ struct FileMemoryMap(Movable):
         self.address = 0
         self.size = 0
 
-    def __init__(out self, *, deinit take: Self):
-        self.address = take.address
-        self.size = take.size
+    def __init__(out self, *, deinit move: Self):
+        self.address = move.address
+        self.size = move.size
 
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         if self.address != 0:
             _ = external_call["munmap", Int](self.address, self.size)
 

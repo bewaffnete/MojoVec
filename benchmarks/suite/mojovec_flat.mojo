@@ -1,7 +1,7 @@
 from std.time import perf_counter_ns
-from std.memory import alloc
+from std.memory.alloc import unsafe_alloc
 from std.collections import List
-from std.memory.span import Span
+from std.collections.span import Span
 from mojovec import Client
 
 
@@ -28,9 +28,9 @@ def main() raises:
         "benchmarks/data/sift1m/sift_groundtruth.ivecs"
     )
 
-    var db_ptr = db_data.unsafe_ptr().bitcast[Float32]()
-    var queries_ptr = queries_data.unsafe_ptr().bitcast[Float32]()
-    var gt = gt_data.unsafe_ptr().bitcast[Int32]()
+    var db_ptr = db_data.unsafe_ptr().unsafe_bitcast[Float32]()
+    var queries_ptr = queries_data.unsafe_ptr().unsafe_bitcast[Float32]()
+    var gt = gt_data.unsafe_ptr().unsafe_bitcast[Int32]()
 
     var db_list = List[Float32](capacity=n * d)
     var ids_list = List[Int](capacity=n)
@@ -79,13 +79,13 @@ def main() raises:
         var ef = ef_list[i]
         collection.set_ef_search(ef)
 
-        var dist_ptr = alloc[Float32](q * k)
-        var labels_ptr = alloc[Int](q * k)
+        var dist_ptr = unsafe_alloc[Float32](q * k)
+        var labels_ptr = unsafe_alloc[Int](q * k)
         var query_span = Span[Float32](
-            ptr=queries_list.unsafe_ptr(), length=len(queries_list)
+            unsafe_ptr=queries_list.unsafe_ptr(), length=len(queries_list)
         )
-        var distance_span = Span[mut=True, Float32](ptr=dist_ptr, length=q * k)
-        var label_span = Span[mut=True, Int](ptr=labels_ptr, length=q * k)
+        var distance_span = Span[mut=True, Float32](unsafe_ptr=dist_ptr, length=q * k)
+        var label_span = Span[mut=True, Int](unsafe_ptr=labels_ptr, length=q * k)
 
         # warmup
         collection._query_into(query_span, k, label_span, distance_span)
@@ -121,5 +121,5 @@ def main() raises:
             + String(recall)
         )
 
-        dist_ptr.free()
-        labels_ptr.free()
+        dist_ptr.unsafe_free()
+        labels_ptr.unsafe_free()

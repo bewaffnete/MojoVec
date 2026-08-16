@@ -34,11 +34,11 @@ struct WhereNode(Movable):
         self._value = value.copy()
         self._arity = arity
 
-    def __init__(out self, *, deinit take: Self):
-        self._operation = take._operation
-        self._key = take._key^
-        self._value = take._value^
-        self._arity = take._arity
+    def __init__(out self, *, deinit move: Self):
+        self._operation = move._operation
+        self._key = move._key^
+        self._value = move._value^
+        self._arity = move._arity
 
     def copy(self) -> Self:
         return Self(
@@ -110,8 +110,8 @@ struct Where(Movable):
     def __init__(out self):
         self._nodes = List[WhereNode]()
 
-    def __init__(out self, *, deinit take: Self):
-        self._nodes = take._nodes^
+    def __init__(out self, *, deinit move: Self):
+        self._nodes = move._nodes^
 
     def copy(self) -> Self:
         var result = Self()

@@ -1,5 +1,5 @@
-from std.memory.span import Span
-from std.memory import alloc
+from std.collections.span import Span
+from std.memory.alloc import unsafe_alloc
 from std.testing import assert_true, assert_equal, TestSuite
 
 from mojovec.utils.heap import max_heap_push, min_heap_push, min_heap_pop, max_heap_replace_top
@@ -13,13 +13,13 @@ from mojovec.utils.distance_computer import StorageTrait
 def test_heap_popmin() raises:
     # Mimics Faiss's test_popmin
     var k = 10
-    var dists = alloc[Float32](k)
-    var labels = alloc[Int](k)
+    var dists = unsafe_alloc[Float32](k)
+    var labels = unsafe_alloc[Int](k)
     
     # Initialize empty heap (max heap)
     for i in range(k):
-        dists[i] = 1000000.0
-        labels[i] = -1
+        dists[unsafe_offset=i] = 1000000.0
+        labels[unsafe_offset=i] = -1
         
     # Push elements
     var current_size = 0
@@ -37,12 +37,12 @@ def test_heap_popmin() raises:
     assert_equal(current_size, 5)
     
     # In a max heap, the top element is the maximum
-    assert_equal(dists[0], 0.9)
-    assert_equal(labels[0], 9)
+    assert_equal(dists[unsafe_offset=0], 0.9)
+    assert_equal(labels[unsafe_offset=0], 9)
     
     # Now, test min heap
-    var min_dists = alloc[Float32](k)
-    var min_labels = alloc[Int](k)
+    var min_dists = unsafe_alloc[Float32](k)
+    var min_labels = unsafe_alloc[Int](k)
     var min_size = 0
     
     min_heap_push(min_dists, min_labels, min_size, 0.5, 5)
@@ -55,7 +55,7 @@ def test_heap_popmin() raises:
     min_size += 1
     
     assert_equal(min_size, 4)
-    assert_equal(min_dists[0], 0.1)
+    assert_equal(min_dists[unsafe_offset=0], 0.1)
     
     var pop1 = min_heap_pop(min_dists, min_labels, min_size)
     min_size -= 1
@@ -75,10 +75,10 @@ def test_heap_popmin() raises:
     
     assert_equal(min_size, 0)
     
-    dists.free()
-    labels.free()
-    min_dists.free()
-    min_labels.free()
+    dists.unsafe_free()
+    labels.unsafe_free()
+    min_dists.unsafe_free()
+    min_labels.unsafe_free()
 
 def test_visited_table() raises:
     var vt = VisitedTable(100)
@@ -122,39 +122,39 @@ def check_pthread_matches_serial[StorageType: StorageTrait](
     comptime query_count = 256
     comptime k = 5
 
-    var database = alloc[Float32](database_size * dimension)
+    var database = unsafe_alloc[Float32](database_size * dimension)
     for i in range(database_size):
         for j in range(dimension):
-            database[i * dimension + j] = Float32(i + j) / 64.0
+            database[unsafe_offset=i * dimension + j] = Float32(i + j) / 64.0
     index.add(
-        Span[Float32](ptr=database, length=database_size * dimension)
+        Span[Float32](unsafe_ptr=database, length=database_size * dimension)
     )
     index.hnsw.efSearch = 16
 
-    var queries = alloc[Float32](query_count * dimension)
+    var queries = unsafe_alloc[Float32](query_count * dimension)
     for i in range(query_count):
         var source = i % database_size
         for j in range(dimension):
-            queries[i * dimension + j] = database[
+            queries[unsafe_offset=i * dimension + j] = database[unsafe_offset=
                 source * dimension + j
             ]
 
-    var threaded_distances = alloc[Float32](query_count * k)
-    var threaded_labels = alloc[Int](query_count * k)
-    var serial_distances = alloc[Float32](query_count * k)
-    var serial_labels = alloc[Int](query_count * k)
-    var empty_filter_storage = alloc[UInt8](1)
+    var threaded_distances = unsafe_alloc[Float32](query_count * k)
+    var threaded_labels = unsafe_alloc[Int](query_count * k)
+    var serial_distances = unsafe_alloc[Float32](query_count * k)
+    var serial_labels = unsafe_alloc[Int](query_count * k)
+    var empty_filter_storage = unsafe_alloc[UInt8](1)
     var empty_filter = Span[UInt8](
-        ptr=empty_filter_storage, length=0
+        unsafe_ptr=empty_filter_storage, length=0
     )
     var query_span = Span[Float32](
-        ptr=queries, length=query_count * dimension
+        unsafe_ptr=queries, length=query_count * dimension
     )
     var threaded_distance_span = Span[mut=True, Float32](
-        ptr=threaded_distances, length=query_count * k
+        unsafe_ptr=threaded_distances, length=query_count * k
     )
     var threaded_label_span = Span[mut=True, Int](
-        ptr=threaded_labels, length=query_count * k
+        unsafe_ptr=threaded_labels, length=query_count * k
     )
 
     index.search(
@@ -176,16 +176,16 @@ def check_pthread_matches_serial[StorageType: StorageTrait](
     )
 
     for i in range(query_count * k):
-        assert_equal(threaded_labels[i], serial_labels[i])
-        assert_equal(threaded_distances[i], serial_distances[i])
+        assert_equal(threaded_labels[unsafe_offset=i], serial_labels[unsafe_offset=i])
+        assert_equal(threaded_distances[unsafe_offset=i], serial_distances[unsafe_offset=i])
 
-    database.free()
-    queries.free()
-    threaded_distances.free()
-    threaded_labels.free()
-    serial_distances.free()
-    serial_labels.free()
-    empty_filter_storage.free()
+    database.unsafe_free()
+    queries.unsafe_free()
+    threaded_distances.unsafe_free()
+    threaded_labels.unsafe_free()
+    serial_distances.unsafe_free()
+    serial_labels.unsafe_free()
+    empty_filter_storage.unsafe_free()
 
 
 def test_flat_pthread_matches_serial() raises:

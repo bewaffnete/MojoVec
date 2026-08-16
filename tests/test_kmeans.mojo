@@ -1,60 +1,60 @@
-from std.memory.span import Span
+from std.collections.span import Span
 from mojovec.clustering.kmeans import KMeans
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
-from std.memory import alloc
+from std.memory.alloc import unsafe_alloc
 from std.random.philox import Random
 
 def test_kmeans() raises:
     var n = 1000
     var d = 16
     var k = 10
-    var x = alloc[Float32](n * d)
+    var x = unsafe_alloc[Float32](n * d)
     var generator = Random(seed=UInt64(151))
     var values = generator.step_uniform()
     for i in range(n * d):
         if i != 0 and i % 4 == 0:
             values = generator.step_uniform()
-        x[i] = values[i % 4]
+        x[unsafe_offset=i] = values[i % 4]
     var kmeans = KMeans(d, k, 5)
-    kmeans.train(Span[Float32, MutUntrackedOrigin](ptr=x, length=n * d))
-    x.free()
+    kmeans.train(Span[Float32, MutUntrackedOrigin](unsafe_ptr=x, length=n * d))
+    x.unsafe_free()
 
 def test_kmeans_k_greater_than_n() raises:
     var n = 5
     var d = 16
     var k = 10
-    var x = alloc[Float32](n * d)
-    for i in range(n * d): x[i] = Float32(i)
+    var x = unsafe_alloc[Float32](n * d)
+    for i in range(n * d): x[unsafe_offset=i] = Float32(i)
     var kmeans = KMeans(d, k, 5)
-    kmeans.train(Span[Float32, MutUntrackedOrigin](ptr=x, length=n * d))
-    x.free()
+    kmeans.train(Span[Float32, MutUntrackedOrigin](unsafe_ptr=x, length=n * d))
+    x.unsafe_free()
 
 def test_kmeans_identical_points() raises:
     var n = 100
     var d = 16
     var k = 5
-    var x = alloc[Float32](n * d)
-    for i in range(n * d): x[i] = 1.0 # all identical
+    var x = unsafe_alloc[Float32](n * d)
+    for i in range(n * d): x[unsafe_offset=i] = 1.0 # all identical
     var kmeans = KMeans(d, k, 5)
-    kmeans.train(Span[Float32, MutUntrackedOrigin](ptr=x, length=n * d))
+    kmeans.train(Span[Float32, MutUntrackedOrigin](unsafe_ptr=x, length=n * d))
     
     # Assert no NaNs
     for i in range(k * d):
         assert_true(kmeans.centroids[i] == kmeans.centroids[i], "NaN found in centroids!")
     
-    x.free()
+    x.unsafe_free()
 
 
 def test_kmeans_training_is_reproducible() raises:
     var n = 257
     var d = 8
     var k = 17
-    var x = alloc[Float32](n * d)
+    var x = unsafe_alloc[Float32](n * d)
     for i in range(n * d):
-        x[i] = Float32((i * 37 + i // d * 11) % 101) / 50.0 - 1.0
+        x[unsafe_offset=i] = Float32((i * 37 + i // d * 11) % 101) / 50.0 - 1.0
 
     var data = Span[Float32, MutUntrackedOrigin](
-        ptr=x,
+        unsafe_ptr=x,
         length=n * d,
     )
     var first = KMeans(d, k, 5)
@@ -69,7 +69,7 @@ def test_kmeans_training_is_reproducible() raises:
             atol=1e-6,
         )
 
-    x.free()
+    x.unsafe_free()
 
 
 def main() raises:

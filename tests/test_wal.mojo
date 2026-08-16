@@ -31,7 +31,8 @@ comptime DIMENSION = 4
 
 
 def vector(base: Float32) -> List[Float32]:
-    return [base, base + 1.0, base + 2.0, base + 3.0]
+    var res: List[Float32] = [base, base + 1.0, base + 2.0, base + 3.0]
+    return res^
 
 
 def vectors(first: Float32, second: Float32) -> List[Float32]:
@@ -450,10 +451,10 @@ def test_committed_checksum_corruption_is_rejected() raises:
     # payload byte while leaving the final commit marker intact.
     var payload_offset = 7 * 8 + String("wal-tests").byte_length() + 8 * 8
     var file = open(wal_path, "rw")
-    _ = file.seek(UInt64(payload_offset), SEEK_SET)
+    _ = file.seek(payload_offset, SEEK_SET)
     var original = file.read_bytes(1)
-    _ = file.seek(UInt64(payload_offset), SEEK_SET)
-    var corrupted = [original[0] ^ UInt8(0xFF)]
+    _ = file.seek(payload_offset, SEEK_SET)
+    var corrupted: List[UInt8] = [original[0] ^ UInt8(0xFF)]
     file.write_all(corrupted)
     file.close()
 

@@ -13,7 +13,8 @@ comptime DIMENSION = 4
 
 
 def vector(base: Float32) -> List[Float32]:
-    return [base, base + 1.0, base + 2.0, base + 3.0]
+    var res: List[Float32] = [base, base + 1.0, base + 2.0, base + 3.0]
+    return res^
 
 
 def append_vector(mut values: List[Float32], base: Float32):

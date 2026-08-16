@@ -14,7 +14,8 @@ comptime DIMENSION = 4
 
 
 def vector(base: Float32) -> List[Float32]:
-    return [base, base + 1.0, base + 2.0, base + 3.0]
+    var res: List[Float32] = [base, base + 1.0, base + 2.0, base + 3.0]
+    return res^
 
 
 def full_metadata(label: String, year: Int) -> Metadata:
@@ -251,7 +252,7 @@ def check_metadata_round_trip(quantized: Bool, path: String) raises:
     var metadatas = List[Metadata]()
     metadatas.append(first.copy())
     metadatas.append(second.copy())
-    var documents = [
+    var documents: List[String] = [
         String("first persisted document"),
         String("second persisted document"),
     ]

@@ -1,5 +1,5 @@
 from std.collections import List
-from std.memory.span import Span
+from std.collections.span import Span
 from std.testing import (
     TestSuite,
     assert_almost_equal,
@@ -103,7 +103,7 @@ def _check_cosine(quantized: Bool, path: String) raises:
         quantized=quantized,
         metric="cosine",
     )
-    var embeddings = [
+    var embeddings: List[Float32] = [
         Float32(2.0), Float32(0.0),
         Float32(0.0), Float32(3.0),
         Float32(1.0), Float32(1.0),

@@ -1,7 +1,7 @@
 from std.collections import List, Optional
 from std.ffi import external_call
 from std.io.file import FileHandle
-from std.memory.span import Span
+from std.collections.span import Span
 from std.os import SEEK_CUR, SEEK_END, SEEK_SET
 from std.os.path import exists, getsize
 
@@ -54,9 +54,9 @@ def _checksum_update(checksum: UInt64, bytes: Span[UInt8, _]) -> UInt64:
     var words = len(bytes) // 8
     for index in range(words):
         var address = Int(pointer) + index * 8
-        var word = UnsafePointer[UInt64, MutUntrackedOrigin](
+        var word = Pointer[UInt64, MutUntrackedOrigin](
             unsafe_from_address=address
-        )[0]
+        )[unsafe_offset=0]
         result ^= word
         result = _rotate_left(result, 27) ^ _rotate_left(word, 17)
         result ^= result >> 23
@@ -64,7 +64,7 @@ def _checksum_update(checksum: UInt64, bytes: Span[UInt8, _]) -> UInt64:
     var tail: UInt64 = 0
     var tail_start = words * 8
     for index in range(tail_start, len(bytes)):
-        tail |= UInt64(pointer[index]) << UInt64((index - tail_start) * 8)
+        tail |= UInt64(pointer[unsafe_offset=index]) << UInt64((index - tail_start) * 8)
     result ^= tail
     result ^= UInt64(len(bytes)) << 32
     return _rotate_left(result, 11)
@@ -73,25 +73,25 @@ def _checksum_update(checksum: UInt64, bytes: Span[UInt8, _]) -> UInt64:
 def _append_int(mut destination: List[UInt8], value: Int):
     var storage = InlineArray[Int, 1](uninitialized=True)
     storage[0] = value
-    var bytes = storage.unsafe_ptr().bitcast[UInt8]()
+    var bytes = storage.unsafe_ptr().unsafe_bitcast[UInt8]()
     for index in range(8):
-        destination.append(bytes[index])
+        destination.append(bytes[unsafe_offset=index])
 
 
 def _append_uint64(mut destination: List[UInt8], value: UInt64):
     var storage = InlineArray[UInt64, 1](uninitialized=True)
     storage[0] = value
-    var bytes = storage.unsafe_ptr().bitcast[UInt8]()
+    var bytes = storage.unsafe_ptr().unsafe_bitcast[UInt8]()
     for index in range(8):
-        destination.append(bytes[index])
+        destination.append(bytes[unsafe_offset=index])
 
 
 def _decode_int(data: List[UInt8], byte_offset: Int) -> Int:
-    return (data.unsafe_ptr() + byte_offset).bitcast[Int]()[0]
+    return data.unsafe_ptr().unsafe_offset(byte_offset).unsafe_bitcast[Int]()[unsafe_offset=0]
 
 
 def _decode_uint64(data: List[UInt8], byte_offset: Int) -> UInt64:
-    return (data.unsafe_ptr() + byte_offset).bitcast[UInt64]()[0]
+    return data.unsafe_ptr().unsafe_offset(byte_offset).unsafe_bitcast[UInt64]()[unsafe_offset=0]
 
 
 def _write_and_hash(
@@ -189,7 +189,7 @@ def _write_metadata_and_hash(
             var storage = InlineArray[Float64, 1](uninitialized=True)
             storage[0] = value.as_float()
             var bytes = Span[UInt8](
-                ptr=storage.unsafe_ptr().bitcast[UInt8](), length=8
+                unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=8
             )
             result = _write_and_hash(file, bytes, result)
         elif value.kind() == METADATA_BOOL:
@@ -197,7 +197,7 @@ def _write_metadata_and_hash(
             storage[0] = 1 if value.as_bool() else 0
             result = _write_and_hash(
                 file,
-                Span[UInt8](ptr=storage.unsafe_ptr(), length=1),
+                Span[UInt8](unsafe_ptr=storage.unsafe_ptr(), length=1),
                 result,
             )
         else:
@@ -222,7 +222,7 @@ def _read_metadata_and_hash(
         elif kind == METADATA_FLOAT:
             var bytes = _read_exact(file, 8)
             checksum = _checksum_update(checksum, bytes)
-            metadata.set(key, bytes.unsafe_ptr().bitcast[Float64]()[0])
+            metadata.set(key, bytes.unsafe_ptr().unsafe_bitcast[Float64]()[unsafe_offset=0])
         elif kind == METADATA_BOOL:
             var bytes = _read_exact(file, 1)
             checksum = _checksum_update(checksum, bytes)
@@ -430,7 +430,7 @@ struct WalReader(Movable):
         var ids = List[Int](unsafe_uninit_length=id_count)
         if id_count > 0:
             var id_bytes = Span[UInt8](
-                ptr=ids.unsafe_ptr().bitcast[UInt8](),
+                unsafe_ptr=ids.unsafe_ptr().unsafe_bitcast[UInt8](),
                 length=id_count * 8,
             )
             if self.file.read(id_bytes) != len(id_bytes):
@@ -440,7 +440,7 @@ struct WalReader(Movable):
         var embeddings = List[Float32](unsafe_uninit_length=embedding_count)
         if embedding_count > 0:
             var embedding_bytes = Span[UInt8](
-                ptr=embeddings.unsafe_ptr().bitcast[UInt8](),
+                unsafe_ptr=embeddings.unsafe_ptr().unsafe_bitcast[UInt8](),
                 length=embedding_count * 4,
             )
             if self.file.read(embedding_bytes) != len(embedding_bytes):
@@ -463,7 +463,7 @@ struct WalReader(Movable):
         if Int(self.file.seek(0, SEEK_CUR)) != expected_trailer:
             raise Error("WAL frame length does not match its payload.")
         var trailer = _read_exact(self.file, WAL_FRAME_TRAILER_BYTES)
-        var stored_checksum = trailer.unsafe_ptr().bitcast[UInt64]()[0]
+        var stored_checksum = trailer.unsafe_ptr().unsafe_bitcast[UInt64]()[unsafe_offset=0]
         var commit = _decode_int(trailer, 8)
         if commit != WAL_FRAME_COMMIT:
             if frame_start + frame_size == self.file_size:
@@ -667,7 +667,7 @@ struct WriteAheadLog(Movable):
                 checksum = _write_and_hash(
                     self.file,
                     Span[UInt8](
-                        ptr=ids.unsafe_ptr().bitcast[UInt8](),
+                        unsafe_ptr=ids.unsafe_ptr().unsafe_bitcast[UInt8](),
                         length=len(ids) * 8,
                     ),
                     checksum,
@@ -676,7 +676,7 @@ struct WriteAheadLog(Movable):
                 checksum = _write_and_hash(
                     self.file,
                     Span[UInt8](
-                        ptr=embeddings.unsafe_ptr().bitcast[UInt8](),
+                        unsafe_ptr=embeddings.unsafe_ptr().unsafe_bitcast[UInt8](),
                         length=len(embeddings) * 4,
                     ),
                     checksum,

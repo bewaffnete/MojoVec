@@ -1,7 +1,7 @@
 from std.collections import List
 from std.ffi import external_call
-from std.memory import alloc
-from std.memory.span import Span
+from std.memory.alloc import unsafe_alloc
+from std.collections.span import Span
 from ..clustering.kmeans import KMeans
 from ..utils.distances import (
     inner_product_short4,
@@ -44,10 +44,10 @@ struct PQTrainContext(Movable):
 
 def _train_pq_subspace(context: PQTrainContext):
     """Extracts and trains one independent PQ subspace."""
-    var x_ptr = UnsafePointer[
+    var x_ptr = Pointer[
         Float32, MutUntrackedOrigin
     ](unsafe_from_address=context.input_address)
-    var pq_centroids = UnsafePointer[
+    var pq_centroids = Pointer[
         Float32, MutUntrackedOrigin
     ](unsafe_from_address=context.output_address)
     var sub_x = List[Float32](
@@ -57,7 +57,7 @@ def _train_pq_subspace(context: PQTrainContext):
 
     for i in range(context.n):
         for j in range(context.dsub):
-            sub_x_ptr[i * context.dsub + j] = x_ptr[
+            sub_x_ptr[unsafe_offset=i * context.dsub + j] = x_ptr[unsafe_offset=
                 i * context.d + context.subspace * context.dsub + j
             ]
 
@@ -66,12 +66,12 @@ def _train_pq_subspace(context: PQTrainContext):
 
     var offset = context.subspace * context.ksub * context.dsub
     for i in range(context.ksub * context.dsub):
-        pq_centroids[offset + i] = kmeans.centroids[i]
+        pq_centroids[unsafe_offset=offset + i] = kmeans.centroids[i]
 
 
 def mojovec_pq_pthread_worker(context_address: Int) abi("C") -> Int:
     """Native pthread entry point for one PQ subspace."""
-    var context = UnsafePointer[
+    var context = Pointer[
         PQTrainContext, MutUntrackedOrigin
     ](unsafe_from_address=context_address)
     _train_pq_subspace(context[])
@@ -124,7 +124,7 @@ struct ProductQuantizer(Movable):
 
     def train(mut self, x: Span[Float32, _]):
         """Trains the quantizer by finding centroids for each sub-space using K-Means.
-        
+
         Args:
             x: Contiguous flattened training vectors.
         """
@@ -137,8 +137,8 @@ struct ProductQuantizer(Movable):
         # parallelism at the algorithm level while avoiding AsyncRT's repeated
         # raw-pointer worker-pool corruption on Linux x86. Each context owns a
         # disjoint output slice; the caller joins every worker before publish.
-        var threads = alloc[UInt](self.M)
-        var contexts = alloc[PQTrainContext](self.M)
+        var threads = unsafe_alloc[UInt](self.M)
+        var contexts = unsafe_alloc[PQTrainContext](self.M)
         for m in range(self.M):
             var context = PQTrainContext(
                 Int(x_ptr),
@@ -149,29 +149,29 @@ struct ProductQuantizer(Movable):
                 self.ksub,
                 m,
             )
-            (contexts + m).init_pointee_move(context^)
-            threads[m] = 0
+            contexts.unsafe_offset(m).unsafe_write(context^)
+            threads[unsafe_offset=m] = 0
 
         for m in range(1, self.M):
             var status = external_call["pthread_create", Int](
-                threads + m,
+                threads.unsafe_offset(m),
                 Int(0),
                 mojovec_pq_pthread_worker,
-                Int(contexts + m),
+                Int(contexts.unsafe_offset(m)),
             )
             if status != 0:
-                threads[m] = 0
+                threads[unsafe_offset=m] = 0
 
-        _train_pq_subspace(contexts[0])
+        _train_pq_subspace(contexts[unsafe_offset=0])
 
         for m in range(1, self.M):
-            if threads[m] == 0:
-                _train_pq_subspace(contexts[m])
+            if threads[unsafe_offset=m] == 0:
+                _train_pq_subspace(contexts[unsafe_offset=m])
             else:
-                _ = external_call["pthread_join", Int](threads[m], Int(0))
+                _ = external_call["pthread_join", Int](threads[unsafe_offset=m], Int(0))
 
-        contexts.free()
-        threads.free()
+        contexts.unsafe_free()
+        threads.unsafe_free()
 
         self.is_trained = True
 
@@ -181,7 +181,7 @@ struct ProductQuantizer(Movable):
         mut codes: Span[mut=True, UInt8, _],
     ):
         """Encodes vectors into compact byte codes.
-        
+
         Args:
             x: Contiguous flattened vectors.
             codes: Output storage for the encoded byte codes.
@@ -191,17 +191,17 @@ struct ProductQuantizer(Movable):
         var codes_data = codes.unsafe_ptr()
         var centroid_data = self.centroids.unsafe_ptr()
         for i in range(n):
-            var x_ptr = x_data + i * self.d
-            var codes_ptr = codes_data + i * self.M
+            var x_ptr = x_data.unsafe_offset(i * self.d)
+            var codes_ptr = codes_data.unsafe_offset(i * self.M)
             
             for m in range(self.M):
                 var min_dist: Float32 = 1e38
                 var best_k = -1
-                var sub_x = x_ptr + m * self.dsub
-                var centroids_m = centroid_data + m * self.ksub * self.dsub
+                var sub_x = x_ptr.unsafe_offset(m * self.dsub)
+                var centroids_m = centroid_data.unsafe_offset(m * self.ksub * self.dsub)
                 
                 for k in range(self.ksub):
-                    var c_ptr = centroids_m + k * self.dsub
+                    var c_ptr = centroids_m.unsafe_offset(k * self.dsub)
                     var dist: Float32
                     if self.dsub <= 4:
                         dist = l2_distance_short4(
@@ -216,7 +216,7 @@ struct ProductQuantizer(Movable):
                         min_dist = dist
                         best_k = k
                         
-                codes_ptr[m] = UInt8(best_k)
+                codes_ptr[unsafe_offset=m] = UInt8(best_k)
 
     def decode(
         self,
@@ -224,7 +224,7 @@ struct ProductQuantizer(Movable):
         mut x: Span[mut=True, Float32, _],
     ):
         """Decodes byte codes back to approximate vectors.
-        
+
         Args:
             codes: Contiguous byte codes.
             x: Output storage for reconstructed vectors.
@@ -234,20 +234,18 @@ struct ProductQuantizer(Movable):
         var x_data = x.unsafe_ptr()
         var centroid_data = self.centroids.unsafe_ptr()
         for i in range(n):
-            var codes_ptr = codes_data + i * self.M
-            var x_ptr = x_data + i * self.d
+            var codes_ptr = codes_data.unsafe_offset(i * self.M)
+            var x_ptr = x_data.unsafe_offset(i * self.d)
             
             for m in range(self.M):
-                var k = Int(codes_ptr[m])
-                var c_ptr = (
-                    centroid_data
-                    + m * self.ksub * self.dsub
-                    + k * self.dsub
+                var k = Int(codes_ptr[unsafe_offset=m])
+                var c_ptr = centroid_data.unsafe_offset(
+                    m * self.ksub * self.dsub + k * self.dsub
                 )
-                var sub_x = x_ptr + m * self.dsub
+                var sub_x = x_ptr.unsafe_offset(m * self.dsub)
                 
                 for j in range(self.dsub):
-                    sub_x[j] = c_ptr[j]
+                    sub_x[unsafe_offset=j] = c_ptr[unsafe_offset=j]
 
     def compute_distance_table(
         self,
@@ -256,7 +254,7 @@ struct ProductQuantizer(Movable):
         metric_type: MetricType = METRIC_L2,
     ):
         """Precomputes distances between a query vector and all sub-space centroids.
-        
+
         Args:
             query: A single query vector.
             dis_table: Output distance table.
@@ -266,27 +264,27 @@ struct ProductQuantizer(Movable):
         var table_ptr = dis_table.unsafe_ptr()
         var centroid_data = self.centroids.unsafe_ptr()
         for m in range(self.M):
-            var sub_q = query_ptr + m * self.dsub
-            var centroids_m = centroid_data + m * self.ksub * self.dsub
-            var table_m = table_ptr + m * self.ksub
+            var sub_q = query_ptr.unsafe_offset(m * self.dsub)
+            var centroids_m = centroid_data.unsafe_offset(m * self.ksub * self.dsub)
+            var table_m = table_ptr.unsafe_offset(m * self.ksub)
             
             for k in range(self.ksub):
-                var c_ptr = centroids_m + k * self.dsub
+                var c_ptr = centroids_m.unsafe_offset(k * self.dsub)
                 if metric_type == METRIC_L2:
                     if self.dsub <= 4:
-                        table_m[k] = l2_distance_short4(
+                        table_m[unsafe_offset=k] = l2_distance_short4(
                             sub_q, c_ptr, self.dsub
                         )
                     else:
-                        table_m[k] = l2_distance_simd[8](
+                        table_m[unsafe_offset=k] = l2_distance_simd[8](
                             sub_q, c_ptr, self.dsub
                         )
                 else:
                     if self.dsub <= 4:
-                        table_m[k] = -inner_product_short4(
+                        table_m[unsafe_offset=k] = -inner_product_short4(
                             sub_q, c_ptr, self.dsub
                         )
                     else:
-                        table_m[k] = -inner_product_simd[4](
+                        table_m[unsafe_offset=k] = -inner_product_simd[4](
                             sub_q, c_ptr, self.dsub
                         )

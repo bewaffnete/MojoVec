@@ -52,24 +52,24 @@ struct DatasetImportOptions(Movable):
         self.token = ""
         self.data_dir = ""
 
-    def __init__(out self, *, deinit take: Self):
-        self.id_column = take.id_column^
-        self.embedding_column = take.embedding_column^
-        self.embedding_columns = take.embedding_columns^
-        self.document_column = take.document_column^
-        self.metadata_columns = take.metadata_columns^
-        self.batch_size = take.batch_size
-        self.id_start = take.id_start
-        self.embeddings_key = take.embeddings_key^
-        self.ids_key = take.ids_key^
-        self.documents_key = take.documents_key^
-        self.split = take.split^
-        self.config = take.config^
-        self.streaming = take.streaming
-        self.revision = take.revision^
-        self.cache_dir = take.cache_dir^
-        self.token = take.token^
-        self.data_dir = take.data_dir^
+    def __init__(out self, *, deinit move: Self):
+        self.id_column = move.id_column^
+        self.embedding_column = move.embedding_column^
+        self.embedding_columns = move.embedding_columns^
+        self.document_column = move.document_column^
+        self.metadata_columns = move.metadata_columns^
+        self.batch_size = move.batch_size
+        self.id_start = move.id_start
+        self.embeddings_key = move.embeddings_key^
+        self.ids_key = move.ids_key^
+        self.documents_key = move.documents_key^
+        self.split = move.split^
+        self.config = move.config^
+        self.streaming = move.streaming
+        self.revision = move.revision^
+        self.cache_dir = move.cache_dir^
+        self.token = move.token^
+        self.data_dir = move.data_dir^
 
 
 def _optional_python_string(value: String) raises -> PythonObject:
@@ -158,10 +158,10 @@ struct PythonDatasetReader(Movable):
         self._dimension = dimension
         self._consumed = False
 
-    def __init__(out self, *, deinit take: Self):
-        self._batches = take._batches^
-        self._dimension = take._dimension
-        self._consumed = take._consumed
+    def __init__(out self, *, deinit move: Self):
+        self._batches = move._batches^
+        self._dimension = move._dimension
+        self._consumed = move._consumed
 
     def dimension(self) -> Int:
         return self._dimension

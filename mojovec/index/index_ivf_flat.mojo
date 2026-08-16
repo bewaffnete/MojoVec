@@ -5,11 +5,11 @@ from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..storage.inverted_lists import ArrayInvertedLists
 from ..clustering.kmeans import KMeans
 from std.collections import List
-from std.memory.span import Span
+from std.collections.span import Span
 
 struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
     """An Inverted File (IVF) index with exact flat storage for vectors.
-    
+
     This index uses a coarse quantizer to partition the vector space into cells (inverted lists)
     and stores the exact vectors in these lists. During search, it only compares the query
     with vectors in the most promising cells.
@@ -34,7 +34,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         metric: MetricType = METRIC_L2,
     ):
         """Initializes an IVF-Flat index.
-        
+
         Args:
             quantizer: Owned coarse quantizer used to assign vectors to lists.
             d: Dimensionality of the vectors.
@@ -61,7 +61,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         self.is_trained = move.is_trained
         self.quantizer = move.quantizer^
         self.invlists = move.invlists^
-        
+
     def train(mut self, x: Span[Float32, _]):
         """Trains the coarse quantizer using a set of training vectors.
         
@@ -69,7 +69,7 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
             x: Contiguous flattened training vectors.
         """
         if self.is_trained: return
-        
+
         var kmeans = KMeans(self.d, self.nlist, 15)
         kmeans.train(x)
         var coarse_centroids = kmeans.take_centroids()
@@ -102,40 +102,40 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         if not self.is_trained:
             # Cannot add without training
             return
-            
+
         var n = len(x) // self.d
         var x_ptr = x.unsafe_ptr()
         var ids_ptr = ids.unsafe_ptr()
-            
+
         var assign_distances = List[Float32](unsafe_uninit_length=n)
         var assign_labels = List[Int](unsafe_uninit_length=n)
-        
+
         var d_span = Span[mut=True, Float32](assign_distances)
         var l_span = Span[mut=True, Int](assign_labels)
         self.quantizer.search(x, 1, d_span, l_span)
         var assign_labels_ptr = assign_labels.unsafe_ptr()
-        
+
         # In a real scenario we could group vectors by list_no to minimize resize calls.
         # But ArrayInvertedLists already has O(1) amortized add via capacity doubling.
-        var code_ptr = x_ptr.bitcast[UInt8]()
+        var code_ptr = x_ptr.unsafe_bitcast[UInt8]()
         var code_size = self.d * 4
-        
+
         for i in range(n):
-            var list_no = assign_labels_ptr[i]
+            var list_no = assign_labels_ptr[unsafe_offset=i]
             if list_no < 0 or list_no >= self.nlist: continue
-            
-            var single_id = ids_ptr + i
-            var single_code = code_ptr + (i * code_size)
+
+            var single_id = ids_ptr.unsafe_offset(i)
+            var single_code = code_ptr.unsafe_offset(i * code_size)
             self.invlists.add_entries(
                 list_no,
-                Span[Int, _](ptr=single_id, length=1),
+                Span[Int, _](unsafe_ptr=single_id, length=1),
                 Span[UInt8, _](
-                    ptr=single_code, length=code_size
+                    unsafe_ptr=single_code, length=code_size
                 ),
             )
-            
+
         self.ntotal += n
-        
+
     def search(
         self,
         x: Span[Float32, _],
@@ -167,78 +167,78 @@ struct IndexIVFFlat[QuantizerType: QuantizerTrait](Index, Movable):
         var x_ptr = x.unsafe_ptr()
         var distances_ptr = distances.unsafe_ptr()
         var labels_ptr = labels.unsafe_ptr()
-        
+
         if not self.is_trained or self.ntotal == 0:
             for i in range(n * k):
-                distances_ptr[i] = 1e38
-                labels_ptr[i] = -1
+                distances_ptr[unsafe_offset=i] = 1e38
+                labels_ptr[unsafe_offset=i] = -1
             return
-            
+
         var nprobe = self.nprobe
         if nprobe > self.nlist: nprobe = self.nlist
-        
+
         var probe_count = n * nprobe
         var q_distances = List[Float32](
             unsafe_uninit_length=probe_count
         )
         var q_labels = List[Int](unsafe_uninit_length=probe_count)
-        
+
         var qd_span = Span[mut=True, Float32](q_distances)
         var ql_span = Span[mut=True, Int](q_labels)
-        
+
         self.quantizer.search(x, nprobe, qd_span, ql_span)
         var q_labels_ptr = q_labels.unsafe_ptr()
-        
+
         for i in range(n):
-            var q_ptr = x_ptr + i * self.d
-            var res_dist_ptr = distances_ptr + i * k
-            var res_labels_ptr = labels_ptr + i * k
+            var q_ptr = x_ptr.unsafe_offset(i * self.d)
+            var res_dist_ptr = distances_ptr.unsafe_offset(i * k)
+            var res_labels_ptr = labels_ptr.unsafe_offset(i * k)
             var heap_size = 0
 
             # A probed IVF subset may contain fewer than k candidates. Keep the
             # unused result tail deterministic instead of exposing allocator data.
             for j in range(k):
-                res_dist_ptr[j] = 1e38
-                res_labels_ptr[j] = -1
-            
+                res_dist_ptr[unsafe_offset=j] = 1e38
+                res_labels_ptr[unsafe_offset=j] = -1
+
             for p in range(nprobe):
-                var list_no = q_labels_ptr[i * nprobe + p]
+                var list_no = q_labels_ptr[unsafe_offset=i * nprobe + p]
                 if list_no < 0 or list_no >= self.nlist: continue
-                
+
                 var list_size = self.invlists.list_size(list_no)
                 if list_size == 0: continue
-                
+
                 var list_codes = (
                     self.invlists.get_codes(list_no)
                     .unsafe_ptr()
-                    .bitcast[Float32]()
+                    .unsafe_bitcast[Float32]()
                 )
                 var list_ids = self.invlists.get_ids(list_no).unsafe_ptr()
-                
+
                 for j in range(list_size):
-                    var db_ptr = list_codes + j * self.d
+                    var db_ptr = list_codes.unsafe_offset(j * self.d)
                     var dist: Float32
-                    
+
                     if self.metric_type == METRIC_L2:
                         dist = l2_distance_simd[8](q_ptr, db_ptr, self.d)
                     else:
                         dist = -inner_product_simd[4](q_ptr, db_ptr, self.d)
-                        
+
                     if heap_size < k:
-                        max_heap_push(res_dist_ptr, res_labels_ptr, heap_size, dist, list_ids[j])
+                        max_heap_push(res_dist_ptr, res_labels_ptr, heap_size, dist, list_ids[unsafe_offset=j])
                         heap_size += 1
-                    elif dist < res_dist_ptr[0]:
-                        max_heap_replace_top(res_dist_ptr, res_labels_ptr, k, dist, list_ids[j])
-                        
+                    elif dist < res_dist_ptr[unsafe_offset=0]:
+                        max_heap_replace_top(res_dist_ptr, res_labels_ptr, k, dist, list_ids[unsafe_offset=j])
+
             var current_k = heap_size
             for j in range(current_k):
                 var popped = max_heap_pop(res_dist_ptr, res_labels_ptr, heap_size)
                 heap_size -= 1
                 var idx = current_k - 1 - j
-                res_dist_ptr[idx] = popped.dist
-                res_labels_ptr[idx] = popped.label
-                        
+                res_dist_ptr[unsafe_offset=idx] = popped.dist
+                res_labels_ptr[unsafe_offset=idx] = popped.label
+
             if self.metric_type == METRIC_INNER_PRODUCT:
                 for j in range(current_k):
-                    res_dist_ptr[j] = -res_dist_ptr[j]
-                    
+                    res_dist_ptr[unsafe_offset=j] = -res_dist_ptr[unsafe_offset=j]
+

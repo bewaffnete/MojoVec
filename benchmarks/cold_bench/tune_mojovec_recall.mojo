@@ -1,6 +1,6 @@
 from std.collections import List
-from std.memory import alloc
-from std.memory.span import Span
+from std.memory.alloc import unsafe_alloc
+from std.collections.span import Span
 from std.time import perf_counter_ns
 from mojovec import Collection
 
@@ -19,20 +19,20 @@ def run_sweep[
     path: String,
     name: String,
     queries: Span[Float32, query_origin],
-    ground_truth: UnsafePointer[Int32, ground_truth_origin],
+    ground_truth: Pointer[Int32, ground_truth_origin],
 ) raises:
     comptime query_count = 10_000
     comptime k = 10
 
     print("\n" + name)
-    var collection = Collection.load(path)
-    var distance_storage = alloc[Float32](query_count * k)
-    var label_storage = alloc[Int](query_count * k)
+    var collection = Collection.unsafe_load(path)
+    var distance_storage = unsafe_alloc[Float32](query_count * k)
+    var label_storage = unsafe_alloc[Int](query_count * k)
     var distances = Span[mut=True, Float32](
-        ptr=distance_storage, length=query_count * k
+        unsafe_ptr=distance_storage, length=query_count * k
     )
     var labels = Span[mut=True, Int](
-        ptr=label_storage, length=query_count * k
+        unsafe_ptr=label_storage, length=query_count * k
     )
     var ef_values = List[Int]()
     ef_values.append(48)
@@ -74,8 +74,8 @@ def run_sweep[
             + String(recall)
         )
 
-    distance_storage.free()
-    label_storage.free()
+    distance_storage.unsafe_free()
+    label_storage.unsafe_free()
 
 
 def main() raises:
@@ -88,7 +88,7 @@ def main() raises:
     var ground_truth_data = load_bytes(
         "benchmarks/data/sift1m/sift_groundtruth.ivecs"
     )
-    var source = query_data.unsafe_ptr().bitcast[Float32]()
+    var source = query_data.unsafe_ptr().unsafe_bitcast[Float32]()
     var queries = List[Float32](capacity=query_count * dimension)
     for i in range(query_count):
         var offset = i * (dimension + 1) + 1
@@ -96,9 +96,9 @@ def main() raises:
             queries.append(source[offset + j])
 
     var query_span = Span[Float32](
-        ptr=queries.unsafe_ptr(), length=len(queries)
+        unsafe_ptr=queries.unsafe_ptr(), length=len(queries)
     )
-    var ground_truth = ground_truth_data.unsafe_ptr().bitcast[Int32]()
+    var ground_truth = ground_truth_data.unsafe_ptr().unsafe_bitcast[Int32]()
     run_sweep(
         "benchmarks/cold_bench/mojovec_hnsw_flat_1m.mojovec",
         "MojoVec Flat",

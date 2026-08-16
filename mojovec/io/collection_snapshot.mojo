@@ -2,7 +2,7 @@
 
 from std.collections import Dict, List, Optional
 from std.io.file import FileHandle
-from std.memory.span import Span
+from std.collections.span import Span
 from std.os import SEEK_CUR, SEEK_END, SEEK_SET
 
 from mojovec.api.collection_codec import (
@@ -140,12 +140,12 @@ def _write_collection_snapshot(
     if num_ids > 0:
         file.write_bytes(
             Span[UInt8](
-                ptr=user_ids.unsafe_ptr().bitcast[UInt8](),
+                unsafe_ptr=user_ids.unsafe_ptr().unsafe_bitcast[UInt8](),
                 length=num_ids * 8,
             )
         )
         file.write_bytes(
-            Span[UInt8](ptr=is_deleted.unsafe_ptr(), length=num_ids)
+            Span[UInt8](unsafe_ptr=is_deleted.unsafe_ptr(), length=num_ids)
         )
 
     write_int(file, len(metadatas))
@@ -269,15 +269,15 @@ def _read_collection_snapshot(
         var ids_data = file.read_bytes(ids_byte_count)
         if len(ids_data) != ids_byte_count:
             raise Error("Collection user ID array is truncated.")
-        var ids_source = ids_data.unsafe_ptr().bitcast[Int]()
+        var ids_source = ids_data.unsafe_ptr().unsafe_bitcast[Int]()
         var deleted_data = file.read_bytes(num_ids)
         if len(deleted_data) != num_ids:
             raise Error("Collection deletion array is truncated.")
         var deleted_source = deleted_data.unsafe_ptr()
         var active_ids = Dict[Int, Bool]()
         for index in range(num_ids):
-            var user_id = ids_source[index]
-            var deleted = deleted_source[index]
+            var user_id = ids_source[unsafe_offset=index]
+            var deleted = deleted_source[unsafe_offset=index]
             if deleted > 1:
                 raise Error("Collection deletion flags must be 0 or 1.")
             if deleted == 0:

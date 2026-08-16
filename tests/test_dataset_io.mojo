@@ -1,6 +1,6 @@
 from std.collections import List
 from std.io.file import FileHandle
-from std.memory.span import Span
+from std.collections.span import Span
 from std.testing import (
     TestSuite,
     assert_almost_equal,
@@ -22,7 +22,7 @@ def _write_i32(mut file: FileHandle, value: Int32) raises:
     var storage = InlineArray[Int32, 1](uninitialized=True)
     storage[0] = value
     file.write_all(
-        Span[UInt8](ptr=storage.unsafe_ptr().bitcast[UInt8](), length=4)
+        Span[UInt8](unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=4)
     )
 
 
@@ -30,7 +30,7 @@ def _write_f32(mut file: FileHandle, value: Float32) raises:
     var storage = InlineArray[Float32, 1](uninitialized=True)
     storage[0] = value
     file.write_all(
-        Span[UInt8](ptr=storage.unsafe_ptr().bitcast[UInt8](), length=4)
+        Span[UInt8](unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=4)
     )
 
 

@@ -34,7 +34,7 @@ def make_collection(quantized: Bool = False) raises -> Collection:
         ef_search=64,
         quantized=quantized,
     )
-    var ids = [10, 20, 30, 40, 50]
+    var ids: List[Int] = [10, 20, 30, 40, 50]
     var embeddings = List[Float32]()
     append_vector(embeddings, 0.0)
     append_vector(embeddings, 10.0)

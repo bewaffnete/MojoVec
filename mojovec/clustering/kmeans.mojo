@@ -1,13 +1,13 @@
-from std.algorithm import parallelize
+from max.algorithm import parallelize
 from std.collections import List
-from std.memory.span import Span
+from std.collections.span import Span
 from std.random.philox import Random
 from ..utils.distances import l2_distance_short4, l2_distance_simd
 from std.math import max, min
 
 struct KMeans:
     """K-Means clustering algorithm for vector quantization.
-    
+
     Partitions a set of vectors into k clusters, finding the centroids
     that minimize the distance between points and their assigned centroids.
     """
@@ -20,7 +20,7 @@ struct KMeans:
     
     def __init__(out self, d: Int, k: Int, niter: Int = 15):
         """Initializes the K-Means clustering algorithm.
-        
+
         Args:
             d: Dimensionality of the vectors.
             k: Number of clusters (centroids).
@@ -35,7 +35,7 @@ struct KMeans:
             
     def train(mut self, x: Span[Float32, _]):
         """Trains the K-Means model to find cluster centroids.
-        
+
         Args:
             x: Contiguous flattened training vectors.
         """
@@ -61,9 +61,9 @@ struct KMeans:
         var n = len(x) // self.d
         if n == 0: return
         var data_ptr = x.unsafe_ptr()
-            
+
         self.assignments = List[Int](unsafe_uninit_length=n)
-        
+
         # 1. Initialize centroids from a private deterministic PRNG. The
         # package-level std.random state is shared across threads, so using it
         # here makes concurrent index training race and platform-dependent.
@@ -76,11 +76,11 @@ struct KMeans:
             if i != 0 and i % 4 == 0:
                 random_words = generator.step()
             var src_idx = Int(random_words[i % 4] % UInt32(n))
-            var src_ptr = data_ptr + src_idx * self.d
-            var dst_ptr = self.centroids.unsafe_ptr() + i * self.d
+            var src_ptr = data_ptr.unsafe_offset(src_idx * self.d)
+            var dst_ptr = self.centroids.unsafe_ptr().unsafe_offset(i * self.d)
             for j in range(self.d):
-                dst_ptr[j] = src_ptr[j]
-                
+                dst_ptr[unsafe_offset=j] = src_ptr[unsafe_offset=j]
+
         var num_chunks = 32
         var chunk_size = (n + num_chunks - 1) // num_chunks
         var local_centroids = List[Float32](
@@ -101,9 +101,9 @@ struct KMeans:
             # Clear the per-chunk accumulators before publishing them to the
             # worker pool.
             for i in range(num_chunks * self.k * self.d):
-                local_centroids_ptr[i] = 0.0
+                local_centroids_ptr[unsafe_offset=i] = 0.0
             for i in range(num_chunks * self.k):
-                local_counts_ptr[i] = 0
+                local_counts_ptr[unsafe_offset=i] = 0
 
             # Fuse assignment and accumulation into one parallel region. Each
             # worker owns a disjoint input range and accumulator slice, so no
@@ -114,19 +114,18 @@ struct KMeans:
             def process_chunk(chunk_id: Int):
                 var start = chunk_id * chunk_size
                 var end = min(start + chunk_size, n)
-                var my_centroids = (
-                    local_centroids_ptr
-                    + chunk_id * cluster_count * dimension
+                var my_centroids = local_centroids_ptr.unsafe_offset(
+                    chunk_id * cluster_count * dimension
                 )
-                var my_counts = local_counts_ptr + chunk_id * cluster_count
+                var my_counts = local_counts_ptr.unsafe_offset(chunk_id * cluster_count)
 
                 for i in range(start, end):
                     var min_dist: Float32 = 1e38
                     var best_c = -1
-                    var x_ptr = data_ptr + i * dimension
+                    var x_ptr = data_ptr.unsafe_offset(i * dimension)
 
                     for c in range(cluster_count):
-                        var c_ptr = centroids_ptr + c * dimension
+                        var c_ptr = centroids_ptr.unsafe_offset(c * dimension)
                         var dist: Float32
                         if dimension <= 4:
                             dist = l2_distance_short4(
@@ -145,19 +144,19 @@ struct KMeans:
                     # out-of-bounds cluster write. Finite input always selects
                     # a real centroid.
                     var c = max(best_c, 0)
-                    assignments_ptr[i] = c
-                    my_counts[c] += 1
-                    var c_ptr = my_centroids + c * dimension
-                    x_ptr = data_ptr + i * dimension
-                    
+                    assignments_ptr[unsafe_offset=i] = c
+                    my_counts[unsafe_offset=c] += 1
+                    var c_ptr = my_centroids.unsafe_offset(c * dimension)
+                    x_ptr = data_ptr.unsafe_offset(i * dimension)
+
                     var j = 0
                     while j <= dimension - 4:
-                        var cx = c_ptr.load[width=4](j)
-                        var xx = x_ptr.load[width=4](j)
-                        c_ptr.store(j, cx + xx)
+                        var cx = c_ptr.unsafe_load[width=4](j)
+                        var xx = x_ptr.unsafe_load[width=4](j)
+                        c_ptr.unsafe_store(j, cx + xx)
                         j += 4
                     while j < dimension:
-                        c_ptr[j] += x_ptr[j]
+                        c_ptr[unsafe_offset=j] += x_ptr[unsafe_offset=j]
                         j += 1
 
             comptime if PARALLEL:
@@ -165,48 +164,48 @@ struct KMeans:
             else:
                 for chunk_id in range(num_chunks):
                     process_chunk(chunk_id)
-            
+
             # Reduce phase
             for c in range(self.k):
-                counts_ptr[c] = 0
-                var c_ptr = centroids_ptr + c * self.d
+                counts_ptr[unsafe_offset=c] = 0
+                var c_ptr = centroids_ptr.unsafe_offset(c * self.d)
                 for j in range(self.d):
-                    c_ptr[j] = 0.0
-                    
+                    c_ptr[unsafe_offset=j] = 0.0
+
             for chunk_id in range(num_chunks):
                 var my_centroids = (
-                    local_centroids_ptr + chunk_id * self.k * self.d
+                    local_centroids_ptr.unsafe_offset(chunk_id * self.k * self.d)
                 )
-                var my_counts = local_counts_ptr + chunk_id * self.k
-                
+                var my_counts = local_counts_ptr.unsafe_offset(chunk_id * self.k)
+
                 for c in range(self.k):
-                    counts_ptr[c] += my_counts[c]
-                    var c_ptr = centroids_ptr + c * self.d
-                    var src_ptr = my_centroids + c * self.d
-                    
+                    counts_ptr[unsafe_offset=c] += my_counts[unsafe_offset=c]
+                    var c_ptr = centroids_ptr.unsafe_offset(c * self.d)
+                    var src_ptr = my_centroids.unsafe_offset(c * self.d)
+
                     var j = 0
                     while j <= self.d - 4:
-                        var cx = c_ptr.load[width=4](j)
-                        var sx = src_ptr.load[width=4](j)
-                        c_ptr.store(j, cx + sx)
+                        var cx = c_ptr.unsafe_load[width=4](j)
+                        var sx = src_ptr.unsafe_load[width=4](j)
+                        c_ptr.unsafe_store(j, cx + sx)
                         j += 4
                     while j < self.d:
-                        c_ptr[j] += src_ptr[j]
+                        c_ptr[unsafe_offset=j] += src_ptr[unsafe_offset=j]
                         j += 1
-            
+
             for c in range(self.k):
-                var count = counts_ptr[c]
+                var count = counts_ptr[unsafe_offset=c]
                 if count > 0:
-                    var c_ptr = centroids_ptr + c * self.d
+                    var c_ptr = centroids_ptr.unsafe_offset(c * self.d)
                     var inv_count: Float32 = 1.0 / Float32(count)
-                    
+
                     var j = 0
                     while j <= self.d - 4:
-                        var cx = c_ptr.load[width=4](j)
-                        c_ptr.store(j, cx * inv_count)
+                        var cx = c_ptr.unsafe_load[width=4](j)
+                        c_ptr.unsafe_store(j, cx * inv_count)
                         j += 4
                     while j < self.d:
-                        c_ptr[j] *= inv_count
+                        c_ptr[unsafe_offset=j] *= inv_count
                         j += 1
                 else:
                     # A zero centroid is especially destructive for residual
@@ -214,7 +213,7 @@ struct KMeans:
                     var src_idx = (
                         sample_offset + (iteration + 1) * self.k + c
                     ) % n
-                    var src_ptr = data_ptr + src_idx * self.d
-                    var c_ptr = centroids_ptr + c * self.d
+                    var src_ptr = data_ptr.unsafe_offset(src_idx * self.d)
+                    var c_ptr = centroids_ptr.unsafe_offset(c * self.d)
                     for j in range(self.d):
-                        c_ptr[j] = src_ptr[j]
+                        c_ptr[unsafe_offset=j] = src_ptr[unsafe_offset=j]

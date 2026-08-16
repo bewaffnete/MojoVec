@@ -2,24 +2,22 @@ from std.os import abort
 from std.python import PythonObject, Python
 from std.python.bindings import PythonModuleBuilder
 from std.ffi import external_call
-from std.memory import alloc
+from std.memory.alloc import unsafe_alloc
 from std.collections import List
-from mojovec.api.collection import Collection
-from mojovec.api.collection_ivfpq import CollectionIVFPQ
-from mojovec.api.metadata import (
+from mojovec import (
+    Collection,
+    CollectionIVFPQ,
+    CollectionStats,
+    CompactReport,
+    IVFPQStats,
     METADATA_BOOL,
     METADATA_FLOAT,
     METADATA_INT,
     METADATA_STRING,
     Metadata,
-)
-from mojovec.api.results import (
-    CollectionStats,
-    CompactReport,
-    IVFPQStats,
     QueryResults,
+    Where,
 )
-from mojovec.api.where import Where
 
 
 struct _ReleasedPythonThreadState(Movable):
@@ -30,10 +28,7 @@ struct _ReleasedPythonThreadState(Movable):
     def __init__(out self):
         self.state = external_call["PyEval_SaveThread", Int]()
 
-    def __init__(out self, *, deinit move: Self):
-        self.state = move.state
-
-    def __del__(deinit self):
+    def __deinit__(deinit self):
         if self.state != 0:
             external_call["PyEval_RestoreThread", NoneType](self.state)
 
@@ -196,20 +191,17 @@ def _query_results_to_python(results: QueryResults) raises -> PythonObject:
 
 
 struct PyWhere(Movable, Writable):
-    var ptr: UnsafePointer[Where, MutAnyOrigin]
+    var ptr: Pointer[Where, MutUntrackedOrigin]
 
     def __init__(out self, value: Where):
-        self.ptr = rebind[UnsafePointer[Where, MutAnyOrigin]](
-            alloc[Where](1)
+        self.ptr = rebind[Pointer[Where, MutUntrackedOrigin]](
+            unsafe_alloc[Where](1)
         )
-        self.ptr.init_pointee_move(value.copy())
+        self.ptr.unsafe_write(value.copy())
 
-    def __init__(out self, *, deinit take: Self):
-        self.ptr = take.ptr
-
-    def __del__(deinit self):
-        self.ptr.destroy_pointee()
-        self.ptr.free()
+    def __deinit__(deinit self):
+        self.ptr.unsafe_deinit_pointee()
+        self.ptr.unsafe_free()
 
     def write_to[W: Writer](self, mut writer: W):
         writer.write("Where()")
@@ -304,17 +296,14 @@ def py_where_combine(
 
 
 struct PyCollection(Movable, Writable):
-    var ptr: UnsafePointer[Collection, MutAnyOrigin]
+    var ptr: Pointer[Collection, MutUntrackedOrigin]
 
-    def __init__(out self, ptr: UnsafePointer[Collection, MutAnyOrigin]):
+    def __init__(out self, ptr: Pointer[Collection, MutUntrackedOrigin]):
         self.ptr = ptr
 
-    def __init__(out self, *, deinit take: Self):
-        self.ptr = take.ptr
-
-    def __del__(deinit self):
-        self.ptr.destroy_pointee()
-        self.ptr.free()
+    def __deinit__(deinit self):
+        self.ptr.unsafe_deinit_pointee()
+        self.ptr.unsafe_free()
 
     def write_to[W: Writer](self, mut writer: W):
         writer.write("Collection()")
@@ -343,10 +332,10 @@ struct PyCollection(Movable, Writable):
         if len(args) > 6:
             metric = String(py=args[6])
 
-        var col_ptr = rebind[UnsafePointer[Collection, MutAnyOrigin]](
-            alloc[Collection](1)
+        var col_ptr = rebind[Pointer[Collection, MutUntrackedOrigin]](
+            unsafe_alloc[Collection](1)
         )
-        col_ptr.init_pointee_move(
+        col_ptr.unsafe_write(
             Collection(
                 d,
                 M,
@@ -361,7 +350,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_add(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
@@ -372,7 +361,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_add_with_metadata(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_metadatas: PythonObject,
@@ -385,7 +374,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_add_with_documents(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_documents: PythonObject,
@@ -398,7 +387,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_add_with_payloads(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_metadatas: PythonObject,
@@ -418,7 +407,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_upsert(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
@@ -429,7 +418,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_upsert_with_metadata(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_metadatas: PythonObject,
@@ -442,7 +431,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_upsert_with_documents(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_documents: PythonObject,
@@ -455,7 +444,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_upsert_with_payloads(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_metadatas: PythonObject,
@@ -475,7 +464,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_update(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
@@ -486,7 +475,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_update_with_metadata(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_metadatas: PythonObject,
@@ -499,7 +488,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_update_with_documents(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_documents: PythonObject,
@@ -512,7 +501,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_update_with_payloads(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
         py_metadatas: PythonObject,
@@ -532,61 +521,61 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_delete(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin], py_ids: PythonObject
+        self_ptr: Pointer[Self, MutAnyOrigin], py_ids: PythonObject
     ) raises -> PythonObject:
         var mojo_ids = _ids_from_python(py_ids)
         self_ptr[].ptr[].delete(mojo_ids)
         return Python.none()
 
     @staticmethod
-    def py_count(self_ptr: UnsafePointer[Self, MutAnyOrigin]) -> PythonObject:
+    def py_count(self_ptr: Pointer[Self, MutAnyOrigin]) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].count())
 
     @staticmethod
     def py_count_deleted(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].count_deleted())
 
     @staticmethod
     def py_name(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         return PythonObject(self_ptr[].ptr[].name())
 
     @staticmethod
     def py_dimension(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].dimension())
 
     @staticmethod
     def py_storage_kind(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(Int(self_ptr[].ptr[].storage_kind()))
 
     @staticmethod
     def py_metric(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         return PythonObject(self_ptr[].ptr[].metric())
 
     @staticmethod
     def py_is_quantized(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].is_quantized())
 
     @staticmethod
     def py_is_memory_mapped(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].is_memory_mapped())
 
     @staticmethod
     def py_get_metadata(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_record_id: PythonObject,
     ) raises -> PythonObject:
         var metadata = self_ptr[].ptr[].get_metadata(
@@ -596,7 +585,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_get_document(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_record_id: PythonObject,
     ) raises -> PythonObject:
         return PythonObject(
@@ -605,7 +594,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_set_ef_search(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ef_search: PythonObject,
     ) raises -> PythonObject:
         self_ptr[].ptr[].set_ef_search(Int(py=py_ef_search))
@@ -613,21 +602,21 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_stats(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         var stats = self_ptr[].ptr[].stats()
         return _stats_to_python(stats^)
 
     @staticmethod
     def py_compact(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         var report = self_ptr[].ptr[].compact()
         return _report_to_python(report^)
 
     @staticmethod
     def py_compact_if_needed(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_deleted_ratio: PythonObject,
     ) raises -> PythonObject:
         var deleted_ratio = Float64(py=py_deleted_ratio)
@@ -636,7 +625,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_query(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
         n_results: PythonObject,
     ) raises -> PythonObject:
@@ -649,7 +638,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_query_where(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
         n_results: PythonObject,
         py_where: PythonObject,
@@ -669,7 +658,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_query_text(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_query_texts: PythonObject,
         n_results: PythonObject,
     ) raises -> PythonObject:
@@ -685,7 +674,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_query_text_where(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_query_texts: PythonObject,
         n_results: PythonObject,
         py_where: PythonObject,
@@ -705,7 +694,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_query_hybrid(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
         py_query_texts: PythonObject,
         n_results: PythonObject,
@@ -730,7 +719,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_query_hybrid_where(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
         py_query_texts: PythonObject,
         n_results: PythonObject,
@@ -759,7 +748,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_add_numpy(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
@@ -767,16 +756,16 @@ struct PyCollection(Movable, Writable):
         var ids_ptr_int = Int(py=py_ids.__array_interface__["data"][0])
         var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
 
-        var ids_ptr = UnsafePointer[Int, MutAnyOrigin](
+        var ids_ptr = Pointer[Int, MutAnyOrigin](
             unsafe_from_address=ids_ptr_int
         )
-        var emb_ptr = UnsafePointer[Float32, MutAnyOrigin](
+        var emb_ptr = Pointer[Float32, MutAnyOrigin](
             unsafe_from_address=emb_ptr_int
         )
 
-        var ids = Span[Int, MutAnyOrigin](ptr=ids_ptr, length=num_vectors)
+        var ids = Span[Int, MutAnyOrigin](unsafe_ptr=ids_ptr, length=num_vectors)
         var embeddings = Span[Float32, MutAnyOrigin](
-            ptr=emb_ptr,
+            unsafe_ptr=emb_ptr,
             length=num_vectors * self_ptr[].ptr[].dimension(),
         )
         self_ptr[].ptr[]._add_from_spans(ids, embeddings)
@@ -784,7 +773,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_upsert_numpy(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
@@ -792,16 +781,16 @@ struct PyCollection(Movable, Writable):
         var ids_ptr_int = Int(py=py_ids.__array_interface__["data"][0])
         var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
 
-        var ids_ptr = UnsafePointer[Int, MutAnyOrigin](
+        var ids_ptr = Pointer[Int, MutAnyOrigin](
             unsafe_from_address=ids_ptr_int
         )
-        var emb_ptr = UnsafePointer[Float32, MutAnyOrigin](
+        var emb_ptr = Pointer[Float32, MutAnyOrigin](
             unsafe_from_address=emb_ptr_int
         )
 
-        var ids = Span[Int, MutAnyOrigin](ptr=ids_ptr, length=num_vectors)
+        var ids = Span[Int, MutAnyOrigin](unsafe_ptr=ids_ptr, length=num_vectors)
         var embeddings = Span[Float32, MutAnyOrigin](
-            ptr=emb_ptr,
+            unsafe_ptr=emb_ptr,
             length=num_vectors * self_ptr[].ptr[].dimension(),
         )
         self_ptr[].ptr[]._upsert_from_spans(ids, embeddings)
@@ -809,14 +798,14 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_query_numpy(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
         n_results: PythonObject,
     ) raises -> PythonObject:
         var num_queries = Int(py=py_embeddings.shape[0])
         var k = Int(py=n_results)
         var emb_ptr_int = Int(py=py_embeddings.__array_interface__["data"][0])
-        var emb_ptr = UnsafePointer[Float32, MutAnyOrigin](
+        var emb_ptr = Pointer[Float32, MutAnyOrigin](
             unsafe_from_address=emb_ptr_int
         )
 
@@ -827,22 +816,22 @@ struct PyCollection(Movable, Writable):
         var out_ids_int = Int(py=out_ids.__array_interface__["data"][0])
         var out_dists_int = Int(py=out_dists.__array_interface__["data"][0])
 
-        var out_ids_ptr = UnsafePointer[Int, MutAnyOrigin](
+        var out_ids_ptr = Pointer[Int, MutAnyOrigin](
             unsafe_from_address=out_ids_int
         )
-        var out_dists_ptr = UnsafePointer[Float32, MutAnyOrigin](
+        var out_dists_ptr = Pointer[Float32, MutAnyOrigin](
             unsafe_from_address=out_dists_int
         )
 
         var queries = Span[Float32, MutAnyOrigin](
-            ptr=emb_ptr,
+            unsafe_ptr=emb_ptr,
             length=num_queries * self_ptr[].ptr[].dimension(),
         )
         var ids = Span[mut=True, Int, MutAnyOrigin](
-            ptr=out_ids_ptr, length=num_queries * k
+            unsafe_ptr=out_ids_ptr, length=num_queries * k
         )
         var distances = Span[mut=True, Float32, MutAnyOrigin](
-            ptr=out_dists_ptr, length=num_queries * k
+            unsafe_ptr=out_dists_ptr, length=num_queries * k
         )
         var released = _ReleasedPythonThreadState()
         self_ptr[].ptr[]._query_into(queries, k, ids, distances)
@@ -855,26 +844,26 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_save(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin], path: PythonObject
+        self_ptr: Pointer[Self, MutAnyOrigin], path: PythonObject
     ) raises -> PythonObject:
         self_ptr[].ptr[].save(String(py=path))
         return Python.none()
 
     @staticmethod
     def py_wal_enabled(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].wal_enabled())
 
     @staticmethod
     def py_wal_sequence(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].wal_sequence())
 
     @staticmethod
     def py_enable_wal(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         path: PythonObject,
         durability: PythonObject,
     ) raises -> PythonObject:
@@ -886,21 +875,21 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_disable_wal(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         self_ptr[].ptr[].disable_wal()
         return Python.none()
 
     @staticmethod
     def py_flush_wal(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         self_ptr[].ptr[].flush_wal()
         return Python.none()
 
     @staticmethod
     def py_checkpoint(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         path: PythonObject,
     ) raises -> PythonObject:
         self_ptr[].ptr[].checkpoint(String(py=path))
@@ -908,7 +897,7 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def py_snapshot(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         path: PythonObject,
         memory_mapped: PythonObject,
         mmap_threshold_bytes: PythonObject,
@@ -922,10 +911,10 @@ struct PyCollection(Movable, Writable):
 
     @staticmethod
     def _wrap_collection(var col: Collection) raises -> PythonObject:
-        var col_ptr = rebind[UnsafePointer[Collection, MutAnyOrigin]](
-            alloc[Collection](1)
+        var col_ptr = rebind[Pointer[Collection, MutUntrackedOrigin]](
+            unsafe_alloc[Collection](1)
         )
-        col_ptr.init_pointee_move(col^)
+        col_ptr.unsafe_write(col^)
         var py_col = PyCollection(col_ptr)
         return PythonObject(alloc=py_col^)
 
@@ -933,19 +922,16 @@ struct PyCollection(Movable, Writable):
 struct PyIVFPQCollection(Movable, Writable):
     """Python-owned wrapper for the managed Mojo IVF-PQ collection."""
 
-    var ptr: UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
+    var ptr: Pointer[CollectionIVFPQ, MutUntrackedOrigin]
 
     def __init__(
-        out self, ptr: UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
+        out self, ptr: Pointer[CollectionIVFPQ, MutUntrackedOrigin]
     ):
         self.ptr = ptr
 
-    def __init__(out self, *, deinit take: Self):
-        self.ptr = take.ptr
-
-    def __del__(deinit self):
-        self.ptr.destroy_pointee()
-        self.ptr.free()
+    def __deinit__(deinit self):
+        self.ptr.unsafe_deinit_pointee()
+        self.ptr.unsafe_free()
 
     def write_to[W: Writer](self, mut writer: W):
         writer.write("IVFPQCollection()")
@@ -967,14 +953,14 @@ struct PyIVFPQCollection(Movable, Writable):
             String(py=args[5]),
         )
         var ptr = rebind[
-            UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
-        ](alloc[CollectionIVFPQ](1))
-        ptr.init_pointee_move(collection^)
+            Pointer[CollectionIVFPQ, MutUntrackedOrigin]
+        ](unsafe_alloc[CollectionIVFPQ](1))
+        ptr.unsafe_write(collection^)
         self = Self(ptr)
 
     @staticmethod
     def py_train(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
         var embeddings = _floats_from_python(py_embeddings)
@@ -986,7 +972,7 @@ struct PyIVFPQCollection(Movable, Writable):
 
     @staticmethod
     def py_add(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
@@ -997,19 +983,19 @@ struct PyIVFPQCollection(Movable, Writable):
 
     @staticmethod
     def py_train_numpy(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
         var num_vectors = Int(py=py_embeddings.shape[0])
         var pointer_value = Int(
             py=py_embeddings.__array_interface__["data"][0]
         )
-        var pointer = UnsafePointer[Float32, MutAnyOrigin](
+        var pointer = Pointer[Float32, MutAnyOrigin](
             unsafe_from_address=pointer_value
         )
         self_ptr[].ptr[]._train_from_span(
             Span[Float32, MutAnyOrigin](
-                ptr=pointer,
+                unsafe_ptr=pointer,
                 length=num_vectors * self_ptr[].ptr[].dimension(),
             )
         )
@@ -1017,7 +1003,7 @@ struct PyIVFPQCollection(Movable, Writable):
 
     @staticmethod
     def py_add_numpy(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_ids: PythonObject,
         py_embeddings: PythonObject,
     ) raises -> PythonObject:
@@ -1028,18 +1014,18 @@ struct PyIVFPQCollection(Movable, Writable):
         var embeddings_pointer_value = Int(
             py=py_embeddings.__array_interface__["data"][0]
         )
-        var ids_pointer = UnsafePointer[Int, MutAnyOrigin](
+        var ids_pointer = Pointer[Int, MutAnyOrigin](
             unsafe_from_address=ids_pointer_value
         )
-        var embeddings_pointer = UnsafePointer[Float32, MutAnyOrigin](
+        var embeddings_pointer = Pointer[Float32, MutAnyOrigin](
             unsafe_from_address=embeddings_pointer_value
         )
         self_ptr[].ptr[]._add_from_spans(
             Span[Int, MutAnyOrigin](
-                ptr=ids_pointer, length=num_vectors
+                unsafe_ptr=ids_pointer, length=num_vectors
             ),
             Span[Float32, MutAnyOrigin](
-                ptr=embeddings_pointer,
+                unsafe_ptr=embeddings_pointer,
                 length=num_vectors * self_ptr[].ptr[].dimension(),
             ),
         )
@@ -1047,7 +1033,7 @@ struct PyIVFPQCollection(Movable, Writable):
 
     @staticmethod
     def py_query(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
         py_n_results: PythonObject,
     ) raises -> PythonObject:
@@ -1060,7 +1046,7 @@ struct PyIVFPQCollection(Movable, Writable):
 
     @staticmethod
     def py_query_numpy(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_embeddings: PythonObject,
         py_n_results: PythonObject,
     ) raises -> PythonObject:
@@ -1068,13 +1054,13 @@ struct PyIVFPQCollection(Movable, Writable):
         var pointer_value = Int(
             py=py_embeddings.__array_interface__["data"][0]
         )
-        var pointer = UnsafePointer[Float32, MutAnyOrigin](
+        var pointer = Pointer[Float32, MutAnyOrigin](
             unsafe_from_address=pointer_value
         )
         var released = _ReleasedPythonThreadState()
         var results = self_ptr[].ptr[]._query_from_span(
             Span[Float32, MutAnyOrigin](
-                ptr=pointer,
+                unsafe_ptr=pointer,
                 length=num_queries * self_ptr[].ptr[].dimension(),
             ),
             Int(py=py_n_results),
@@ -1084,55 +1070,55 @@ struct PyIVFPQCollection(Movable, Writable):
 
     @staticmethod
     def py_name(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         return PythonObject(self_ptr[].ptr[].name())
 
     @staticmethod
     def py_dimension(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].dimension())
 
     @staticmethod
     def py_metric(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         return PythonObject(self_ptr[].ptr[].metric())
 
     @staticmethod
     def py_count(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].count())
 
     @staticmethod
     def py_is_trained(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].is_trained())
 
     @staticmethod
     def py_nlist(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].nlist())
 
     @staticmethod
     def py_pq_subvectors(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].pq_subvectors())
 
     @staticmethod
     def py_nprobe(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) -> PythonObject:
         return PythonObject(self_ptr[].ptr[].nprobe())
 
     @staticmethod
     def py_set_nprobe(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_nprobe: PythonObject,
     ) raises -> PythonObject:
         self_ptr[].ptr[].set_nprobe(Int(py=py_nprobe))
@@ -1140,14 +1126,14 @@ struct PyIVFPQCollection(Movable, Writable):
 
     @staticmethod
     def py_stats(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin]
+        self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         var stats = self_ptr[].ptr[].stats()
         return _ivfpq_stats_to_python(stats^)
 
     @staticmethod
     def py_save(
-        self_ptr: UnsafePointer[Self, MutAnyOrigin],
+        self_ptr: Pointer[Self, MutAnyOrigin],
         py_path: PythonObject,
     ) raises -> PythonObject:
         self_ptr[].ptr[].save(String(py=py_path))
@@ -1158,9 +1144,9 @@ struct PyIVFPQCollection(Movable, Writable):
         var collection: CollectionIVFPQ
     ) raises -> PythonObject:
         var ptr = rebind[
-            UnsafePointer[CollectionIVFPQ, MutAnyOrigin]
-        ](alloc[CollectionIVFPQ](1))
-        ptr.init_pointee_move(collection^)
+            Pointer[CollectionIVFPQ, MutUntrackedOrigin]
+        ](unsafe_alloc[CollectionIVFPQ](1))
+        ptr.unsafe_write(collection^)
         var py_collection = PyIVFPQCollection(ptr)
         return PythonObject(alloc=py_collection^)
 

@@ -1,5 +1,5 @@
 from std.collections import Dict, List, Optional
-from std.memory.span import Span
+from std.collections.span import Span
 from std.time import perf_counter_ns
 
 from mojovec.api.bm25 import BM25Index
@@ -148,25 +148,25 @@ struct Collection(Movable, Writable):
         self._applied_sequence = 0
         self._replaying_wal = False
 
-    def __init__(out self, *, deinit take: Self):
-        self._name = take._name^
-        self._dimension = take._dimension
-        self._storage_kind = take._storage_kind
-        self._metric_type = take._metric_type
-        self._hnsw = take._hnsw^
-        self._user_ids = take._user_ids^
-        self._is_deleted = take._is_deleted^
-        self._metadata_by_internal = take._metadata_by_internal^
-        self._metadatas = take._metadatas^
-        self._metadata_index = take._metadata_index^
-        self._document_by_internal = take._document_by_internal^
-        self._documents = take._documents^
-        self._bm25 = take._bm25^
-        self._id_to_internal = take._id_to_internal^
-        self._identity = take._identity
-        self._wal = take._wal^
-        self._applied_sequence = take._applied_sequence
-        self._replaying_wal = take._replaying_wal
+    def __init__(out self, *, deinit move: Self):
+        self._name = move._name^
+        self._dimension = move._dimension
+        self._storage_kind = move._storage_kind
+        self._metric_type = move._metric_type
+        self._hnsw = move._hnsw^
+        self._user_ids = move._user_ids^
+        self._is_deleted = move._is_deleted^
+        self._metadata_by_internal = move._metadata_by_internal^
+        self._metadatas = move._metadatas^
+        self._metadata_index = move._metadata_index^
+        self._document_by_internal = move._document_by_internal^
+        self._documents = move._documents^
+        self._bm25 = move._bm25^
+        self._id_to_internal = move._id_to_internal^
+        self._identity = move._identity
+        self._wal = move._wal^
+        self._applied_sequence = move._applied_sequence
+        self._replaying_wal = move._replaying_wal
 
     def write_to[W: Writer](self, mut writer: W):
         var storage = "sq8" if self.is_quantized() else "flat"
@@ -635,8 +635,8 @@ struct Collection(Movable, Writable):
         Callers never allocate or free MojoVec-owned memory manually.
         """
         self._add_from_spans(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
         )
 
     def add(
@@ -647,8 +647,8 @@ struct Collection(Movable, Writable):
     ) raises:
         """Adds records together with one metadata object per ID."""
         self._append_records(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
             replace_existing=False,
             metadatas=metadatas,
             has_metadatas=True,
@@ -664,8 +664,8 @@ struct Collection(Movable, Writable):
     ) raises:
         """Adds records together with one document per ID."""
         self._append_records(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
             replace_existing=False,
             metadatas=List[Metadata](),
             has_metadatas=False,
@@ -682,8 +682,8 @@ struct Collection(Movable, Writable):
     ) raises:
         """Adds records with aligned metadata and documents."""
         self._append_records(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
             replace_existing=False,
             metadatas=metadatas,
             has_metadatas=True,
@@ -714,8 +714,8 @@ struct Collection(Movable, Writable):
         Inputs and collection storage use automatic lifetime management.
         """
         self._upsert_from_spans(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
         )
 
     def upsert(
@@ -726,8 +726,8 @@ struct Collection(Movable, Writable):
     ) raises:
         """Inserts or replaces records and explicitly replaces metadata."""
         self._append_records(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
             replace_existing=True,
             metadatas=metadatas,
             has_metadatas=True,
@@ -743,8 +743,8 @@ struct Collection(Movable, Writable):
     ) raises:
         """Inserts or replaces records and explicitly replaces documents."""
         self._append_records(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
             replace_existing=True,
             metadatas=List[Metadata](),
             has_metadatas=False,
@@ -761,8 +761,8 @@ struct Collection(Movable, Writable):
     ) raises:
         """Inserts or replaces records with metadata and documents."""
         self._append_records(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
-            Span[Float32](ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Float32](unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)),
             replace_existing=True,
             metadatas=metadatas,
             has_metadatas=True,
@@ -796,9 +796,9 @@ struct Collection(Movable, Writable):
     ) raises:
         """Test-only entry point for deterministic atomic batch failures."""
         self._append_records_with_fault(
-            Span[Int](ptr=ids.unsafe_ptr(), length=len(ids)),
+            Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids)),
             Span[Float32](
-                ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+                unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)
             ),
             replace_existing=True,
             metadatas=metadatas,
@@ -815,9 +815,9 @@ struct Collection(Movable, Writable):
 
     def update(mut self, ids: List[Int], embeddings: List[Float32]) raises:
         """Updates existing IDs and rejects missing IDs."""
-        var ids_span = Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+        var ids_span = Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids))
         var embeddings_span = Span[Float32](
-            ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+            unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)
         )
         self._validate_shape(ids_span, embeddings_span)
         self._validate_unique_batch(ids_span)
@@ -839,9 +839,9 @@ struct Collection(Movable, Writable):
         metadatas: List[Metadata],
     ) raises:
         """Updates existing records and explicitly replaces their metadata."""
-        var ids_span = Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+        var ids_span = Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids))
         var embeddings_span = Span[Float32](
-            ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+            unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)
         )
         self._validate_shape(ids_span, embeddings_span)
         self._validate_unique_batch(ids_span)
@@ -862,10 +862,10 @@ struct Collection(Movable, Writable):
         embeddings: List[Float32],
         documents: List[String],
     ) raises:
-        """Updates existing records and explicitly replaces documents."""
-        var ids_span = Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+        """Updates existing records and explicitly replaces their documents."""
+        var ids_span = Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids))
         var embeddings_span = Span[Float32](
-            ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+            unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)
         )
         self._validate_shape(ids_span, embeddings_span)
         self._validate_unique_batch(ids_span)
@@ -887,10 +887,10 @@ struct Collection(Movable, Writable):
         metadatas: List[Metadata],
         documents: List[String],
     ) raises:
-        """Updates existing records with metadata and documents."""
-        var ids_span = Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+        """Updates existing records with aligned metadata and documents."""
+        var ids_span = Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids))
         var embeddings_span = Span[Float32](
-            ptr=embeddings.unsafe_ptr(), length=len(embeddings)
+            unsafe_ptr=embeddings.unsafe_ptr(), length=len(embeddings)
         )
         self._validate_shape(ids_span, embeddings_span)
         self._validate_unique_batch(ids_span)
@@ -912,7 +912,7 @@ struct Collection(Movable, Writable):
         var wal_sequence = self._applied_sequence
         if not self._replaying_wal and self._wal:
             wal_sequence = self._wal[].append_delete(
-                Span[Int](ptr=ids.unsafe_ptr(), length=len(ids))
+                Span[Int](unsafe_ptr=ids.unsafe_ptr(), length=len(ids))
             )
         for i in range(len(ids)):
             var internal_id = self._id_to_internal.pop(ids[i], -1)
@@ -1036,7 +1036,7 @@ struct Collection(Movable, Writable):
             unsafe_uninit_length=output_size
         )
         var queries = Span[Float32](
-            ptr=query_embeddings.unsafe_ptr(),
+            unsafe_ptr=query_embeddings.unsafe_ptr(),
             length=len(query_embeddings),
         )
         var ids = Span[mut=True, Int](ids_storage)
@@ -1083,7 +1083,7 @@ struct Collection(Movable, Writable):
         )
         var exclusion_storage = self._where_filter(where)
         var queries = Span[Float32](
-            ptr=query_embeddings.unsafe_ptr(),
+            unsafe_ptr=query_embeddings.unsafe_ptr(),
             length=len(query_embeddings),
         )
         var ids = Span[mut=True, Int](ids_storage)
@@ -1398,11 +1398,11 @@ struct Collection(Movable, Writable):
             if record.operation == WAL_OPERATION_WRITE:
                 collection._append_records(
                     Span[Int](
-                        ptr=record.ids.unsafe_ptr(),
+                        unsafe_ptr=record.ids.unsafe_ptr(),
                         length=len(record.ids),
                     ),
                     Span[Float32](
-                        ptr=record.embeddings.unsafe_ptr(),
+                        unsafe_ptr=record.embeddings.unsafe_ptr(),
                         length=len(record.embeddings),
                     ),
                     record.replace_existing,

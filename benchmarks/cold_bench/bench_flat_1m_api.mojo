@@ -41,8 +41,8 @@ def main() raises:
     var measured_seconds: Float64 = 0.0
 
     for sample in range(samples):
-        print("cooldown before sample " + String(sample + 1) + "...")
-        _ = external_call["sleep", UInt](UInt(30))
+        print("cooldown before sample " + String(sample + 1) + " (10s)...")
+        _ = external_call["sleep", UInt](UInt(10))
         _ = collection.query(warmup_queries, n_results=k)
 
         var started = perf_counter_ns()

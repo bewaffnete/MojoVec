@@ -1,7 +1,7 @@
 """Preparation of fallible payload work for atomic collection batches."""
 
 from std.collections import Dict, List
-from std.memory.span import Span
+from std.collections.span import Span
 
 from mojovec.api.bm25 import BM25Index
 from mojovec.api.metadata import Metadata

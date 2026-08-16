@@ -145,8 +145,8 @@ struct StandardBM25Analyzer(Movable):
         self._stopwords = Dict[String, Bool]()
         add_standard_stopwords(self._stopwords)
 
-    def __init__(out self, *, deinit take: Self):
-        self._stopwords = take._stopwords^
+    def __init__(out self, *, deinit move: Self):
+        self._stopwords = move._stopwords^
 
     def analyze(self, text: String) raises -> List[String]:
         var tokens = standard_word_tokens(text)

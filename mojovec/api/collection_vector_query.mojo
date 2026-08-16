@@ -2,7 +2,7 @@
 
 from std.collections import List
 from std.math import isfinite, sqrt
-from std.memory.span import Span
+from std.collections.span import Span
 
 from mojovec.api.collection_codec import METRIC_COSINE
 from mojovec.api.collection_storage import HNSWStorage, _storage_search

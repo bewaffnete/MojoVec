@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MOJO_VERSION: 1.0.0b2
+  MAX_VERSION: 26.1.0
   PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints/ci.txt
   MALLOC_CHECK_: "3"
 
@@ -40,13 +40,13 @@ jobs:
 
       - name: Install Mojo
         run: |
-          pixi global install "mojo==$MOJO_VERSION" \
+          pixi global install "max==$MAX_VERSION" \
             -c https://conda.modular.com/max \
             -c conda-forge
-          pixi global add --environment mojo numpy
+          pixi global add --environment default numpy
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
 
-          mojo_python_library="$(find "$HOME/.pixi/envs/mojo/lib" \
+          mojo_python_library="$(find "$HOME/.pixi/envs/default/lib" \
             -maxdepth 1 -type f \
             \( -name 'libpython*.dylib' -o -name 'libpython*.so*' \) \
             -print -quit)"
@@ -55,7 +55,7 @@ jobs:
             exit 1
           fi
           mojo_python_site_packages="$(
-            "$HOME/.pixi/envs/mojo/bin/python" -c \
+            "$HOME/.pixi/envs/default/bin/python" -c \
               'import site; print(site.getsitepackages()[0])'
           )"
           echo "MOJO_PYTHON_LIBRARY=$mojo_python_library" >> "$GITHUB_ENV"
@@ -78,8 +78,7 @@ jobs:
         run: |
           for test_file in tests/test_*.mojo; do
             echo ">>> $test_file"
-            mojo build -I . "$test_file" -o /tmp/mojovec_test_bin
-            /tmp/mojovec_test_bin
+            mojo -I . "$test_file"
           done
 
   python:
@@ -109,7 +108,7 @@ jobs:
 
       - name: Install Mojo
         run: |
-          pixi global install "mojo==$MOJO_VERSION" \
+          pixi global install "max==$MAX_VERSION" \
             -c https://conda.modular.com/max \
             -c conda-forge
           echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"

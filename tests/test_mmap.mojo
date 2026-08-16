@@ -1,6 +1,6 @@
 from std.collections import List
-from std.algorithm import parallelize
-from std.memory.span import Span
+from max.algorithm import parallelize
+from std.collections.span import Span
 from std.os import SEEK_END, SEEK_SET, mkdir, rmdir
 from std.testing import (
     TestSuite,
@@ -34,7 +34,8 @@ comptime DIMENSION = 4
 
 
 def vector(base: Float32) -> List[Float32]:
-    return [base, base + 1.0, base + 2.0, base + 3.0]
+    var res: List[Float32] = [base, base + 1.0, base + 2.0, base + 3.0]
+    return res^
 
 
 def append_vector(mut values: List[Float32], base: Float32):
@@ -86,14 +87,14 @@ def refresh_snapshot_checksum(path: String) raises:
     var total_size = Int(file.seek(0, SEEK_END))
     var payload_size = total_size - SNAPSHOT_CHECKSUM_TRAILER_BYTES
     var checksum = _checksum_prefix(file, payload_size)
-    _ = file.seek(UInt64(payload_size + 8), SEEK_SET)
+    _ = file.seek(payload_size + 8, SEEK_SET)
     _write_uint64(file, checksum)
     file.close()
 
 
 def patch_snapshot_int(path: String, offset: Int, value: Int) raises:
     var file = open(path, "rw")
-    _ = file.seek(UInt64(offset), SEEK_SET)
+    _ = file.seek(offset, SEEK_SET)
     write_int(file, value)
     file.close()
     refresh_snapshot_checksum(path)
@@ -101,10 +102,10 @@ def patch_snapshot_int(path: String, offset: Int, value: Int) raises:
 
 def patch_snapshot_byte(path: String, offset: Int, value: UInt8) raises:
     var file = open(path, "rw")
-    _ = file.seek(UInt64(offset), SEEK_SET)
+    _ = file.seek(offset, SEEK_SET)
     var storage = InlineArray[UInt8, 1](uninitialized=True)
     storage[0] = value
-    file.write_all(Span[UInt8](ptr=storage.unsafe_ptr(), length=1))
+    file.write_all(Span[UInt8](unsafe_ptr=storage.unsafe_ptr(), length=1))
     file.close()
     refresh_snapshot_checksum(path)
 
@@ -131,7 +132,7 @@ def append_checksumming_payload_byte(path: String) raises:
     writer.write_bytes(payload)
     var extra = InlineArray[UInt8, 1](uninitialized=True)
     extra[0] = 0
-    writer.write_all(Span[UInt8](ptr=extra.unsafe_ptr(), length=1))
+    writer.write_all(Span[UInt8](unsafe_ptr=extra.unsafe_ptr(), length=1))
     writer.close()
     append_snapshot_checksum(path)
 
@@ -382,10 +383,10 @@ def test_snapshot_checksum_rejects_payload_and_trailer_corruption() raises:
     writer.save(path)
     var trailer_file = open(path, "rw")
     var file_size = Int(trailer_file.seek(0, SEEK_END))
-    _ = trailer_file.seek(UInt64(file_size - 1), SEEK_SET)
+    _ = trailer_file.seek(file_size - 1, SEEK_SET)
     var original_trailer = trailer_file.read_bytes(1)
-    _ = trailer_file.seek(UInt64(file_size - 1), SEEK_SET)
-    var corrupted_trailer = [original_trailer[0] ^ UInt8(0xFF)]
+    _ = trailer_file.seek(file_size - 1, SEEK_SET)
+    var corrupted_trailer: List[UInt8] = [original_trailer[0] ^ UInt8(0xFF)]
     trailer_file.write_all(corrupted_trailer)
     trailer_file.close()
 

@@ -1,6 +1,6 @@
 from std.collections import List
-from std.memory import alloc
-from std.memory.span import Span
+from std.memory.alloc import unsafe_alloc
+from std.collections.span import Span
 from std.testing import (
     TestSuite,
     assert_almost_equal,

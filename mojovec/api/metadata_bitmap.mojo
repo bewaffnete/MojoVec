@@ -20,10 +20,10 @@ struct MetadataBitmapPosting(Movable):
         self._word_indexes = List[Int]()
         self._words = List[UInt64]()
 
-    def __init__(out self, *, deinit take: Self):
-        self._value = take._value^
-        self._word_indexes = take._word_indexes^
-        self._words = take._words^
+    def __init__(out self, *, deinit move: Self):
+        self._value = move._value^
+        self._word_indexes = move._word_indexes^
+        self._words = move._words^
 
     def value_matches(self, node: WhereNode) raises -> Bool:
         return node.matches(self._value)
@@ -58,9 +58,9 @@ struct MetadataBitmapField(Movable):
         self._postings = List[MetadataBitmapPosting]()
         self._enabled = True
 
-    def __init__(out self, *, deinit take: Self):
-        self._postings = take._postings^
-        self._enabled = take._enabled
+    def __init__(out self, *, deinit move: Self):
+        self._postings = move._postings^
+        self._enabled = move._enabled
 
     def enabled(self) -> Bool:
         return self._enabled
@@ -107,9 +107,9 @@ struct MetadataBitmapIndex(Movable):
         self._field_lookup = Dict[String, Int]()
         self._fields = List[MetadataBitmapField]()
 
-    def __init__(out self, *, deinit take: Self):
-        self._field_lookup = take._field_lookup^
-        self._fields = take._fields^
+    def __init__(out self, *, deinit move: Self):
+        self._field_lookup = move._field_lookup^
+        self._fields = move._fields^
 
     def add(
         mut self,

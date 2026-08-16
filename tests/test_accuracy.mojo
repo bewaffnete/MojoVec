@@ -1,7 +1,7 @@
-from std.memory.span import Span
+from std.collections.span import Span
 from std.testing import assert_true
 from std.random.philox import Random
-from std.memory import alloc
+from std.memory.alloc import unsafe_alloc
 
 from mojovec.core.types import METRIC_INNER_PRODUCT, METRIC_L2, QT_8bit
 from mojovec.index.index_flat import IndexFlat
@@ -17,53 +17,53 @@ comptime nq = 100
 comptime k = 10
 
 struct Dataset:
-    var db: UnsafePointer[Float32, MutUntrackedOrigin]
-    var queries: UnsafePointer[Float32, MutUntrackedOrigin]
+    var db: Pointer[Float32, MutUntrackedOrigin]
+    var queries: Pointer[Float32, MutUntrackedOrigin]
 
     def __init__(out self):
         var generator = Random(seed=UInt64(42))
-        self.db = alloc[Float32](nb * d)
+        self.db = unsafe_alloc[Float32](nb * d)
         var values = generator.step_uniform()
         for i in range(nb * d):
             if i != 0 and i % 4 == 0:
                 values = generator.step_uniform()
-            self.db[i] = values[i % 4] * 2.0 - 1.0
+            self.db[unsafe_offset=i] = values[i % 4] * 2.0 - 1.0
             
-        self.queries = alloc[Float32](nq * d)
+        self.queries = unsafe_alloc[Float32](nq * d)
         values = generator.step_uniform()
         for i in range(nq * d):
             if i != 0 and i % 4 == 0:
                 values = generator.step_uniform()
-            self.queries[i] = values[i % 4] * 2.0 - 1.0
+            self.queries[unsafe_offset=i] = values[i % 4] * 2.0 - 1.0
 
     def free(self):
-        self.db.free()
-        self.queries.free()
+        self.db.unsafe_free()
+        self.queries.unsafe_free()
 
-def get_ground_truth(ds: Dataset) raises -> UnsafePointer[Int, MutUntrackedOrigin]:
+def get_ground_truth(ds: Dataset) raises -> Pointer[Int, MutUntrackedOrigin]:
     var index = IndexFlat(d, METRIC_L2)
-    index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
+    index.add(Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.db, length=nb * d))
     
-    var gt_dist = alloc[Float32](nq * k)
-    var gt_labels = alloc[Int](nq * k)
+    var gt_dist = unsafe_alloc[Float32](nq * k)
+    var gt_labels = unsafe_alloc[Int](nq * k)
     
-    var queries_span = Span[Float32, MutUntrackedOrigin](ptr=ds.queries, length=nq * d)
-    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](ptr=gt_dist, length=nq * k)
-    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](ptr=gt_labels, length=nq * k)
+    var queries_span = Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.queries, length=nq * d)
+    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](unsafe_ptr=gt_dist, length=nq * k)
+    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](unsafe_ptr=gt_labels, length=nq * k)
     
     index.search(queries_span, k, dist_span, labels_span)
-    gt_dist.free()
+    gt_dist.unsafe_free()
     return gt_labels
 
-def compute_recall(gt_labels: UnsafePointer[Int, MutUntrackedOrigin], test_labels: UnsafePointer[Int, MutUntrackedOrigin], nq: Int, k: Int) -> Float32:
+def compute_recall(gt_labels: Pointer[Int, MutUntrackedOrigin], test_labels: Pointer[Int, MutUntrackedOrigin], nq: Int, k: Int) -> Float32:
     var matches = 0
     for i in range(nq):
         var gt_offset = i * k
         var test_offset = i * k
         for j in range(k):
-            var gt_val = gt_labels[gt_offset + j]
+            var gt_val = gt_labels[unsafe_offset=gt_offset + j]
             for m in range(k):
-                if test_labels[test_offset + m] == gt_val:
+                if test_labels[unsafe_offset=test_offset + m] == gt_val:
                     matches += 1
                     break
     return Float32(matches) / Float32(nq * k)
@@ -73,14 +73,14 @@ def test_accuracy_hnsw() raises:
     var gt_labels = get_ground_truth(ds)
     
     var index = IndexHNSW[IndexFlat](IndexFlat(d, METRIC_L2), d, METRIC_L2, 32)
-    index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
+    index.add(Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.db, length=nb * d))
     
-    var test_dist = alloc[Float32](nq * k)
-    var test_labels = alloc[Int](nq * k)
+    var test_dist = unsafe_alloc[Float32](nq * k)
+    var test_labels = unsafe_alloc[Int](nq * k)
     
-    var queries_span = Span[Float32, MutUntrackedOrigin](ptr=ds.queries, length=nq * d)
-    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](ptr=test_dist, length=nq * k)
-    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](ptr=test_labels, length=nq * k)
+    var queries_span = Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.queries, length=nq * d)
+    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](unsafe_ptr=test_dist, length=nq * k)
+    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](unsafe_ptr=test_labels, length=nq * k)
     
     index.search(queries_span, k, dist_span, labels_span)
     
@@ -89,9 +89,9 @@ def test_accuracy_hnsw() raises:
     assert_true(recall >= 0.80, "HNSW Recall too low")
     
     ds.free()
-    gt_labels.free()
-    test_dist.free()
-    test_labels.free()
+    gt_labels.unsafe_free()
+    test_dist.unsafe_free()
+    test_labels.unsafe_free()
 
 def test_accuracy_ivf_flat() raises:
     var ds = Dataset()
@@ -102,17 +102,17 @@ def test_accuracy_ivf_flat() raises:
         IndexFlat(d, METRIC_L2), d, nlist, METRIC_L2
     )
     index.train(
-        Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d)
+        Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.db, length=nb * d)
     )
-    index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
+    index.add(Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.db, length=nb * d))
     index.nprobe = 16
     
-    var test_dist = alloc[Float32](nq * k)
-    var test_labels = alloc[Int](nq * k)
+    var test_dist = unsafe_alloc[Float32](nq * k)
+    var test_labels = unsafe_alloc[Int](nq * k)
         
-    var queries_span = Span[Float32, MutUntrackedOrigin](ptr=ds.queries, length=nq * d)
-    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](ptr=test_dist, length=nq * k)
-    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](ptr=test_labels, length=nq * k)
+    var queries_span = Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.queries, length=nq * d)
+    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](unsafe_ptr=test_dist, length=nq * k)
+    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](unsafe_ptr=test_labels, length=nq * k)
     
     index.search(queries_span, k, dist_span, labels_span)
     
@@ -121,9 +121,9 @@ def test_accuracy_ivf_flat() raises:
     assert_true(recall >= 0.75, "IVFFlat Recall too low")
     
     ds.free()
-    gt_labels.free()
-    test_dist.free()
-    test_labels.free()
+    gt_labels.unsafe_free()
+    test_dist.unsafe_free()
+    test_labels.unsafe_free()
 
 
 def test_accuracy_ivf_pq() raises:
@@ -132,20 +132,20 @@ def test_accuracy_ivf_pq() raises:
     var index = IndexIVFPQ[IndexFlat](
         IndexFlat(d, METRIC_L2), d, 64, 8, METRIC_L2
     )
-    index.train(Span[Float32](ptr=ds.db, length=nb * d))
-    index.add(Span[Float32](ptr=ds.db, length=nb * d))
+    index.train(Span[Float32](unsafe_ptr=ds.db, length=nb * d))
+    index.add(Span[Float32](unsafe_ptr=ds.db, length=nb * d))
     index.nprobe = 16
 
-    var test_dist = alloc[Float32](nq * k)
-    var test_labels = alloc[Int](nq * k)
+    var test_dist = unsafe_alloc[Float32](nq * k)
+    var test_labels = unsafe_alloc[Int](nq * k)
     var dist_span = Span[mut=True, Float32](
-        ptr=test_dist, length=nq * k
+        unsafe_ptr=test_dist, length=nq * k
     )
     var label_span = Span[mut=True, Int](
-        ptr=test_labels, length=nq * k
+        unsafe_ptr=test_labels, length=nq * k
     )
     index.search(
-        Span[Float32](ptr=ds.queries, length=nq * d),
+        Span[Float32](unsafe_ptr=ds.queries, length=nq * d),
         k,
         dist_span,
         label_span,
@@ -156,24 +156,24 @@ def test_accuracy_ivf_pq() raises:
     assert_true(recall >= 0.50, "IVFPQ Recall too low")
 
     ds.free()
-    gt_labels.free()
-    test_dist.free()
-    test_labels.free()
+    gt_labels.unsafe_free()
+    test_dist.unsafe_free()
+    test_labels.unsafe_free()
 
 def test_accuracy_sq8() raises:
     var ds = Dataset()
     var gt_labels = get_ground_truth(ds)
     
     var index = IndexScalarQuantizer(d, QT_8bit, METRIC_L2)
-    index.train(Span[Float32](ptr=ds.db, length=nb * d))
-    index.add(Span[Float32, MutUntrackedOrigin](ptr=ds.db, length=nb * d))
+    index.train(Span[Float32](unsafe_ptr=ds.db, length=nb * d))
+    index.add(Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.db, length=nb * d))
     
-    var test_dist = alloc[Float32](nq * k)
-    var test_labels = alloc[Int](nq * k)
+    var test_dist = unsafe_alloc[Float32](nq * k)
+    var test_labels = unsafe_alloc[Int](nq * k)
         
-    var queries_span = Span[Float32, MutUntrackedOrigin](ptr=ds.queries, length=nq * d)
-    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](ptr=test_dist, length=nq * k)
-    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](ptr=test_labels, length=nq * k)
+    var queries_span = Span[Float32, MutUntrackedOrigin](unsafe_ptr=ds.queries, length=nq * d)
+    var dist_span = Span[mut=True, Float32, MutUntrackedOrigin](unsafe_ptr=test_dist, length=nq * k)
+    var labels_span = Span[mut=True, Int, MutUntrackedOrigin](unsafe_ptr=test_labels, length=nq * k)
     
     index.search(queries_span, k, dist_span, labels_span)
     
@@ -182,34 +182,34 @@ def test_accuracy_sq8() raises:
     assert_true(recall >= 0.90, "SQ8 Recall too low")
     
     ds.free()
-    gt_labels.free()
-    test_dist.free()
-    test_labels.free()
+    gt_labels.unsafe_free()
+    test_dist.unsafe_free()
+    test_labels.unsafe_free()
 
 
 def test_accuracy_sq8_inner_product() raises:
     var ds = Dataset()
     var exact = IndexFlat(d, METRIC_INNER_PRODUCT)
-    exact.add(Span[Float32](ptr=ds.db, length=nb * d))
+    exact.add(Span[Float32](unsafe_ptr=ds.db, length=nb * d))
     var approximate = IndexFlatSQ8(d, METRIC_INNER_PRODUCT)
-    approximate.add(Span[Float32](ptr=ds.db, length=nb * d))
+    approximate.add(Span[Float32](unsafe_ptr=ds.db, length=nb * d))
 
-    var exact_distances = alloc[Float32](nq * k)
-    var exact_labels = alloc[Int](nq * k)
-    var approximate_distances = alloc[Float32](nq * k)
-    var approximate_labels = alloc[Int](nq * k)
-    var queries = Span[Float32](ptr=ds.queries, length=nq * d)
+    var exact_distances = unsafe_alloc[Float32](nq * k)
+    var exact_labels = unsafe_alloc[Int](nq * k)
+    var approximate_distances = unsafe_alloc[Float32](nq * k)
+    var approximate_labels = unsafe_alloc[Int](nq * k)
+    var queries = Span[Float32](unsafe_ptr=ds.queries, length=nq * d)
     var exact_distance_span = Span[mut=True, Float32](
-        ptr=exact_distances, length=nq * k
+        unsafe_ptr=exact_distances, length=nq * k
     )
     var exact_label_span = Span[mut=True, Int](
-        ptr=exact_labels, length=nq * k
+        unsafe_ptr=exact_labels, length=nq * k
     )
     var approximate_distance_span = Span[mut=True, Float32](
-        ptr=approximate_distances, length=nq * k
+        unsafe_ptr=approximate_distances, length=nq * k
     )
     var approximate_label_span = Span[mut=True, Int](
-        ptr=approximate_labels, length=nq * k
+        unsafe_ptr=approximate_labels, length=nq * k
     )
     exact.search(queries, k, exact_distance_span, exact_label_span)
     approximate.search(
@@ -224,10 +224,10 @@ def test_accuracy_sq8_inner_product() raises:
     assert_true(recall >= 0.95, "SQ8 inner-product Recall too low")
 
     ds.free()
-    exact_distances.free()
-    exact_labels.free()
-    approximate_distances.free()
-    approximate_labels.free()
+    exact_distances.unsafe_free()
+    exact_labels.unsafe_free()
+    approximate_distances.unsafe_free()
+    approximate_labels.unsafe_free()
 
 def main() raises:
     # These cases each use the runtime worker pool internally. Running them

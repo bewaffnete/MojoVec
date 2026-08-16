@@ -1,5 +1,5 @@
-from std.memory.span import Span
-from std.memory import alloc
+from std.collections.span import Span
+from std.memory.alloc import unsafe_alloc
 from std.random.philox import Random
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 from mojovec.quantization.pq import ProductQuantizer
@@ -12,47 +12,47 @@ def test_pq_encoding_error() raises:
     var ksub = 256
     var generator = Random(seed=UInt64(181))
     
-    var data = alloc[Float32](n * d)
+    var data = unsafe_alloc[Float32](n * d)
     var values = generator.step_uniform()
     for i in range(n * d):
         if i != 0 and i % 4 == 0:
             values = generator.step_uniform()
-        data[i] = values[i % 4] * 2.0 - 1.0
+        data[unsafe_offset=i] = values[i % 4] * 2.0 - 1.0
         
     var pq = ProductQuantizer(d, M, ksub)
     
     var data_span = Span[Float32, MutUntrackedOrigin](
-        ptr=data, length=n * d
+        unsafe_ptr=data, length=n * d
     )
     pq.train(data_span)
     assert_true(pq.is_trained, "Should be trained")
     
-    var codes = alloc[UInt8](n * M)
+    var codes = unsafe_alloc[UInt8](n * M)
     var codes_span = Span[UInt8, MutUntrackedOrigin](
-        ptr=codes, length=n * M
+        unsafe_ptr=codes, length=n * M
     )
     pq.compute_codes(data_span, codes_span)
     
-    var decoded = alloc[Float32](n * d)
+    var decoded = unsafe_alloc[Float32](n * d)
     var decoded_span = Span[Float32, MutUntrackedOrigin](
-        ptr=decoded, length=n * d
+        unsafe_ptr=decoded, length=n * d
     )
     pq.decode(codes_span, decoded_span)
     
     # Check reconstruction error
     var total_error: Float32 = 0.0
     for i in range(n):
-        var ptr_orig = data + i * d
-        var ptr_dec = decoded + i * d
+        var ptr_orig = data.unsafe_offset(i * d)
+        var ptr_dec = decoded.unsafe_offset(i * d)
         total_error += l2_distance_simd[4](ptr_orig, ptr_dec, d)
         
     var mse = total_error / Float32(n)
     # Theoretically MSE for uniform data PQ should be within reasonable bounds
     assert_true(mse < 1.0, "PQ Reconstruction Error (MSE) is too high")
     
-    data.free()
-    codes.free()
-    decoded.free()
+    data.unsafe_free()
+    codes.unsafe_free()
+    decoded.unsafe_free()
 
 def test_pq_symmetric_distances() raises:
     var d = 16
@@ -61,57 +61,57 @@ def test_pq_symmetric_distances() raises:
     var ksub = 256
     var generator = Random(seed=UInt64(191))
     
-    var data = alloc[Float32](n * d)
+    var data = unsafe_alloc[Float32](n * d)
     var values = generator.step_uniform()
     for i in range(n * d):
         if i != 0 and i % 4 == 0:
             values = generator.step_uniform()
-        data[i] = values[i % 4] * 2.0 - 1.0
+        data[unsafe_offset=i] = values[i % 4] * 2.0 - 1.0
         
     var pq = ProductQuantizer(d, M, ksub)
     var data_span = Span[Float32, MutUntrackedOrigin](
-        ptr=data, length=n * d
+        unsafe_ptr=data, length=n * d
     )
     pq.train(data_span)
     
-    var codes = alloc[UInt8](n * M)
+    var codes = unsafe_alloc[UInt8](n * M)
     var codes_span = Span[UInt8, MutUntrackedOrigin](
-        ptr=codes, length=n * M
+        unsafe_ptr=codes, length=n * M
     )
     pq.compute_codes(data_span, codes_span)
     
-    var decoded = alloc[Float32](n * d)
+    var decoded = unsafe_alloc[Float32](n * d)
     var decoded_span = Span[Float32, MutUntrackedOrigin](
-        ptr=decoded, length=n * d
+        unsafe_ptr=decoded, length=n * d
     )
     pq.decode(codes_span, decoded_span)
     
-    var query = data + 0
-    var dis_table = alloc[Float32](M * ksub)
+    var query = data
+    var dis_table = unsafe_alloc[Float32](M * ksub)
     var query_span = Span[Float32, MutUntrackedOrigin](
-        ptr=query, length=d
+        unsafe_ptr=query, length=d
     )
     var table_span = Span[Float32, MutUntrackedOrigin](
-        ptr=dis_table, length=M * ksub
+        unsafe_ptr=dis_table, length=M * ksub
     )
     pq.compute_distance_table(query_span, table_span)
     
     # Compute ADC distance to vector 0
     var approx_dist: Float32 = 0.0
-    var codes_0 = codes + 0
+    var codes_0 = codes
     for m in range(M):
-        var k = Int(codes_0[m])
-        approx_dist += dis_table[m * ksub + k]
+        var k = Int(codes_0[unsafe_offset=m])
+        approx_dist += dis_table[unsafe_offset=m * ksub + k]
         
     # Asymmetric distance (ADC) from vector 0 to its encoded representation
     # must perfectly equal the L2 distance between the original vector 0 and the decoded vector 0.
     var exact_decoded_dist = l2_distance_simd[4](query, decoded, d)
     assert_almost_equal(approx_dist, exact_decoded_dist, atol=1e-5)
     
-    data.free()
-    codes.free()
-    decoded.free()
-    dis_table.free()
+    data.unsafe_free()
+    codes.unsafe_free()
+    decoded.unsafe_free()
+    dis_table.unsafe_free()
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

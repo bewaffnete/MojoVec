@@ -1,7 +1,7 @@
 from std.io.file import FileHandle
 from std.collections import InlineArray, List
-from std.memory.span import Span
-from std.memory import alloc
+from std.collections.span import Span
+from std.memory.alloc import unsafe_alloc
 from std.os import SEEK_CUR, SEEK_SET
 from ..core.index import Index
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
@@ -67,14 +67,14 @@ def write_int(mut f: FileHandle, val: Int) raises:
     var storage = InlineArray[Int, 1](uninitialized=True)
     storage[0] = val
     var span = Span[UInt8](
-        ptr=storage.unsafe_ptr().bitcast[UInt8](), length=8
+        unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=8
     )
     f.write_bytes(span)
 
 def read_int(mut f: FileHandle) raises -> Int:
     var read_data = _read_exact_bytes(f, 8)
-    var ptr = read_data.unsafe_ptr().bitcast[Int]()
-    var val = ptr[0]
+    var ptr = read_data.unsafe_ptr().unsafe_bitcast[Int]()
+    var val = ptr[unsafe_offset=0]
     _ = len(read_data)
     return val
 
@@ -84,7 +84,7 @@ def write_uint64(mut f: FileHandle, value: UInt64) raises:
     storage[0] = value
     f.write_all(
         Span[UInt8](
-            ptr=storage.unsafe_ptr().bitcast[UInt8](),
+            unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](),
             length=8,
         )
     )
@@ -92,7 +92,7 @@ def write_uint64(mut f: FileHandle, value: UInt64) raises:
 
 def read_uint64(mut f: FileHandle) raises -> UInt64:
     var data = _read_exact_bytes(f, 8)
-    var value = data.unsafe_ptr().bitcast[UInt64]()[0]
+    var value = data.unsafe_ptr().unsafe_bitcast[UInt64]()[unsafe_offset=0]
     _ = len(data)
     return value
 
@@ -136,7 +136,7 @@ def _validate_mmap_region(
 def write_bool(mut f: FileHandle, val: Bool) raises:
     var storage = InlineArray[UInt8, 1](uninitialized=True)
     storage[0] = 1 if val else 0
-    var span = Span[UInt8](ptr=storage.unsafe_ptr(), length=1)
+    var span = Span[UInt8](unsafe_ptr=storage.unsafe_ptr(), length=1)
     f.write_bytes(span)
 
 def read_bool(mut f: FileHandle) raises -> Bool:
@@ -146,17 +146,17 @@ def read_bool(mut f: FileHandle) raises -> Bool:
         raise Error("Invalid serialized Bool value.")
     return value == 1
 
-def write_unsafe_pointer_float32(mut f: FileHandle, ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
+def write_unsafe_pointer_float32(mut f: FileHandle, ptr: Pointer[Float32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=count * 4)
+    var span = Span[UInt8](unsafe_ptr=ptr.unsafe_bitcast[UInt8](), length=count * 4)
     f.write_bytes(span)
 
-def read_unsafe_pointer_float32(mut f: FileHandle, mut ptr: UnsafePointer[Float32, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_float32(mut f: FileHandle, mut ptr: Pointer[Float32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = _read_exact_bytes(f, checked_byte_count(count, 4))
-    var src = read_data.unsafe_ptr().bitcast[Float32]()
+    var src = read_data.unsafe_ptr().unsafe_bitcast[Float32]()
     for i in range(count):
-        ptr[i] = src[i]
+        ptr[unsafe_offset=i] = src[unsafe_offset=i]
     _ = len(read_data)
 
 
@@ -165,7 +165,7 @@ def write_float32_span(mut f: FileHandle, data: Span[Float32, _]) raises:
     if len(data) == 0:
         return
     var bytes = Span[UInt8](
-        ptr=data.unsafe_ptr().bitcast[UInt8](),
+        unsafe_ptr=data.unsafe_ptr().unsafe_bitcast[UInt8](),
         length=checked_byte_count(len(data), 4),
     )
     f.write_bytes(bytes)
@@ -181,47 +181,47 @@ def read_float32_span(
     var read_data = _read_exact_bytes(
         f, checked_byte_count(len(data), 4)
     )
-    var src = read_data.unsafe_ptr().bitcast[Float32]()
+    var src = read_data.unsafe_ptr().unsafe_bitcast[Float32]()
     for i in range(len(data)):
-        data[i] = src[i]
+        data[i] = src[unsafe_offset=i]
 
-def write_unsafe_pointer_uint8(mut f: FileHandle, ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
+def write_unsafe_pointer_uint8(mut f: FileHandle, ptr: Pointer[UInt8, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8](ptr=ptr, length=count)
+    var span = Span[UInt8](unsafe_ptr=ptr, length=count)
     f.write_bytes(span)
 
-def read_unsafe_pointer_uint8(mut f: FileHandle, mut ptr: UnsafePointer[UInt8, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_uint8(mut f: FileHandle, mut ptr: Pointer[UInt8, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = _read_exact_bytes(f, count)
     var src = read_data.unsafe_ptr()
     for i in range(count):
-        ptr[i] = src[i]
+        ptr[unsafe_offset=i] = src[unsafe_offset=i]
     _ = len(read_data)
 
-def write_unsafe_pointer_uint32(mut f: FileHandle, ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
+def write_unsafe_pointer_uint32(mut f: FileHandle, ptr: Pointer[UInt32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=count * 4)
+    var span = Span[UInt8](unsafe_ptr=ptr.unsafe_bitcast[UInt8](), length=count * 4)
     f.write_bytes(span)
 
-def read_unsafe_pointer_uint32(mut f: FileHandle, mut ptr: UnsafePointer[UInt32, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_uint32(mut f: FileHandle, mut ptr: Pointer[UInt32, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = _read_exact_bytes(f, checked_byte_count(count, 4))
-    var src = read_data.unsafe_ptr().bitcast[UInt32]()
+    var src = read_data.unsafe_ptr().unsafe_bitcast[UInt32]()
     for i in range(count):
-        ptr[i] = src[i]
+        ptr[unsafe_offset=i] = src[unsafe_offset=i]
     _ = len(read_data)
 
-def write_unsafe_pointer_int(mut f: FileHandle, ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
+def write_unsafe_pointer_int(mut f: FileHandle, ptr: Pointer[Int, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
-    var span = Span[UInt8](ptr=ptr.bitcast[UInt8](), length=count * 8)
+    var span = Span[UInt8](unsafe_ptr=ptr.unsafe_bitcast[UInt8](), length=count * 8)
     f.write_bytes(span)
 
-def read_unsafe_pointer_int(mut f: FileHandle, mut ptr: UnsafePointer[Int, MutUntrackedOrigin], count: Int) raises:
+def read_unsafe_pointer_int(mut f: FileHandle, mut ptr: Pointer[Int, MutUntrackedOrigin], count: Int) raises:
     if count == 0: return
     var read_data = _read_exact_bytes(f, checked_byte_count(count, 8))
-    var src = read_data.unsafe_ptr().bitcast[Int]()
+    var src = read_data.unsafe_ptr().unsafe_bitcast[Int]()
     for i in range(count):
-        ptr[i] = src[i]
+        ptr[unsafe_offset=i] = src[unsafe_offset=i]
     _ = len(read_data)
 
 # --- IndexFlat ---
@@ -234,13 +234,13 @@ def write_index_flat(mut f: FileHandle, index: IndexFlat) raises:
     var metric = 0
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
-    
+
     write_unsafe_pointer_float32(f, index.codes, index.capacity * index.d)
 
 def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
     var magic = read_int(f)
     if magic != MAGIC_FLAT: raise Error("Invalid magic for IndexFlat")
-    
+
     var d = read_int(f)
     _validate_vector_dimension(d)
     var ntotal = read_int(f)
@@ -248,17 +248,17 @@ def read_index_flat(mut f: FileHandle) raises -> IndexFlat:
     var capacity = read_int(f)
     check_size_limit(capacity, 1_000_000_000)
     var metric_int = read_int(f)
-    
+
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-        
+
     var index = IndexFlat(d, metric, initial_capacity=0)
     index.ntotal = ntotal
     _free_aligned(index.codes)
     index.capacity = capacity
     index.codes = _alloc_aligned(capacity * d)
     read_unsafe_pointer_float32(f, index.codes, capacity * d)
-        
+
     return index^
 
 def write_index_flat_sq8(mut f: FileHandle, index: IndexFlatSQ8) raises:
@@ -269,14 +269,14 @@ def write_index_flat_sq8(mut f: FileHandle, index: IndexFlatSQ8) raises:
     var metric = 0
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
-    
+
     # Write SQ8 params
     var float32_params = InlineArray[Float32, 3](uninitialized=True)
     float32_params[0] = index.global_min
     float32_params[1] = index.global_max
     float32_params[2] = index.scale
     write_float32_span(f, Span(float32_params))
-    
+
     # Write data
     if index.capacity > 0:
         write_unsafe_pointer_float32(f, index.codes_f32, index.capacity * index.d)
@@ -286,7 +286,7 @@ def write_index_flat_sq8(mut f: FileHandle, index: IndexFlatSQ8) raises:
 def read_index_flat_sq8(mut f: FileHandle) raises -> IndexFlatSQ8:
     var magic = read_int(f)
     if magic != MAGIC_FLAT_SQ8: raise Error("Invalid magic for IndexFlatSQ8")
-    
+
     var d = read_int(f)
     _validate_vector_dimension(d)
     var ntotal = read_int(f)
@@ -294,34 +294,34 @@ def read_index_flat_sq8(mut f: FileHandle) raises -> IndexFlatSQ8:
     var capacity = read_int(f)
     check_size_limit(capacity, 1_000_000_000)
     var metric_int = read_int(f)
-    
+
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-        
+
     var index = IndexFlatSQ8(d, metric, initial_capacity=0)
     index.ntotal = ntotal
     index.capacity = capacity
-    
+
     var float32_params = InlineArray[Float32, 3](uninitialized=True)
     var float32_params_span = Span[mut=True, Float32](float32_params)
     read_float32_span(f, float32_params_span)
     index.global_min = float32_params[0]
     index.global_max = float32_params[1]
     index.scale = float32_params[2]
-    
-    if Int(index.codes_f32) != 0: index.codes_f32.free()
-    if Int(index.codes_u8) != 0: index.codes_u8.free()
-    if Int(index.norms_u32) != 0: index.norms_u32.free()
-    
-    index.codes_f32 = alloc[Float32](capacity * d)
-    index.codes_u8 = alloc[UInt8](capacity * d)
-    index.norms_u32 = alloc[UInt32](capacity)
-    
+
+    if Int(index.codes_f32) != 0: index.codes_f32.unsafe_free()
+    if Int(index.codes_u8) != 0: index.codes_u8.unsafe_free()
+    if Int(index.norms_u32) != 0: index.norms_u32.unsafe_free()
+
+    index.codes_f32 = unsafe_alloc[Float32](capacity * d)
+    index.codes_u8 = unsafe_alloc[UInt8](capacity * d)
+    index.norms_u32 = unsafe_alloc[UInt32](capacity)
+
     if capacity > 0:
         read_unsafe_pointer_float32(f, index.codes_f32, capacity * d)
         read_unsafe_pointer_uint8(f, index.codes_u8, capacity * d)
         read_unsafe_pointer_uint32(f, index.norms_u32, capacity)
-        
+
     return index^
 
 # --- HNSWGraph and IndexHNSW ---
@@ -335,14 +335,14 @@ def write_hnsw_graph(mut f: FileHandle, graph: HNSWGraph) raises:
     write_int(f, graph.ntotal)
     write_int(f, graph.capacity)
     write_int(f, graph.neighbors_capacity)
-    
+
     write_unsafe_pointer_int(f, graph.levels, graph.capacity)
     write_unsafe_pointer_int(f, graph.offsets, graph.capacity + 1)
-    
+
     if graph.neighbors_capacity > 0:
-        var span_neighbors = Span[UInt8](ptr=graph.neighbors.bitcast[UInt8](), length=graph.neighbors_capacity * 4)
+        var span_neighbors = Span[UInt8](unsafe_ptr=graph.neighbors.unsafe_bitcast[UInt8](), length=graph.neighbors_capacity * 4)
         f.write_bytes(span_neighbors)
-    
+
     write_unsafe_pointer_int(f, graph.cum_nneighbor_per_level, 33)
 
 def read_hnsw_graph(mut f: FileHandle, mut graph: HNSWGraph) raises:
@@ -373,34 +373,34 @@ def read_hnsw_graph(mut f: FileHandle, mut graph: HNSWGraph) raises:
         )
     ):
         raise Error("HNSW graph entry point does not match its size.")
-    
+
     var capacity = read_int(f)
     check_size_limit(capacity, 1_000_000_000)
     var neighbors_capacity = read_int(f)
     check_size_limit(neighbors_capacity, 2_000_000_000)
-    
+
     if capacity > graph.capacity:
         graph.capacity = capacity
-        if Int(graph.levels) != 0: graph.levels.free()
-        if Int(graph.offsets) != 0: graph.offsets.free()
-        graph.levels = alloc[Int](capacity)
-        graph.offsets = alloc[Int](capacity + 1)
-        
+        if Int(graph.levels) != 0: graph.levels.unsafe_free()
+        if Int(graph.offsets) != 0: graph.offsets.unsafe_free()
+        graph.levels = unsafe_alloc[Int](capacity)
+        graph.offsets = unsafe_alloc[Int](capacity + 1)
+
     if neighbors_capacity > graph.neighbors_capacity:
         graph.neighbors_capacity = neighbors_capacity
-        if Int(graph.neighbors) != 0: graph.neighbors.free()
-        graph.neighbors = alloc[Int32](neighbors_capacity)
-        
+        if Int(graph.neighbors) != 0: graph.neighbors.unsafe_free()
+        graph.neighbors = unsafe_alloc[Int32](neighbors_capacity)
+
     read_unsafe_pointer_int(f, graph.levels, capacity)
     read_unsafe_pointer_int(f, graph.offsets, capacity + 1)
-    
+
     if neighbors_capacity > 0:
         var read_data = f.read_bytes(neighbors_capacity * 4)
-        var src = read_data.unsafe_ptr().bitcast[Int32]()
+        var src = read_data.unsafe_ptr().unsafe_bitcast[Int32]()
         for i in range(neighbors_capacity):
-            graph.neighbors[i] = src[i]
+            graph.neighbors[unsafe_offset=i] = src[unsafe_offset=i]
         _ = len(read_data)
-        
+
     read_unsafe_pointer_int(f, graph.cum_nneighbor_per_level, 33)
 
 def write_index_hnsw(mut f: FileHandle, index: IndexHNSW[IndexFlat]) raises:
@@ -411,24 +411,24 @@ def write_index_hnsw(mut f: FileHandle, index: IndexHNSW[IndexFlat]) raises:
     var metric = 0
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
-    
+
     write_index_flat(f, index.storage)
     write_hnsw_graph(f, index.hnsw)
 
 def read_index_hnsw(mut f: FileHandle) raises -> IndexHNSW[IndexFlat]:
     var magic = read_int(f)
     if magic != MAGIC_HNSW: raise Error("Invalid magic for IndexHNSW")
-    
+
     var d = read_int(f)
     _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
-    
+
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-        
+
     var storage = read_index_flat(f)
     var index = IndexHNSW[IndexFlat](storage^, d, metric, M=32)
     index.ntotal = ntotal
@@ -445,24 +445,24 @@ def write_index_hnsw_sq8(mut f: FileHandle, index: IndexHNSW[IndexFlatSQ8]) rais
     var metric = 0
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
-    
+
     write_index_flat_sq8(f, index.storage)
     write_hnsw_graph(f, index.hnsw)
 
 def read_index_hnsw_sq8(mut f: FileHandle) raises -> IndexHNSW[IndexFlatSQ8]:
     var magic = read_int(f)
     if magic != MAGIC_HNSW_SQ8: raise Error("Invalid magic for IndexHNSW SQ8")
-    
+
     var d = read_int(f)
     _validate_vector_dimension(d)
     var ntotal = read_int(f)
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
-    
+
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-        
+
     var storage = read_index_flat_sq8(f)
     var index = IndexHNSW[IndexFlatSQ8](storage^, d, metric, M=32)
     index.ntotal = ntotal
@@ -516,7 +516,7 @@ def read_index_flat_mmap(
         raise Error("Invalid memory-mapped IndexFlat code count.")
     var codes_bytes = checked_byte_count(codes_count, 4)
     _validate_mmap_region(codes_offset, codes_bytes, file_size)
-    _ = f.seek(UInt64(codes_offset + codes_bytes), SEEK_SET)
+    _ = f.seek(codes_offset + codes_bytes, SEEK_SET)
 
     var metric = (
         METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
@@ -527,7 +527,7 @@ def read_index_flat_mmap(
     _free_aligned(index.codes)
     index.ntotal = ntotal
     index.capacity = capacity
-    index.codes = UnsafePointer[Float32, MutUntrackedOrigin](
+    index.codes = Pointer[Float32, MutUntrackedOrigin](
         unsafe_from_address=codes_address
     )
     index._mapping = mapping^
@@ -613,7 +613,7 @@ def read_index_flat_sq8_mmap(
     _validate_mmap_region(f32_offset, f32_bytes, file_size)
     _validate_mmap_region(u8_offset, u8_count, file_size)
     _validate_mmap_region(norms_offset, norms_bytes, file_size)
-    _ = f.seek(UInt64(norms_offset + norms_bytes), SEEK_SET)
+    _ = f.seek(norms_offset + norms_bytes, SEEK_SET)
 
     var metric = (
         METRIC_INNER_PRODUCT if metric_int == 1 else METRIC_L2
@@ -621,21 +621,21 @@ def read_index_flat_sq8_mmap(
     var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
     var base = mapping.address
     var index = IndexFlatSQ8(d, metric, initial_capacity=0)
-    index.codes_f32.free()
-    index.codes_u8.free()
-    index.norms_u32.free()
+    index.codes_f32.unsafe_free()
+    index.codes_u8.unsafe_free()
+    index.norms_u32.unsafe_free()
     index.ntotal = ntotal
     index.capacity = capacity
     index.global_min = global_min
     index.global_max = global_max
     index.scale = scale
-    index.codes_f32 = UnsafePointer[Float32, MutUntrackedOrigin](
+    index.codes_f32 = Pointer[Float32, MutUntrackedOrigin](
         unsafe_from_address=base + f32_offset
     )
-    index.codes_u8 = UnsafePointer[UInt8, MutUntrackedOrigin](
+    index.codes_u8 = Pointer[UInt8, MutUntrackedOrigin](
         unsafe_from_address=base + u8_offset
     )
-    index.norms_u32 = UnsafePointer[UInt32, MutUntrackedOrigin](
+    index.norms_u32 = Pointer[UInt32, MutUntrackedOrigin](
         unsafe_from_address=base + norms_offset
     )
     index._mapping = mapping^
@@ -654,8 +654,8 @@ def write_hnsw_graph_mmap(
     if graph.ntotal > 0:
         var last_node = graph.ntotal - 1
         neighbors_count = (
-            graph.offsets[last_node]
-            + graph.cum_nneighbor_per_level[graph.levels[last_node] + 1]
+            graph.offsets[unsafe_offset=last_node]
+            + graph.cum_nneighbor_per_level[unsafe_offset=graph.levels[unsafe_offset=last_node] + 1]
         )
     var cumulative_count = 33
     var levels_offset = _align_mmap_offset(start + 17 * 8)
@@ -698,7 +698,7 @@ def write_hnsw_graph_mmap(
     if neighbors_count > 0:
         f.write_bytes(
             Span[UInt8](
-                ptr=graph.neighbors.bitcast[UInt8](),
+                unsafe_ptr=graph.neighbors.unsafe_bitcast[UInt8](),
                 length=neighbors_count * 4,
             )
         )
@@ -768,14 +768,14 @@ def read_hnsw_graph_mmap(
     _validate_mmap_region(
         cumulative_offset, cumulative_bytes, file_size
     )
-    _ = f.seek(UInt64(cumulative_offset + cumulative_bytes), SEEK_SET)
+    _ = f.seek(cumulative_offset + cumulative_bytes, SEEK_SET)
 
     var mapping = FileMemoryMap.map_read_only(f.handle, file_size)
     var base = mapping.address
-    graph.levels.free()
-    graph.offsets.free()
-    graph.neighbors.free()
-    graph.cum_nneighbor_per_level.free()
+    graph.levels.unsafe_free()
+    graph.offsets.unsafe_free()
+    graph.neighbors.unsafe_free()
+    graph.cum_nneighbor_per_level.unsafe_free()
     graph.M = M
     graph.efConstruction = ef_construction
     graph.efSearch = ef_search
@@ -784,16 +784,16 @@ def read_hnsw_graph_mmap(
     graph.ntotal = ntotal
     graph.capacity = capacity
     graph.neighbors_capacity = neighbors_capacity
-    graph.levels = UnsafePointer[Int, MutUntrackedOrigin](
+    graph.levels = Pointer[Int, MutUntrackedOrigin](
         unsafe_from_address=base + levels_offset
     )
-    graph.offsets = UnsafePointer[Int, MutUntrackedOrigin](
+    graph.offsets = Pointer[Int, MutUntrackedOrigin](
         unsafe_from_address=base + offsets_offset
     )
-    graph.neighbors = UnsafePointer[Int32, MutUntrackedOrigin](
+    graph.neighbors = Pointer[Int32, MutUntrackedOrigin](
         unsafe_from_address=base + neighbors_offset
     )
-    graph.cum_nneighbor_per_level = UnsafePointer[
+    graph.cum_nneighbor_per_level = Pointer[
         Int, MutUntrackedOrigin
     ](unsafe_from_address=base + cumulative_offset)
     graph._mapping = mapping^
@@ -904,40 +904,40 @@ def write_invlists(mut f: FileHandle, invlists: ArrayInvertedLists) raises:
     write_int(f, MAGIC_INVLISTS)
     write_int(f, invlists.nlist)
     write_int(f, invlists.code_size)
-    
+
     _ = Int(invlists.lists) # Alias analysis workaround
     for i in range(invlists.nlist):
-        write_int(f, invlists.lists[i].size)
-        write_int(f, invlists.lists[i].capacity)
+        write_int(f, invlists.lists[unsafe_offset=i].size)
+        write_int(f, invlists.lists[unsafe_offset=i].capacity)
 
-        write_unsafe_pointer_int(f, invlists.lists[i].ids, invlists.lists[i].size)
-        write_unsafe_pointer_uint8(f, invlists.lists[i].codes, invlists.lists[i].size * invlists.code_size)
+        write_unsafe_pointer_int(f, invlists.lists[unsafe_offset=i].ids, invlists.lists[unsafe_offset=i].size)
+        write_unsafe_pointer_uint8(f, invlists.lists[unsafe_offset=i].codes, invlists.lists[unsafe_offset=i].size * invlists.code_size)
 
 def read_invlists(mut f: FileHandle, mut invlists: ArrayInvertedLists) raises:
     var magic = read_int(f)
     if magic != MAGIC_INVLISTS: raise Error("Invalid magic for ArrayInvertedLists")
-    
+
     var nlist = read_int(f)
     check_size_limit(nlist, 1_000_000)
     var code_size = read_int(f)
     check_size_limit(code_size, 65536)
     if nlist != invlists.nlist or code_size != invlists.code_size:
         raise Error("Inverted-list shape does not match its index header.")
-    
+
     for i in range(nlist):
         var size = read_int(f)
         var capacity = read_int(f)
         check_size_limit(capacity, 1_000_000_000)
         check_size_limit(size, capacity)
 
-        
+
         invlists.resize(i, capacity)
         _ = Int(invlists.lists)
-        invlists.lists[i].size = size
-        
+        invlists.lists[unsafe_offset=i].size = size
+
         var list_codes = invlists.get_codes(i).unsafe_ptr()
         var list_ids = invlists.get_ids(i).unsafe_ptr()
-        
+
         read_unsafe_pointer_int(f, list_ids, size)
         read_unsafe_pointer_uint8(f, list_codes, size * code_size)
 
@@ -954,7 +954,7 @@ def write_pq(mut f: FileHandle, pq: ProductQuantizer) raises:
 def read_pq(mut f: FileHandle, mut pq: ProductQuantizer) raises:
     var magic = read_int(f)
     if magic != MAGIC_PQ: raise Error("Invalid magic for ProductQuantizer")
-    
+
     var d = read_int(f)
     check_size_limit(d, 65536)
     var M = read_int(f)
@@ -968,7 +968,7 @@ def read_pq(mut f: FileHandle, mut pq: ProductQuantizer) raises:
     if d != pq.d or M != pq.M or ksub != pq.ksub:
         raise Error("ProductQuantizer shape does not match its index header.")
     pq.is_trained = read_bool(f)
-    
+
     pq.centroids = List[Float32](
         unsafe_uninit_length=pq.M * pq.ksub * pq.dsub
     )
@@ -984,18 +984,18 @@ def write_index_ivf_flat(mut f: FileHandle, index: IndexIVFFlat[IndexFlat]) rais
     write_int(f, index.nprobe)
     write_int(f, index.ntotal)
     write_bool(f, index.is_trained)
-    
+
     var metric = 0
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
-    
+
     write_index_flat(f, index.quantizer)
     write_invlists(f, index.invlists)
 
 def read_index_ivf_flat(mut f: FileHandle) raises -> IndexIVFFlat[IndexFlat]:
     var magic = read_int(f)
     if magic != MAGIC_IVF_FLAT: raise Error("Invalid magic for IndexIVFFlat")
-    
+
     var d = read_int(f)
     _validate_vector_dimension(d)
     var nlist = read_int(f)
@@ -1006,16 +1006,16 @@ def read_index_ivf_flat(mut f: FileHandle) raises -> IndexIVFFlat[IndexFlat]:
     check_size_limit(ntotal, 1_000_000_000)
     var is_trained = read_bool(f)
     var metric_int = read_int(f)
-    
+
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-        
+
     var quantizer = read_index_flat(f)
     var index = IndexIVFFlat[IndexFlat](quantizer^, d, nlist, metric)
     index.nprobe = nprobe
     index.ntotal = ntotal
     index.is_trained = is_trained
-    
+
     read_invlists(f, index.invlists)
     return index^
 
@@ -1029,11 +1029,11 @@ def write_index_ivf_pq(mut f: FileHandle, index: IndexIVFPQ[IndexFlat]) raises:
     write_int(f, index.nprobe)
     write_int(f, index.ntotal)
     write_bool(f, index.is_trained)
-    
+
     var metric = 0
     if index.metric_type == METRIC_INNER_PRODUCT: metric = 1
     write_int(f, metric)
-    
+
     write_index_flat(f, index.quantizer)
     write_invlists(f, index.invlists)
     write_pq(f, index.pq)
@@ -1041,7 +1041,7 @@ def write_index_ivf_pq(mut f: FileHandle, index: IndexIVFPQ[IndexFlat]) raises:
 def read_index_ivf_pq(mut f: FileHandle) raises -> IndexIVFPQ[IndexFlat]:
     var magic = read_int(f)
     if magic != MAGIC_IVF_PQ: raise Error("Invalid magic for IndexIVFPQ")
-    
+
     var d = read_int(f)
     _validate_vector_dimension(d)
     var nlist = read_int(f)
@@ -1060,10 +1060,10 @@ def read_index_ivf_pq(mut f: FileHandle) raises -> IndexIVFPQ[IndexFlat]:
     var metric_int = read_int(f)
     if metric_int != 0 and metric_int != 1:
         raise Error("Invalid IndexIVFPQ metric.")
-    
+
     var metric = METRIC_L2
     if metric_int == 1: metric = METRIC_INNER_PRODUCT
-        
+
     var quantizer = read_index_flat(f)
     if (
         quantizer.d != d
@@ -1080,7 +1080,7 @@ def read_index_ivf_pq(mut f: FileHandle) raises -> IndexIVFPQ[IndexFlat]:
     index.nprobe = nprobe
     index.ntotal = ntotal
     index.is_trained = is_trained
-    
+
     read_invlists(f, index.invlists)
     read_pq(f, index.pq)
     if index.invlists.code_size != M:

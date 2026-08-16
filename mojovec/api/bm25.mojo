@@ -94,9 +94,9 @@ struct BM25Posting(Movable):
         self.internal_ids = List[Int]()
         self.frequencies = List[Int]()
 
-    def __init__(out self, *, deinit take: Self):
-        self.internal_ids = take.internal_ids^
-        self.frequencies = take.frequencies^
+    def __init__(out self, *, deinit move: Self):
+        self.internal_ids = move.internal_ids^
+        self.frequencies = move.frequencies^
 
     def add(mut self, internal_id: Int, frequency: Int):
         self.internal_ids.append(internal_id)
@@ -145,16 +145,16 @@ struct BM25Index(Movable):
         self._b = b
         self._analyzer = StandardBM25Analyzer()
 
-    def __init__(out self, *, deinit take: Self):
-        self._term_lookup = take._term_lookup^
-        self._postings = take._postings^
-        self._document_lengths = take._document_lengths^
-        self._active = take._active^
-        self._active_document_count = take._active_document_count
-        self._active_token_count = take._active_token_count
-        self._k1 = take._k1
-        self._b = take._b
-        self._analyzer = take._analyzer^
+    def __init__(out self, *, deinit move: Self):
+        self._term_lookup = move._term_lookup^
+        self._postings = move._postings^
+        self._document_lengths = move._document_lengths^
+        self._active = move._active^
+        self._active_document_count = move._active_document_count
+        self._active_token_count = move._active_token_count
+        self._k1 = move._k1
+        self._b = move._b
+        self._analyzer = move._analyzer^
 
     def active_document_count(self) -> Int:
         return self._active_document_count

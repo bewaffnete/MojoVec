@@ -44,12 +44,12 @@ struct MetadataValue(Movable, Copyable, Writable):
         self._float_value = 0.0
         self._bool_value = value
 
-    def __init__(out self, *, deinit take: Self):
-        self._kind = take._kind
-        self._string_value = take._string_value^
-        self._int_value = take._int_value
-        self._float_value = take._float_value
-        self._bool_value = take._bool_value
+    def __init__(out self, *, deinit move: Self):
+        self._kind = move._kind
+        self._string_value = move._string_value^
+        self._int_value = move._int_value
+        self._float_value = move._float_value
+        self._bool_value = move._bool_value
 
     def kind(self) -> Int:
         return self._kind
@@ -125,9 +125,9 @@ struct Metadata(Movable, Copyable, Writable):
         self._keys = List[String]()
         self._values = List[MetadataValue]()
 
-    def __init__(out self, *, deinit take: Self):
-        self._keys = take._keys^
-        self._values = take._values^
+    def __init__(out self, *, deinit move: Self):
+        self._keys = move._keys^
+        self._values = move._values^
 
     def copy(self) -> Metadata:
         var result = Metadata()

@@ -2,7 +2,7 @@
 
 from std.collections import Dict, List
 from std.memory import OwnedPointer
-from std.memory.span import Span
+from std.collections.span import Span
 from std.math import max, min
 from std.os import SEEK_CUR, SEEK_END, SEEK_SET
 
@@ -96,13 +96,13 @@ struct CollectionIVFPQ(Movable, Writable):
         self._user_ids = List[Int]()
         self._id_to_internal = Dict[Int, Int]()
 
-    def __init__(out self, *, deinit take: Self):
-        self._name = take._name^
-        self._dimension = take._dimension
-        self._metric_type = take._metric_type
-        self._ivfpq = take._ivfpq^
-        self._user_ids = take._user_ids^
-        self._id_to_internal = take._id_to_internal^
+    def __init__(out self, *, deinit move: Self):
+        self._name = move._name^
+        self._dimension = move._dimension
+        self._metric_type = move._metric_type
+        self._ivfpq = move._ivfpq^
+        self._user_ids = move._user_ids^
+        self._id_to_internal = move._id_to_internal^
 
     def write_to[W: Writer](self, mut writer: W):
         writer.write(
@@ -355,7 +355,7 @@ struct CollectionIVFPQ(Movable, Writable):
             if len(self._user_ids) > 0:
                 file.write_bytes(
                     Span[UInt8](
-                        ptr=self._user_ids.unsafe_ptr().bitcast[UInt8](),
+                        unsafe_ptr=self._user_ids.unsafe_ptr().unsafe_bitcast[UInt8](),
                         length=len(self._user_ids) * 8,
                     )
                 )
@@ -409,9 +409,9 @@ struct CollectionIVFPQ(Movable, Writable):
             var data = file.read_bytes(ids_bytes)
             if len(data) != ids_bytes:
                 raise Error("Unexpected end of IVF-PQ ID data.")
-            var source = data.unsafe_ptr().bitcast[Int]()
+            var source = data.unsafe_ptr().unsafe_bitcast[Int]()
             for index in range(num_ids):
-                ids.append(source[index])
+                ids.append(source[unsafe_offset=index])
             _ = len(data)
 
         var loaded_index = read_index_ivf_pq(file)

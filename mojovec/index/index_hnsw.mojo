@@ -7,10 +7,10 @@ from .hnsw_graph import HNSWGraph
 from .hnsw_visited import VisitedTable, VisitedTablePool
 from .index_flat import IndexFlat
 from .index_flat_sq8 import IndexFlatSQ8
-from std.algorithm import parallelize
+from max.algorithm import parallelize
 from std.ffi import external_call
-from std.memory.span import Span
-from std.memory import alloc
+from std.collections.span import Span
+from std.memory.alloc import unsafe_alloc
 from std.runtime.asyncrt import parallelism_level
 from std.sys.info import num_logical_cores
 from mojovec.core.validation import (
@@ -118,10 +118,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         ep_dist: Float32,
         ef: Int,
         level: Int,
-        vt: UnsafePointer[VisitedTable, MutUntrackedOrigin],
-        mut res_dist: UnsafePointer[Float32, origin1],
-        mut res_labels: UnsafePointer[Int32, origin2],
-        filter: UnsafePointer[UInt8, _],
+        vt: Pointer[VisitedTable, MutUntrackedOrigin],
+        mut res_dist: Pointer[Float32, origin1],
+        mut res_labels: Pointer[Int32, origin2],
+        filter: Pointer[UInt8, _],
     ) -> Int:
         var max_links = self.hnsw.M * 2 if level == 0 else self.hnsw.M
         
@@ -147,27 +147,27 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         var x_ptr = x.unsafe_ptr()
 
         var old_ntotal = self.ntotal
-        var pt_levels = alloc[Int](n)
+        var pt_levels = unsafe_alloc[Int](n)
 
         # Preallocate topology
         for i in range(n):
             var pt_id = old_ntotal + i
             var pt_level = self.hnsw.random_level()
-            pt_levels[i] = pt_level
+            pt_levels[unsafe_offset=i] = pt_level
 
             while pt_id >= self.hnsw.capacity:
                 self.hnsw._grow()
                 self.vt_pool.grow(self.hnsw.capacity)
 
-            self.hnsw.levels[pt_id] = pt_level
+            self.hnsw.levels[unsafe_offset=pt_id] = pt_level
 
-            var size_needed = self.hnsw.cum_nneighbor_per_level[pt_level + 1]
+            var size_needed = self.hnsw.cum_nneighbor_per_level[unsafe_offset=pt_level + 1]
             var current_offset = 0
             if pt_id > 0:
                 current_offset = (
-                    self.hnsw.offsets[pt_id - 1]
-                    + self.hnsw.cum_nneighbor_per_level[
-                        self.hnsw.levels[pt_id - 1] + 1
+                    self.hnsw.offsets[unsafe_offset=pt_id - 1]
+                    + self.hnsw.cum_nneighbor_per_level[unsafe_offset=
+                        self.hnsw.levels[unsafe_offset=pt_id - 1] + 1
                     ]
                 )
 
@@ -176,12 +176,12 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     current_offset + size_needed, current_offset
                 )
 
-            self.hnsw.offsets[pt_id] = current_offset
+            self.hnsw.offsets[unsafe_offset=pt_id] = current_offset
             self.hnsw.ntotal = pt_id + 1
 
         var start_idx = 0
         if old_ntotal == 0:
-            self.hnsw.max_level = pt_levels[0]
+            self.hnsw.max_level = pt_levels[unsafe_offset=0]
             self.hnsw.entry_point = 0
             start_idx = 1
 
@@ -189,16 +189,16 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         # where thread A sees thread B's node before thread B initializes it.
         for i in range(n):
             var pt_id = old_ntotal + i
-            for l in range(pt_levels[i] + 1):
+            for l in range(pt_levels[unsafe_offset=i] + 1):
                 self.hnsw.set_neighbors_len(pt_id, l, 0)
 
         @parameter
         def add_point(i: Int):
             var actual_i = i + start_idx
             var pt_id = old_ntotal + actual_i
-            var pt_level = pt_levels[actual_i]
+            var pt_level = pt_levels[unsafe_offset=actual_i]
 
-            var q_ptr = x_ptr + (actual_i * self.d)
+            var q_ptr = x_ptr.unsafe_offset(actual_i * self.d)
             var comp = self.storage.get_distance_computer(q_ptr)
 
             var ep_id = self.hnsw.entry_point
@@ -212,16 +212,16 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     var neighbors = neighbors_info.ptr
                     var max_links = neighbors_info.max_links
                     for j in range(max_links):
-                        var neigh = neighbors[j]
+                        var neigh = neighbors[unsafe_offset=j]
                         if neigh < 0:
                             break
-                            
+
                         # Pipeline prefetch the next neighbor's vector
                         if j + 1 < max_links:
-                            var next_neigh = neighbors[j + 1]
+                            var next_neigh = neighbors[unsafe_offset=j + 1]
                             if next_neigh >= 0:
                                 comp.prefetch_vector(Int(next_neigh))
-                                
+
                         var d = comp.distance(Int(neigh))
                         if d < ep_dist:
                             ep_dist = d
@@ -262,8 +262,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     var popped = max_heap_pop(W_dist, W_labels, w_sz)
                     w_sz -= 1
                     var idx = total_w - 1 - j
-                    W_sorted_dist[idx] = popped.dist
-                    W_sorted_labels[idx] = popped.label
+                    W_sorted_dist[unsafe_offset=idx] = popped.dist
+                    W_sorted_labels[unsafe_offset=idx] = popped.label
 
                 var M_l = self.hnsw.M
                 if level == 0:
@@ -274,23 +274,23 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                 for j in range(total_w):
                     if return_size >= M_l:
                         break
-                    var c_id = Int(W_sorted_labels[j])
-                    var c_dist = W_sorted_dist[j]
+                    var c_id = Int(W_sorted_labels[unsafe_offset=j])
+                    var c_dist = W_sorted_dist[unsafe_offset=j]
                     var keep = True
                     for r in range(return_size):
-                        var e_id = Int(W_sorted_labels[r])
+                        var e_id = Int(W_sorted_labels[unsafe_offset=r])
                         var e_c_dist = comp.symmetric_distance(c_id, e_id)
                         if e_c_dist < c_dist:
                             keep = False
                             break
                     if keep:
-                        W_sorted_labels[return_size] = Int32(c_id)
-                        W_sorted_dist[return_size] = c_dist
+                        W_sorted_labels[unsafe_offset=return_size] = Int32(c_id)
+                        W_sorted_dist[unsafe_offset=return_size] = c_dist
                         return_size += 1
 
                 # Add links from pt_id to neighbors
                 for j in range(return_size):
-                    var n_id = Int(W_sorted_labels[j])
+                    var n_id = Int(W_sorted_labels[unsafe_offset=j])
                     self.hnsw.add_link(comp, pt_id, n_id, level, vt)
 
                     var n_comp = self.storage.get_distance_computer(
@@ -301,8 +301,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                 # The entry point for the next level is the closest in W (which is index 0)
 
                 if total_w > 0:
-                    ep_id = Int(W_sorted_labels[0])
-                    ep_dist = W_sorted_dist[0]
+                    ep_id = Int(W_sorted_labels[unsafe_offset=0])
+                    ep_dist = W_sorted_dist[unsafe_offset=0]
 
             self.vt_pool.release(vt_id)
 
@@ -310,11 +310,11 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
 
         # Update entry point globally
         for i in range(n):
-            if pt_levels[i] > self.hnsw.max_level:
-                self.hnsw.max_level = pt_levels[i]
+            if pt_levels[unsafe_offset=i] > self.hnsw.max_level:
+                self.hnsw.max_level = pt_levels[unsafe_offset=i]
                 self.hnsw.entry_point = old_ntotal + i
 
-        pt_levels.free()
+        pt_levels.unsafe_free()
         self.ntotal += n
 
     def search(
@@ -330,8 +330,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             var labels_ptr = labels.unsafe_ptr()
             var distances_ptr = distances.unsafe_ptr()
             for i in range(n * k):
-                labels_ptr[i] = -1
-                distances_ptr[i] = 0.0
+                labels_ptr[unsafe_offset=i] = -1
+                distances_ptr[unsafe_offset=i] = 0.0
             return
 
         var empty_filter = Span[UInt8, MutUntrackedOrigin]()
@@ -351,8 +351,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             var labels_ptr = labels.unsafe_ptr()
             var distances_ptr = distances.unsafe_ptr()
             for i in range(n * k):
-                labels_ptr[i] = -1
-                distances_ptr[i] = 0.0
+                labels_ptr[unsafe_offset=i] = -1
+                distances_ptr[unsafe_offset=i] = 0.0
             return
 
         if len(filter) > 0:
@@ -372,10 +372,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         stride: Int,
         n: Int,
         k: Int,
-        x_ptr: UnsafePointer[Float32, x_origin],
-        distances_ptr: UnsafePointer[Float32, distances_origin],
-        labels_ptr: UnsafePointer[Int, labels_origin],
-        filter_ptr: UnsafePointer[UInt8, filter_origin],
+        x_ptr: Pointer[Float32, x_origin],
+        distances_ptr: Pointer[Float32, distances_origin],
+        labels_ptr: Pointer[Int, labels_origin],
+        filter_ptr: Pointer[UInt8, filter_origin],
     ):
         var ef = self.hnsw.efSearch
         if ef < k:
@@ -391,10 +391,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             var W_labels = w_labels_array.unsafe_ptr()
 
             for j in range(k):
-                distances_ptr[i * k + j] = -1.0
-                labels_ptr[i * k + j] = -1
+                distances_ptr[unsafe_offset=i * k + j] = -1.0
+                labels_ptr[unsafe_offset=i * k + j] = -1
 
-            var q_ptr = x_ptr + (i * self.d)
+            var q_ptr = x_ptr.unsafe_offset(i * self.d)
             var comp = self.storage.get_distance_computer(q_ptr)
 
             var ep_id = self.hnsw.entry_point
@@ -409,16 +409,16 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     var neighbors = neighbors_info.ptr
                     var max_links = neighbors_info.max_links
                     for j in range(max_links):
-                        var neigh = neighbors[j]
+                        var neigh = neighbors[unsafe_offset=j]
                         if neigh < 0:
                             break
-                            
+
                         # Pipeline prefetch the next neighbor's vector
                         if j + 1 < max_links:
-                            var next_neigh = neighbors[j + 1]
+                            var next_neigh = neighbors[unsafe_offset=j + 1]
                             if next_neigh >= 0:
                                 comp.prefetch_vector(Int(next_neigh))
-                                
+
                         var d = comp.distance(Int(neigh))
                         if d < ep_dist:
                             ep_dist = d
@@ -435,8 +435,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             # Float32 vectors. This is equivalent to FAISS IndexRefineFlat
             # with k_factor=2, but is automatic because SQ8 already owns the
             # original vectors.
-            var res_dist_ptr = distances_ptr + (i * k)
-            var res_labels_ptr = labels_ptr + (i * k)
+            var res_dist_ptr = distances_ptr.unsafe_offset(i * k)
+            var res_labels_ptr = labels_ptr.unsafe_offset(i * k)
 
             var candidate_count = k
             if not comp.is_exact():
@@ -451,7 +451,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                 # max-heap, then pop it backwards to produce ascending order.
                 var result_count = 0
                 for j in range(W_size):
-                    var label = Int(W_labels[j])
+                    var label = Int(W_labels[unsafe_offset=j])
                     var db_f32 = self.storage.get_vector(label)
                     var exact_dist: Float32
                     if self.metric_type == METRIC_L2:
@@ -472,7 +472,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                             label,
                         )
                         result_count += 1
-                    elif exact_dist < res_dist_ptr[0]:
+                    elif exact_dist < res_dist_ptr[unsafe_offset=0]:
                         max_heap_replace_top(
                             res_dist_ptr,
                             res_labels_ptr,
@@ -488,12 +488,12 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     )
                     heap_size -= 1
                     var idx = result_count - 1 - j
-                    res_dist_ptr[idx] = popped.dist
-                    res_labels_ptr[idx] = popped.label
+                    res_dist_ptr[unsafe_offset=idx] = popped.dist
+                    res_labels_ptr[unsafe_offset=idx] = popped.label
 
                 for j in range(result_count, k):
-                    res_dist_ptr[j] = 0.0
-                    res_labels_ptr[j] = -1
+                    res_dist_ptr[unsafe_offset=j] = 0.0
+                    res_labels_ptr[unsafe_offset=j] = -1
             else:
                 var result_count = W_size
                 for j in range(result_count):
@@ -502,17 +502,17 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     )
                     W_size -= 1
                     var idx = result_count - 1 - j
-                    res_dist_ptr[idx] = popped.dist
-                    res_labels_ptr[idx] = Int(popped.label)
+                    res_dist_ptr[unsafe_offset=idx] = popped.dist
+                    res_labels_ptr[unsafe_offset=idx] = Int(popped.label)
 
                 for j in range(result_count, k):
-                    res_dist_ptr[j] = 0.0
-                    res_labels_ptr[j] = -1
+                    res_dist_ptr[unsafe_offset=j] = 0.0
+                    res_labels_ptr[unsafe_offset=j] = -1
 
             if self.metric_type == METRIC_INNER_PRODUCT:
                 for j in range(k):
-                    if res_labels_ptr[j] != -1:
-                        res_dist_ptr[j] = -res_dist_ptr[j]
+                    if res_labels_ptr[unsafe_offset=j] != -1:
+                        res_dist_ptr[unsafe_offset=j] = -res_dist_ptr[unsafe_offset=j]
 
             i += stride
 
@@ -545,9 +545,9 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             and native_workers > runtime_workers
             and (storage_kind == 0 or storage_kind == 1)
         ):
-            var threads = alloc[UInt](native_workers)
-            var contexts = alloc[HNSWPThreadContext](native_workers)
-            var self_address = Int(UnsafePointer(to=self))
+            var threads = unsafe_alloc[UInt](native_workers)
+            var contexts = unsafe_alloc[HNSWPThreadContext](native_workers)
+            var self_address = Int(Pointer(to=self))
 
             for worker_id in range(native_workers):
                 var context = HNSWPThreadContext(
@@ -563,18 +563,18 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     storage_kind,
                     HAS_FILTER,
                 )
-                (contexts + worker_id).init_pointee_move(context^)
-                threads[worker_id] = 0
+                contexts.unsafe_offset(worker_id).unsafe_write(context^)
+                threads[unsafe_offset=worker_id] = 0
 
             for worker_id in range(1, native_workers):
                 var status = external_call["pthread_create", Int](
-                    threads + worker_id,
+                    threads.unsafe_offset(worker_id),
                     Int(0),
                     mojovec_hnsw_pthread_worker,
-                    Int(contexts + worker_id),
+                    Int(contexts.unsafe_offset(worker_id)),
                 )
                 if status != 0:
-                    threads[worker_id] = 0
+                    threads[unsafe_offset=worker_id] = 0
 
             self._search_range[HAS_FILTER](
                 0,
@@ -588,7 +588,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             )
 
             for worker_id in range(1, native_workers):
-                if threads[worker_id] == 0:
+                if threads[unsafe_offset=worker_id] == 0:
                     self._search_range[HAS_FILTER](
                         worker_id,
                         native_workers,
@@ -601,11 +601,11 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     )
                 else:
                     _ = external_call["pthread_join", Int](
-                        threads[worker_id], Int(0)
+                        threads[unsafe_offset=worker_id], Int(0)
                     )
 
-            contexts.free()
-            threads.free()
+            contexts.unsafe_free()
+            threads.unsafe_free()
             return
 
         # Give each parallel task exclusive ownership of one visited table for
@@ -631,24 +631,24 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
 
 def mojovec_hnsw_pthread_worker(context_address: Int) abi("C") -> Int:
     """Runs one strided HNSW query range on a native CPU thread."""
-    var context = UnsafePointer[
+    var context = Pointer[
         HNSWPThreadContext, MutUntrackedOrigin
     ](unsafe_from_address=context_address)
-    var queries = UnsafePointer[
+    var queries = Pointer[
         Float32, MutUntrackedOrigin
     ](unsafe_from_address=context[].queries_address)
-    var distances = UnsafePointer[
+    var distances = Pointer[
         Float32, MutUntrackedOrigin
     ](unsafe_from_address=context[].distances_address)
-    var labels = UnsafePointer[
+    var labels = Pointer[
         Int, MutUntrackedOrigin
     ](unsafe_from_address=context[].labels_address)
-    var filter = UnsafePointer[
+    var filter = Pointer[
         UInt8, MutUntrackedOrigin
     ](unsafe_from_address=context[].filter_address)
 
     if context[].storage_kind == 0:
-        var index = UnsafePointer[
+        var index = Pointer[
             IndexHNSW[IndexFlat], MutUntrackedOrigin
         ](unsafe_from_address=context[].index_address)
         if context[].has_filter:
@@ -674,7 +674,7 @@ def mojovec_hnsw_pthread_worker(context_address: Int) abi("C") -> Int:
                 filter,
             )
     else:
-        var index = UnsafePointer[
+        var index = Pointer[
             IndexHNSW[IndexFlatSQ8], MutUntrackedOrigin
         ](unsafe_from_address=context[].index_address)
         if context[].has_filter:

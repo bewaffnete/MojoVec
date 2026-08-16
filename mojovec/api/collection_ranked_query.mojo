@@ -1,7 +1,7 @@
 """BM25 and reciprocal-rank-fusion query execution for Collection."""
 
 from std.collections import Dict, List
-from std.memory.span import Span
+from std.collections.span import Span
 
 from mojovec.api.bm25 import BM25Index
 from mojovec.api.collection_results import _build_ranked_query_results
@@ -110,7 +110,7 @@ def _query_hybrid_index(
         unsafe_uninit_length=candidate_storage_size
     )
     var queries = Span[Float32](
-        ptr=query_embeddings.unsafe_ptr(), length=len(query_embeddings)
+        unsafe_ptr=query_embeddings.unsafe_ptr(), length=len(query_embeddings)
     )
     var vector_id_span = Span[mut=True, Int](vector_ids)
     var vector_distance_span = Span[mut=True, Float32](vector_distances)

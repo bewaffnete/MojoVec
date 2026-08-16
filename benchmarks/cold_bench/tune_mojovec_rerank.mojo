@@ -1,6 +1,6 @@
 from std.collections import List
-from std.memory import alloc
-from std.memory.span import Span
+from std.memory.alloc import unsafe_alloc
+from std.collections.span import Span
 from std.time import perf_counter_ns
 from mojovec import Collection
 
@@ -18,7 +18,7 @@ def main() raises:
     comptime output_capacity = 128
     comptime k = 10
 
-    var collection = Collection.load(
+    var collection = Collection.unsafe_load(
         "benchmarks/cold_bench/mojovec_hnsw_sq8_1m.mojovec"
     )
     var query_data = load_bytes(
@@ -27,19 +27,19 @@ def main() raises:
     var ground_truth_data = load_bytes(
         "benchmarks/data/sift1m/sift_groundtruth.ivecs"
     )
-    var source = query_data.unsafe_ptr().bitcast[Float32]()
-    var ground_truth = ground_truth_data.unsafe_ptr().bitcast[Int32]()
+    var source = query_data.unsafe_ptr().unsafe_bitcast[Float32]()
+    var ground_truth = ground_truth_data.unsafe_ptr().unsafe_bitcast[Int32]()
     var queries = List[Float32](capacity=query_count * dimension)
     for i in range(query_count):
         var offset = i * (dimension + 1) + 1
         for j in range(dimension):
             queries.append(source[offset + j])
     var query_span = Span[Float32](
-        ptr=queries.unsafe_ptr(), length=len(queries)
+        unsafe_ptr=queries.unsafe_ptr(), length=len(queries)
     )
 
-    var distance_storage = alloc[Float32](query_count * output_capacity)
-    var label_storage = alloc[Int](query_count * output_capacity)
+    var distance_storage = unsafe_alloc[Float32](query_count * output_capacity)
+    var label_storage = unsafe_alloc[Int](query_count * output_capacity)
     var ef_values = List[Int]()
     ef_values.append(96)
     var rerank_values = List[Int]()
@@ -58,10 +58,10 @@ def main() raises:
             if rerank_k > ef:
                 continue
             var distances = Span[mut=True, Float32](
-                ptr=distance_storage, length=query_count * rerank_k
+                unsafe_ptr=distance_storage, length=query_count * rerank_k
             )
             var labels = Span[mut=True, Int](
-                ptr=label_storage, length=query_count * rerank_k
+                unsafe_ptr=label_storage, length=query_count * rerank_k
             )
             var started = perf_counter_ns()
             collection._query_into(
@@ -97,5 +97,5 @@ def main() raises:
                 + String(recall)
             )
 
-    distance_storage.free()
-    label_storage.free()
+    distance_storage.unsafe_free()
+    label_storage.unsafe_free()

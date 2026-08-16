@@ -17,13 +17,13 @@ def load_fvecs(
 ) raises -> List[Float32]:
     """Loads flattened vectors from the SIFT1M .fvecs format."""
     var data = _read_bytes(path)
-    var source = data.unsafe_ptr().bitcast[Float32]()
+    var source = data.unsafe_ptr().unsafe_bitcast[Float32]()
     var vectors = List[Float32](capacity=vector_count * dimension)
 
     for vector_index in range(vector_count):
         var source_offset = vector_index * (dimension + 1) + 1
         for component in range(dimension):
-            vectors.append(source[source_offset + component])
+            vectors.append(source[unsafe_offset=source_offset + component])
 
     _ = len(data)
     return vectors^
@@ -37,13 +37,13 @@ def load_ground_truth(
     """Loads the first k neighbors per query from SIFT1M .ivecs."""
     comptime stored_neighbors = 100
     var data = _read_bytes(path)
-    var source = data.unsafe_ptr().bitcast[Int32]()
+    var source = data.unsafe_ptr().unsafe_bitcast[Int32]()
     var ground_truth = List[Int](capacity=query_count * k)
 
     for query_index in range(query_count):
         var source_offset = query_index * (stored_neighbors + 1) + 1
         for neighbor in range(k):
-            ground_truth.append(Int(source[source_offset + neighbor]))
+            ground_truth.append(Int(source[unsafe_offset=source_offset + neighbor]))
 
     _ = len(data)
     return ground_truth^

@@ -1,8 +1,8 @@
 from std.time import perf_counter_ns
-from std.memory import alloc
+from std.memory.alloc import unsafe_alloc
 from mojovec import Client
 from std.collections import List
-from std.memory.span import Span
+from std.collections.span import Span
 
 
 def load_bin_data(path: String) raises -> List[UInt8]:
@@ -28,9 +28,9 @@ def main() raises:
         "benchmarks/data/sift1m/sift_groundtruth.ivecs"
     )
 
-    var db_ptr = db_data.unsafe_ptr().bitcast[Float32]()
-    var queries_ptr = queries_data.unsafe_ptr().bitcast[Float32]()
-    var gt = gt_data.unsafe_ptr().bitcast[Int32]()
+    var db_ptr = db_data.unsafe_ptr().unsafe_bitcast[Float32]()
+    var queries_ptr = queries_data.unsafe_ptr().unsafe_bitcast[Float32]()
+    var gt = gt_data.unsafe_ptr().unsafe_bitcast[Int32]()
 
     # Convert pointer data to List[Float32] and List[Int] for new API
     var db_list = List[Float32](capacity=n * d)
@@ -75,16 +75,16 @@ def main() raises:
         var ef = ef_list[i]
         collection.set_ef_search(ef)
         var num_queries = q
-        var dist_ptr = alloc[Float32](num_queries * 10)
-        var labels_ptr = alloc[Int](num_queries * 10)
+        var dist_ptr = unsafe_alloc[Float32](num_queries * 10)
+        var labels_ptr = unsafe_alloc[Int](num_queries * 10)
         var query_span = Span[Float32](
-            ptr=queries_list.unsafe_ptr(), length=len(queries_list)
+            unsafe_ptr=queries_list.unsafe_ptr(), length=len(queries_list)
         )
         var distance_span = Span[mut=True, Float32](
-            ptr=dist_ptr, length=num_queries * k
+            unsafe_ptr=dist_ptr, length=num_queries * k
         )
         var label_span = Span[mut=True, Int](
-            ptr=labels_ptr, length=num_queries * k
+            unsafe_ptr=labels_ptr, length=num_queries * k
         )
 
         # warmup
@@ -121,5 +121,5 @@ def main() raises:
             + String(recall)
         )
 
-        dist_ptr.free()
-        labels_ptr.free()
+        dist_ptr.unsafe_free()
+        labels_ptr.unsafe_free()

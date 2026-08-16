@@ -9,7 +9,7 @@ trait Index:
     def add(mut self, x: Span[Float32, _]):
         """
         Adds multiple vectors to the index.
-        
+
         Args:
             x: A safe Span pointing to the flattened vectors to add.
         """
@@ -21,7 +21,7 @@ trait Index:
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
         """
         Searches for the `k` nearest neighbors for the query vectors.
-        
+
         Args:
             x: A safe Span pointing to the flattened query vectors.
             k: The number of nearest neighbors to retrieve per query.
@@ -31,14 +31,14 @@ trait Index:
         """
         ...
 
-trait QuantizerTrait(Movable, ImplicitlyDeletable):
+trait QuantizerTrait(Movable, Deinitable):
     """
     Defines the interface for a quantizer capable of encoding and decoding vectors.
     """
     def add(mut self, x: Span[Float32, _]):
         """
         Adds multiple vectors to the quantizer.
-        
+
         Args:
             x: A safe Span pointing to the flattened vectors to add.
         """
@@ -50,7 +50,7 @@ trait QuantizerTrait(Movable, ImplicitlyDeletable):
     def search(self, x: Span[Float32, _], k: Int, mut distances: Span[mut=True, Float32, _], mut labels: Span[mut=True, Int, _], filter: Span[UInt8, _]):
         """
         Searches for the `k` nearest neighbors within the quantized vectors.
-        
+
         Args:
             x: A safe Span pointing to the flattened query vectors.
             k: The number of nearest neighbors to retrieve.
@@ -63,10 +63,10 @@ trait QuantizerTrait(Movable, ImplicitlyDeletable):
     def get_vector_span(self, id: Int) -> Span[Float32, MutUntrackedOrigin]:
         """
         Retrieves a vector by its ID.
-        
+
         Args:
             id: The unique identifier of the vector.
-            
+
         Returns:
             A borrowed view of the corresponding vector.
         """

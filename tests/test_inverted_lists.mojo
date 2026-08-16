@@ -1,6 +1,6 @@
-from std.memory.span import Span
+from std.collections.span import Span
 from mojovec.storage.inverted_lists import ArrayInvertedLists
-from std.memory import alloc
+from std.memory.alloc import unsafe_alloc
 
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
 
@@ -11,18 +11,18 @@ def test_inverted_lists_crud() raises:
     var invlists = ArrayInvertedLists(nlist, code_size)
     
     # Add initial items
-    var ids = alloc[Int](2)
-    ids[0] = 100
-    ids[1] = 101
+    var ids = unsafe_alloc[Int](2)
+    ids[unsafe_offset=0] = 100
+    ids[unsafe_offset=1] = 101
     
-    var codes = alloc[UInt8](8)
+    var codes = unsafe_alloc[UInt8](8)
     for i in range(8):
-        codes[i] = UInt8(i)
+        codes[unsafe_offset=i] = UInt8(i)
         
     invlists.add_entries(
         5,
-        Span[Int, MutUntrackedOrigin](ptr=ids, length=2),
-        Span[UInt8, MutUntrackedOrigin](ptr=codes, length=8),
+        Span[Int, MutUntrackedOrigin](unsafe_ptr=ids, length=2),
+        Span[UInt8, MutUntrackedOrigin](unsafe_ptr=codes, length=8),
     )
     
     assert_equal(invlists.list_size(5), 2)
@@ -35,20 +35,20 @@ def test_inverted_lists_crud() raises:
         
     # Test capacity expansion without data loss
     var large_n = 2000
-    var large_ids = alloc[Int](large_n)
-    var large_codes = alloc[UInt8](large_n * code_size)
+    var large_ids = unsafe_alloc[Int](large_n)
+    var large_codes = unsafe_alloc[UInt8](large_n * code_size)
     
     for i in range(large_n):
-        large_ids[i] = i * 10
+        large_ids[unsafe_offset=i] = i * 10
         for j in range(code_size):
-            large_codes[i * code_size + j] = UInt8(j)
+            large_codes[unsafe_offset=i * code_size + j] = UInt8(j)
             
     # Add large number of entries to list 5, triggering resize
     invlists.add_entries(
         5,
-        Span[Int, MutUntrackedOrigin](ptr=large_ids, length=large_n),
+        Span[Int, MutUntrackedOrigin](unsafe_ptr=large_ids, length=large_n),
         Span[UInt8, MutUntrackedOrigin](
-            ptr=large_codes, length=large_n * code_size
+            unsafe_ptr=large_codes, length=large_n * code_size
         ),
     )
     
@@ -67,10 +67,10 @@ def test_inverted_lists_crud() raises:
     
     _ = invlists.list_size(0) # Keep invlists alive
     
-    ids.free()
-    codes.free()
-    large_ids.free()
-    large_codes.free()
+    ids.unsafe_free()
+    codes.unsafe_free()
+    large_ids.unsafe_free()
+    large_codes.unsafe_free()
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()

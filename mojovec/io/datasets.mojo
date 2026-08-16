@@ -58,14 +58,14 @@ def _read_dataset_file(path: String) raises -> List[UInt8]:
 def _read_i32(data: List[UInt8], offset: Int) raises -> Int:
     if offset < 0 or offset % 4 != 0 or offset > len(data) - 4:
         raise Error("Unexpected end of dataset file.")
-    return Int((data.unsafe_ptr() + offset).bitcast[Int32]()[0])
+    return Int(data.unsafe_ptr().unsafe_offset(offset).unsafe_bitcast[Int32]()[unsafe_offset=0])
 
 
 @always_inline
 def _read_f32(data: List[UInt8], offset: Int) raises -> Float32:
     if offset < 0 or offset % 4 != 0 or offset > len(data) - 4:
         raise Error("Unexpected end of dataset file.")
-    return (data.unsafe_ptr() + offset).bitcast[Float32]()[0]
+    return data.unsafe_ptr().unsafe_offset(offset).unsafe_bitcast[Float32]()[unsafe_offset=0]
 
 
 def _validate_binary_shape(
