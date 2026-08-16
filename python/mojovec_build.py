@@ -49,6 +49,7 @@ class MojoBuildExt(build_ext):
             return [
                 package_directory / "_avx2" / "_native.so",
                 package_directory / "_avx512" / "_native.so",
+                package_directory / "_native.so",
             ]
         return [package_directory / "_native.so"]
 
@@ -83,9 +84,11 @@ class MojoBuildExt(build_ext):
         if _is_linux_x86_64():
             # x86-64-v3 is the portable AVX2 baseline. x86-64-v4 adds the
             # complete AVX-512 subset selected by mojovec._dispatch.
-            avx2_output, avx512_output = self._native_outputs()
+            avx2_output, avx512_output, fallback_output = self._native_outputs()
             self._compile(avx2_output, "x86-64-v3")
             self._compile(avx512_output, "x86-64-v4")
+            import shutil
+            shutil.copy2(avx2_output, fallback_output)
             return
         self._compile(self._native_outputs()[0])
 
