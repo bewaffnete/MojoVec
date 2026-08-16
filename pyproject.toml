@@ -41,7 +41,9 @@ include-package-data = true
 version = { attr = "mojovec._version.__version__" }
 
 [tool.setuptools.package-data]
-mojovec = ["py.typed", ".dylibs/*.dylib", ".libs/*.so*"]
+mojovec = ["py.typed", ".dylibs/*.dylib", ".libs/*.so*", "*.so*"]
+"mojovec._avx2" = ["*.so*"]
+"mojovec._avx512" = ["*.so*"]
 
 [tool.setuptools.cmdclass]
 build_ext = "mojovec_build.MojoBuildExt"

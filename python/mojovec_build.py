@@ -81,16 +81,31 @@ class MojoBuildExt(build_ext):
         subprocess.check_call(command, cwd=PROJECT_ROOT)
 
     def build_extension(self, ext: Extension) -> None:
+        import shutil
         if _is_linux_x86_64():
             # x86-64-v3 is the portable AVX2 baseline. x86-64-v4 adds the
             # complete AVX-512 subset selected by mojovec._dispatch.
             avx2_output, avx512_output, fallback_output = self._native_outputs()
             self._compile(avx2_output, "x86-64-v3")
             self._compile(avx512_output, "x86-64-v4")
-            import shutil
             shutil.copy2(avx2_output, fallback_output)
+
+            # Copy to python/ source directory so editable installs work seamlessly
+            src_avx2 = PYTHON_ROOT / "mojovec" / "_avx2" / "_native.so"
+            src_avx512 = PYTHON_ROOT / "mojovec" / "_avx512" / "_native.so"
+            src_fallback = PYTHON_ROOT / "mojovec" / "_native.so"
+            src_avx2.parent.mkdir(parents=True, exist_ok=True)
+            src_avx512.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(avx2_output, src_avx2)
+            shutil.copy2(avx512_output, src_avx512)
+            shutil.copy2(fallback_output, src_fallback)
             return
-        self._compile(self._native_outputs()[0])
+
+        out = self._native_outputs()[0]
+        self._compile(out)
+        src_native = PYTHON_ROOT / "mojovec" / "_native.so"
+        src_native.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(out, src_native)
 
     def get_outputs(self) -> list[str]:
         return [str(path) for path in self._native_outputs()]
