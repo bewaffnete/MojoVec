@@ -15,7 +15,7 @@ from setuptools.command.build_ext import build_ext
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PYTHON_ROOT = PROJECT_ROOT / "python"
-MOJO_SOURCE = PROJECT_ROOT / "python_native" / "mojovec_python.mojo"
+MOJO_SOURCE = PYTHON_ROOT / "native" / "mojovec_python.mojo"
 
 if sys.platform == "darwin":
     # Apple Silicon starts at macOS 11. Do not inherit the runner's newer OS

@@ -51,4 +51,4 @@ bdist_wheel = "mojovec_build.MojoBdistWheel"
 
 [[tool.setuptools.ext-modules]]
 name = "mojovec._native"
-sources = ["python_native/mojovec_python.mojo"]
+sources = ["python/native/mojovec_python.mojo"]
