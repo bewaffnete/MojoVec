@@ -33,7 +33,7 @@ for test_file in tests/*.mojo; do
     fi
 
     echo -e "${BOLD}Running ${test_file}...${NC}"
-    if mojo run -I . "$test_file"; then
+    if mojo -I . "$test_file"; then
         echo -e "${GREEN}✓ PASS: ${test_file}${NC}\n"
         PASSED=$((PASSED + 1))
     else

@@ -13,11 +13,6 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  MAX_VERSION: 26.1.0
-  PIP_CONSTRAINT: ${{ github.workspace }}/.github/constraints/ci.txt
-  MALLOC_CHECK_: "3"
-
 jobs:
   mojo:
     name: Mojo tests and package (${{ matrix.os }})
@@ -36,138 +31,42 @@ jobs:
         uses: prefix-dev/setup-pixi@v0.8.1
         with:
           pixi-version: v0.39.0
-          run-install: false
-
-      - name: Install Mojo
-        run: |
-          pixi global install "max==$MAX_VERSION" \
-            -c https://conda.modular.com/max \
-            -c conda-forge
-          pixi global add --environment default numpy
-          echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
-
-          mojo_python_library="$(find "$HOME/.pixi/envs/default/lib" \
-            -maxdepth 1 -type f \
-            \( -name 'libpython*.dylib' -o -name 'libpython*.so*' \) \
-            -print -quit)"
-          if [ -z "$mojo_python_library" ]; then
-            echo "Unable to find the Pixi Mojo environment's shared libpython" >&2
-            exit 1
-          fi
-          mojo_python_site_packages="$(
-            "$HOME/.pixi/envs/default/bin/python" -c \
-              'import site; print(site.getsitepackages()[0])'
-          )"
-          echo "MOJO_PYTHON_LIBRARY=$mojo_python_library" >> "$GITHUB_ENV"
-          echo "PYTHONPATH=$GITHUB_WORKSPACE/python:$mojo_python_site_packages" \
-            >> "$GITHUB_ENV"
+          run-install: true
 
       - name: Build precompiled package
-        run: |
-          mkdir -p dist
-          mojo precompile mojovec -o dist/mojovec.mojoc
+        run: pixi run build-mojo
 
       - name: Test precompiled package as a downstream client
         run: |
           mkdir package-smoke
           cp dist/mojovec.mojoc tests/smoke_mojoc.mojo package-smoke/
           cd package-smoke
-          mojo run smoke_mojoc.mojo
+          pixi run mojo smoke_mojoc.mojo
 
       - name: Run Mojo test suite
-        run: |
-          for test_file in tests/test_*.mojo; do
-            echo ">>> $test_file"
-            mojo -I . "$test_file"
-          done
+        run: pixi run test-mojo
 
   python:
-    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
+    name: Python tests and wheel (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-latest]
-        python-version: ["3.12", "3.14"]
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: ${{ matrix.python-version }}
-
       - name: Set up Pixi
         uses: prefix-dev/setup-pixi@v0.8.1
         with:
           pixi-version: v0.39.0
-          run-install: false
+          run-install: true
 
-      - name: Install Mojo
-        run: |
-          pixi global install "max==$MAX_VERSION" \
-            -c https://conda.modular.com/max \
-            -c conda-forge
-          echo "$HOME/.pixi/bin" >> "$GITHUB_PATH"
-
-      - name: Install Python build dependencies
-        run: |
-          python -m pip install --upgrade pip build pytest numpy pyarrow
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            python -m pip install auditwheel
-          else
-            python -m pip install delocate
-          fi
-
-      - name: Build and repair Python wheel
-        run: |
-          python -m build --wheel --outdir dist
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            raw_wheel="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
-            raw_smoke_dir="$(mktemp -d)"
-            python -m venv "$raw_smoke_dir/venv"
-            "$raw_smoke_dir/venv/bin/python" -m pip install --no-deps "$raw_wheel"
-            cd "$raw_smoke_dir"
-            "$raw_smoke_dir/venv/bin/python" -c \
-              'import mojovec; print("raw", mojovec.__version__, mojovec._native_backend)'
-            cd "$GITHUB_WORKSPACE"
-            auditwheel repair \
-              --plat manylinux_2_35_x86_64 \
-              --wheel-dir repaired \
-              dist/*.whl
-          else
-            delocate-wheel \
-              --wheel-dir repaired \
-              dist/*.whl
-          fi
-          rm dist/*.whl
-          mv repaired/*.whl dist/
-
-      - name: Test installed wheel in an isolated environment
-        shell: bash
-        run: |
-          wheel_path="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
-          smoke_dir="$(mktemp -d)"
-          python -m venv "$smoke_dir/venv"
-          "$smoke_dir/venv/bin/python" -m pip install "$wheel_path"
-          cd "$smoke_dir"
-          "$smoke_dir/venv/bin/python" -c \
-            'import mojovec; from importlib.metadata import version; assert mojovec.__version__ == version("mojovec"); print(mojovec.__version__, mojovec._native_backend)'
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            MOJOVEC_FORCE_BACKEND=avx2 "$smoke_dir/venv/bin/python" -c \
-              'import importlib.util; import mojovec; assert mojovec._native_backend == "avx2"; assert importlib.util.find_spec("mojovec._avx2._native"); assert importlib.util.find_spec("mojovec._avx512._native"); print(mojovec._native_backend)'
-            if grep -qw avx512f /proc/cpuinfo; then
-              MOJOVEC_FORCE_BACKEND=avx512 "$smoke_dir/venv/bin/python" -c \
-                'import mojovec; assert mojovec._native_backend == "avx512"; print(mojovec._native_backend)'
-            fi
-          fi
+      - name: Build wheel
+        run: pixi run build-python
 
       - name: Run Python tests
-        shell: bash
-        run: |
-          wheel_path="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
-          python -m pip install --force-reinstall "$wheel_path"
-          python -m pytest python/tests/
+        run: pixi run test-python
