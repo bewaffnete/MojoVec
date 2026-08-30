@@ -73,7 +73,7 @@ jobs:
         run: |
           "$pythonLocation/bin/python" -m pip install --upgrade pip build pytest numpy pyarrow datasets
           if [ "$RUNNER_OS" == "Linux" ]; then
-            "$pythonLocation/bin/python" -m pip install auditwheel
+            "$pythonLocation/bin/python" -m pip install auditwheel patchelf
           else
             "$pythonLocation/bin/python" -m pip install delocate
           fi
