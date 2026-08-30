@@ -14,13 +14,14 @@ concurrency:
 
 jobs:
   build-wheels:
-    name: Build wheels (${{ matrix.os }})
+    name: Build Python Wheel (${{ matrix.os }}, ${{ matrix.python-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-latest]
+        python-version: ["3.12", "3.14"]
 
     steps:
       - name: Check out repository
@@ -31,34 +32,30 @@ jobs:
         with:
           run-install: true
 
-      - name: Install wheel repair tools
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Python build and repair dependencies
         run: |
+          "$pythonLocation/bin/python" -m pip install --upgrade pip build pytest numpy pyarrow datasets
           if [ "$RUNNER_OS" == "Linux" ]; then
-            pixi run pip install auditwheel
+            "$pythonLocation/bin/python" -m pip install auditwheel
           else
-            pixi run pip install delocate
+            "$pythonLocation/bin/python" -m pip install delocate
           fi
 
-      - name: Build Python wheel
-        run: pixi run build-python
-
-      - name: Repair Python wheel
+      - name: Build and repair Python wheel
         run: |
+          pixi run "$pythonLocation/bin/python" -m build --wheel --outdir dist
           if [ "$RUNNER_OS" == "Linux" ]; then
-            raw_wheel="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
-            raw_smoke_dir="$(mktemp -d)"
-            python3 -m venv "$raw_smoke_dir/venv"
-            "$raw_smoke_dir/venv/bin/python" -m pip install --no-deps "$raw_wheel"
-            cd "$raw_smoke_dir"
-            "$raw_smoke_dir/venv/bin/python" -c \
-              'import mojovec; print("raw", mojovec.__version__, mojovec._native_backend)'
-            cd "$GITHUB_WORKSPACE"
-            pixi run auditwheel repair \
+            auditwheel repair \
               --plat manylinux_2_35_x86_64 \
               --wheel-dir repaired \
               dist/*.whl
           else
-            pixi run delocate-wheel \
+            delocate-wheel \
               --wheel-dir repaired \
               dist/*.whl
           fi

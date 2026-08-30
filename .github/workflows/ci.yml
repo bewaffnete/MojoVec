@@ -69,27 +69,22 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - name: Ensure target Python and Pixi Mojo on PATH
-        run: |
-          echo "$GITHUB_WORKSPACE/.pixi/envs/default/bin" >> "$GITHUB_PATH"
-          echo "$pythonLocation/bin" >> "$GITHUB_PATH"
-
       - name: Install Python build and repair dependencies
         run: |
-          python -m pip install --upgrade pip build pytest numpy pyarrow datasets
+          "$pythonLocation/bin/python" -m pip install --upgrade pip build pytest numpy pyarrow datasets
           if [ "$RUNNER_OS" == "Linux" ]; then
-            python -m pip install auditwheel
+            "$pythonLocation/bin/python" -m pip install auditwheel
           else
-            python -m pip install delocate
+            "$pythonLocation/bin/python" -m pip install delocate
           fi
 
       - name: Build and repair Python wheel
         run: |
-          python -m build --wheel --outdir dist
+          pixi run "$pythonLocation/bin/python" -m build --wheel --outdir dist
           if [ "$RUNNER_OS" == "Linux" ]; then
             raw_wheel="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
             raw_smoke_dir="$(mktemp -d)"
-            python -m venv "$raw_smoke_dir/venv"
+            "$pythonLocation/bin/python" -m venv "$raw_smoke_dir/venv"
             "$raw_smoke_dir/venv/bin/python" -m pip install --no-deps "$raw_wheel"
             cd "$raw_smoke_dir"
             "$raw_smoke_dir/venv/bin/python" -c \
@@ -112,7 +107,7 @@ jobs:
         run: |
           wheel_path="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
           smoke_dir="$(mktemp -d)"
-          python -m venv "$smoke_dir/venv"
+          "$pythonLocation/bin/python" -m venv "$smoke_dir/venv"
           "$smoke_dir/venv/bin/python" -m pip install "$wheel_path" numpy pyarrow datasets
           cd "$smoke_dir"
           "$smoke_dir/venv/bin/python" -c \
@@ -130,5 +125,5 @@ jobs:
         shell: bash
         run: |
           wheel_path="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
-          python -m pip install --force-reinstall "$wheel_path"
-          python -m pytest python/tests/
+          "$pythonLocation/bin/python" -m pip install --force-reinstall "$wheel_path"
+          "$pythonLocation/bin/python" -m pytest python/tests/
