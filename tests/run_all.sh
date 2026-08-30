@@ -25,18 +25,20 @@ FAILED=0
 FAILED_FILES=()
 
 # 1. Mojo Tests
-echo -e "${BOLD}${YELLOW}>>> Running Mojo Unit Tests (tests/*.mojo)...${NC}\n"
+echo -e "${BOLD}${YELLOW}>>> Running Mojo Unit Tests (tests/test_*.mojo)...${NC}\n"
 
-for test_file in tests/*.mojo; do
+for test_file in tests/test_*.mojo; do
     if [ ! -f "$test_file" ]; then
         continue
     fi
 
     echo -e "${BOLD}Running ${test_file}...${NC}"
-    if mojo -I . "$test_file"; then
+    if mojo build -I . "$test_file" -o /tmp/mojovec_test_bin && /tmp/mojovec_test_bin; then
+        rm -f /tmp/mojovec_test_bin
         echo -e "${GREEN}✓ PASS: ${test_file}${NC}\n"
         PASSED=$((PASSED + 1))
     else
+        rm -f /tmp/mojovec_test_bin
         echo -e "${RED}✗ FAIL: ${test_file}${NC}\n"
         FAILED=$((FAILED + 1))
         FAILED_FILES+=("$test_file")
