@@ -46,17 +46,23 @@ jobs:
         run: pixi run test-mojo
 
   python:
-    name: Python tests and wheel (${{ matrix.os }})
+    name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-22.04, macos-latest]
+        python-version: ["3.12", "3.14"]
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up Pixi
         uses: prefix-dev/setup-pixi@v0.8.3
@@ -66,5 +72,25 @@ jobs:
       - name: Build wheel
         run: pixi run build-python
 
+      - name: Install dependencies and wheel in Python ${{ matrix.python-version }}
+        shell: bash
+        run: |
+          wheel_path="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
+          python -m pip install --upgrade pip pytest numpy pyarrow datasets
+          python -m pip install --force-reinstall "$wheel_path"
+
+      - name: Test installed wheel
+        shell: bash
+        run: |
+          python -c 'import mojovec; from importlib.metadata import version; assert mojovec.__version__ == version("mojovec"); print(mojovec.__version__, mojovec._native_backend)'
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            MOJOVEC_FORCE_BACKEND=avx2 python -c \
+              'import importlib.util; import mojovec; assert mojovec._native_backend == "avx2"; assert importlib.util.find_spec("mojovec._avx2._native"); assert importlib.util.find_spec("mojovec._avx512._native"); print(mojovec._native_backend)'
+            if grep -qw avx512f /proc/cpuinfo; then
+              MOJOVEC_FORCE_BACKEND=avx512 python -c \
+                'import mojovec; assert mojovec._native_backend == "avx512"; print(mojovec._native_backend)'
+            fi
+          fi
+
       - name: Run Python tests
-        run: pixi run test-python
+        run: python -m pytest -q -p no:cacheprovider python/tests
