@@ -774,7 +774,7 @@ export PYTHONPATH="$PWD/python${PYTHONPATH:+:$PYTHONPATH}"
 
 ## Examples
 
-Executable tutorials are organized by language:
+Executable tutorials are organized by track:
 
 - [`examples/mojo/`](examples/mojo/) — native Mojo lifecycle, IVF-PQ,
   persistence, compaction, metadata, filters, BM25, hybrid RRF, WAL, and
@@ -782,7 +782,10 @@ Executable tutorials are organized by language:
 - [`examples/python/`](examples/python/) — managed Python CRUD,
   metadata/documents, Chroma-style filters, BM25, hybrid RRF, mmap,
   compaction, WAL recovery, NumPy fast paths, distance metrics, and external
-  dataset adapters.
+  dataset adapters;
+- [`examples/max/`](examples/max/) — Modular MAX integration: In-process RAG
+  using native `max.pipelines` (`all-MiniLM-L6-v2`), unified in-memory FastAPI
+  search service, and `max serve` microservice integration.
 
 See [`examples/README.md`](examples/README.md) for the recommended order and
 commands.

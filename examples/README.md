@@ -1,12 +1,14 @@
 # MojoVec examples
 
-The examples are split by language:
+The examples are split by track:
 
 - [`quickstart_mojovec.ipynb`](quickstart_mojovec.ipynb) is the complete
   interactive Jupyter/Colab walkthrough;
 - [`mojo/`](mojo/) contains twelve executable tutorials for the Mojo API;
 - [`python/`](python/) contains nine executable tutorials for the managed
-  Python API.
+  Python API;
+- [`max/`](max/) contains Modular MAX integration examples (In-Process RAG,
+  FastAPI server, and `max serve` integration).
 
 Both tracks use deterministic, locally generated vectors and require no
 downloaded datasets.

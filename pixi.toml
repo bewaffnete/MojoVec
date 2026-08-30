@@ -15,6 +15,10 @@ pytest = "*"
 python-build = "*"
 setuptools = ">=77"
 wheel = "*"
+onnx = ">=1.22.0,<2"
+transformers = ">=5.16.1,<6"
+fastapi = ">=0.141.1,<0.142"
+uvicorn = ">=0.52.4,<0.53"
 
 [tasks]
 mojo-version = "mojo --version"
