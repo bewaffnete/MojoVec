@@ -9,7 +9,7 @@ description = "High-performance vector search powered by Mojo"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
-authors = [{ name = "MojoVec contributors" }]
+authors = [{ name = "bewaffnete" }]
 dependencies = [
     "numpy",
     "pyarrow>=21",
