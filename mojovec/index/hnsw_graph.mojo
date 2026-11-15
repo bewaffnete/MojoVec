@@ -29,6 +29,112 @@ struct NeighborsInfo:
         self.max_links = max_links
 
 
+
+@always_inline
+def _process_buffered_4[
+    HAS_FILTER: Bool,
+    DistanceComputer: DistanceComputerTrait,
+    origin_c1: MutOrigin,
+    origin_c2: MutOrigin,
+    origin_w1: MutOrigin,
+    origin_w2: MutOrigin,
+](
+    mut comp: DistanceComputer,
+    buffered_e: Pointer[Int32, _],
+    mut n_buffered: Int,
+    C_dist: Pointer[Float32, origin_c1],
+    C_labels: Pointer[Int32, origin_c2],
+    mut C_size: Int,
+    C_cap: Int,
+    W_dist: Pointer[Float32, origin_w1],
+    W_labels: Pointer[Int32, origin_w2],
+    mut W_size: Int,
+    safe_ef: Int,
+    filter: Pointer[UInt8, _],
+):
+    if n_buffered == 4:
+        var d0123 = comp.distance_batch4(
+            Int(buffered_e[unsafe_offset=0]),
+            Int(buffered_e[unsafe_offset=1]),
+            Int(buffered_e[unsafe_offset=2]),
+            Int(buffered_e[unsafe_offset=3]),
+        )
+        for j in range(4):
+            var e_id = buffered_e[unsafe_offset=j]
+            var e_dist = d0123[j]
+            var worst_w_dist = W_dist[unsafe_offset=0]
+            if W_size < safe_ef or e_dist < worst_w_dist:
+                if C_size >= C_cap:
+                    pass
+                else:
+                    min_heap_push(C_dist, C_labels, C_size, e_dist, e_id)
+                    C_size += 1
+
+                if W_size < safe_ef:
+                    comptime if HAS_FILTER:
+                        if filter[unsafe_offset=Int(e_id)] > 0:
+                            continue
+                    max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
+                    W_size += 1
+                else:
+                    comptime if HAS_FILTER:
+                        if filter[unsafe_offset=Int(e_id)] > 0:
+                            continue
+                    max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
+        n_buffered = 0
+
+
+@always_inline
+def _process_remainder[
+    HAS_FILTER: Bool,
+    DistanceComputer: DistanceComputerTrait,
+    origin_c1: MutOrigin,
+    origin_c2: MutOrigin,
+    origin_w1: MutOrigin,
+    origin_w2: MutOrigin,
+](
+    mut comp: DistanceComputer,
+    buffered_e: Pointer[Int32, _],
+    mut n_buffered: Int,
+    C_dist: Pointer[Float32, origin_c1],
+    C_labels: Pointer[Int32, origin_c2],
+    mut C_size: Int,
+    C_cap: Int,
+    W_dist: Pointer[Float32, origin_w1],
+    W_labels: Pointer[Int32, origin_w2],
+    mut W_size: Int,
+    safe_ef: Int,
+    filter: Pointer[UInt8, _],
+):
+    for j in range(n_buffered):
+        var e_id = buffered_e[unsafe_offset=j]
+        var threshold: Float32 = Float32.MAX
+        var worst_w_dist = W_dist[unsafe_offset=0]
+        if W_size >= safe_ef:
+            threshold = worst_w_dist
+
+        var e_dist = comp.distance(Int(e_id), threshold)
+        if W_size < safe_ef or e_dist < worst_w_dist:
+            if C_size >= C_cap:
+                pass
+            else:
+                min_heap_push(C_dist, C_labels, C_size, e_dist, e_id)
+                C_size += 1
+
+            if W_size < safe_ef:
+                comptime if HAS_FILTER:
+                    if filter[unsafe_offset=Int(e_id)] > 0:
+                        continue
+                max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
+                W_size += 1
+            else:
+                comptime if HAS_FILTER:
+                    if filter[unsafe_offset=Int(e_id)] > 0:
+                        continue
+                max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
+    n_buffered = 0
+
+
 struct HNSWGraph(Movable):
     """Represents the Hierarchical Navigable Small World (HNSW) graph structure."""
     var M: Int
@@ -310,63 +416,6 @@ struct HNSWGraph(Movable):
             var buffered_ids = Array[Int32, 4](uninitialized=True)
             var buffered_e = buffered_ids.unsafe_ptr()
 
-            @__parameter
-            def process_buffered_ids():
-                if n_buffered == 4:
-                    var d0123 = comp.distance_batch4(Int(buffered_e[unsafe_offset=0]), Int(buffered_e[unsafe_offset=1]), Int(buffered_e[unsafe_offset=2]), Int(buffered_e[unsafe_offset=3]))
-                    for j in range(4):
-                        var e_id = buffered_e[unsafe_offset=j]
-                        var e_dist = d0123[j]
-                        var worst_w_dist = W_dist[unsafe_offset=0]
-                        if W_size < safe_ef or e_dist < worst_w_dist:
-                            if C_size >= C_cap:
-                                pass
-                            else:
-                                min_heap_push(C_dist, C_labels, C_size, e_dist, e_id)
-                                C_size += 1
-
-                            if W_size < safe_ef:
-                                comptime if HAS_FILTER:
-                                    if filter[unsafe_offset=Int(e_id)] > 0:
-                                        continue
-                                max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
-                                W_size += 1
-                            else:
-                                comptime if HAS_FILTER:
-                                    if filter[unsafe_offset=Int(e_id)] > 0:
-                                        continue
-                                max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
-                    n_buffered = 0
-
-            @__parameter
-            def process_remainder():
-                for j in range(n_buffered):
-                    var e_id = buffered_e[unsafe_offset=j]
-                    var threshold: Float32 = Float32.MAX
-                    var worst_w_dist = W_dist[unsafe_offset=0]
-                    if W_size >= safe_ef:
-                        threshold = worst_w_dist
-
-                    var e_dist = comp.distance(Int(e_id), threshold)
-                    if W_size < safe_ef or e_dist < worst_w_dist:
-                        if C_size >= C_cap:
-                            pass
-                        else:
-                            min_heap_push(C_dist, C_labels, C_size, e_dist, e_id)
-                            C_size += 1
-
-                        if W_size < safe_ef:
-                            comptime if HAS_FILTER:
-                                if filter[unsafe_offset=Int(e_id)] > 0:
-                                    continue
-                            max_heap_push(W_dist, W_labels, W_size, e_dist, e_id)
-                            W_size += 1
-                        else:
-                            comptime if HAS_FILTER:
-                                if filter[unsafe_offset=Int(e_id)] > 0:
-                                    continue
-                            max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
-
             comptime if MAX_LINKS > 0:
                 var look_ahead_idx = 0
                 var prefetched_count = 0
@@ -406,9 +455,35 @@ struct HNSWGraph(Movable):
                         buffered_e[unsafe_offset=n_buffered] = e
                         n_buffered += 1
                         if n_buffered == 4:
-                            process_buffered_ids()
+                            _process_buffered_4[HAS_FILTER=HAS_FILTER](
+                                comp,
+                                buffered_e,
+                                n_buffered,
+                                C_dist,
+                                C_labels,
+                                C_size,
+                                C_cap,
+                                W_dist,
+                                W_labels,
+                                W_size,
+                                safe_ef,
+                                filter,
+                            )
 
-                process_remainder()
+                _process_remainder[HAS_FILTER=HAS_FILTER](
+                    comp,
+                    buffered_e,
+                    n_buffered,
+                    C_dist,
+                    C_labels,
+                    C_size,
+                    C_cap,
+                    W_dist,
+                    W_labels,
+                    W_size,
+                    safe_ef,
+                    filter,
+                )
             else:
                 var look_ahead_idx = 0
                 var prefetched_count = 0
@@ -448,9 +523,35 @@ struct HNSWGraph(Movable):
                         buffered_e[unsafe_offset=n_buffered] = e
                         n_buffered += 1
                         if n_buffered == 4:
-                            process_buffered_ids()
+                            _process_buffered_4[HAS_FILTER=HAS_FILTER](
+                                comp,
+                                buffered_e,
+                                n_buffered,
+                                C_dist,
+                                C_labels,
+                                C_size,
+                                C_cap,
+                                W_dist,
+                                W_labels,
+                                W_size,
+                                safe_ef,
+                                filter,
+                            )
 
-                process_remainder()
+                _process_remainder[HAS_FILTER=HAS_FILTER](
+                    comp,
+                    buffered_e,
+                    n_buffered,
+                    C_dist,
+                    C_labels,
+                    C_size,
+                    C_cap,
+                    W_dist,
+                    W_labels,
+                    W_size,
+                    safe_ef,
+                    filter,
+                )
 
         return W_size
 

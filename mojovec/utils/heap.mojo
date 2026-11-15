@@ -163,7 +163,6 @@ def min_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Pointer
 
     return HeapResult(popped_dist, popped_label)
 
-@always_inline
 def max_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Pointer[Float32, origin1], heap_labels: Pointer[Int, origin2], current_size: Int) -> HeapResult:
     """
     Pops and returns the maximum element from the max-heap.
@@ -373,7 +372,6 @@ def min_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Pointer
 
     return HeapResult32(popped_dist, popped_label)
 
-@always_inline
 def max_heap_pop[origin1: MutOrigin, origin2: MutOrigin](heap_distances: Pointer[Float32, origin1], heap_labels: Pointer[Int32, origin2], current_size: Int) -> HeapResult32:
     """
     Pops and returns the maximum element from the max-heap.
