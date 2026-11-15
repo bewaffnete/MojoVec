@@ -451,7 +451,7 @@ def sq8_l2_from_dot(norm_a: UInt32, norm_b: UInt32, dot: UInt32) -> UInt32:
     return UInt32(math.max(d, 0))
 
 
-from std.collections import InlineArray
+from std.collections import Array
 
 
 @always_inline
@@ -462,9 +462,9 @@ def sq8_signed_dot_product_simd_batch4(
     x3: Pointer[Int8, _],
     query: Pointer[Int8, _],
     d: Int,
-) -> InlineArray[Int32, 4]:
+) -> Array[Int32, 4]:
     """Computes four signed SQ8 dots while loading each query block once."""
-    var result = InlineArray[Int32, 4](uninitialized=True)
+    var result = Array[Int32, 4](uninitialized=True)
     comptime if is_apple_gpu():
         var acc0 = SIMD[DType.int32, 4]()
         var acc1 = SIMD[DType.int32, 4]()
@@ -545,7 +545,7 @@ def l2_distance_simd_batch4[simd_width: Int](
     x3: Pointer[Float32, MutUntrackedOrigin],
     y: Pointer[Float32, MutUntrackedOrigin],
     d: Int
-) -> InlineArray[Float32, 4]:
+) -> Array[Float32, 4]:
     var dist0 = SIMD[DType.float32, simd_width](0.0)
     var dist1 = SIMD[DType.float32, simd_width](0.0)
     var dist2 = SIMD[DType.float32, simd_width](0.0)
@@ -596,7 +596,7 @@ def l2_distance_simd_batch4[simd_width: Int](
 
         i += 1
 
-    var ret = InlineArray[Float32, 4](uninitialized=True)
+    var ret = Array[Float32, 4](uninitialized=True)
     var ret_ptr = ret.unsafe_ptr()
     ret_ptr[unsafe_offset=0] = res0
     ret_ptr[unsafe_offset=1] = res1
@@ -612,7 +612,7 @@ def inner_product_simd_batch4[simd_width: Int](
     x3: Pointer[Float32, MutUntrackedOrigin],
     y: Pointer[Float32, MutUntrackedOrigin],
     d: Int
-) -> InlineArray[Float32, 4]:
+) -> Array[Float32, 4]:
     var ip0 = SIMD[DType.float32, simd_width](0.0)
     var ip1 = SIMD[DType.float32, simd_width](0.0)
     var ip2 = SIMD[DType.float32, simd_width](0.0)
@@ -649,7 +649,7 @@ def inner_product_simd_batch4[simd_width: Int](
         res3 += x3[unsafe_offset=i] * vy
         i += 1
 
-    var ret = InlineArray[Float32, 4](uninitialized=True)
+    var ret = Array[Float32, 4](uninitialized=True)
     var ret_ptr = ret.unsafe_ptr()
     ret_ptr[unsafe_offset=0] = res0
     ret_ptr[unsafe_offset=1] = res1

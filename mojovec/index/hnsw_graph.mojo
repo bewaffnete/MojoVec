@@ -2,7 +2,7 @@ from std.memory.alloc import unsafe_alloc
 from std.random import rand
 from std.math import log
 from std.atomic import Atomic
-from std.collections import InlineArray
+from std.collections import Array
 from std.sys.intrinsics import prefetch, PrefetchOptions
 from mojovec.utils.heap import (
     max_heap_push,
@@ -155,7 +155,7 @@ struct HNSWGraph(Movable):
 
     def random_level(self) -> Int:
         """Generates a random level for a new node based on the graph's M parameter."""
-        var arr = InlineArray[Float64, 1](uninitialized=True)
+        var arr = Array[Float64, 1](uninitialized=True)
         var ptr = arr.unsafe_ptr()
         rand(ptr, 1)
         var f = ptr[unsafe_offset=0]
@@ -260,8 +260,8 @@ struct HNSWGraph(Movable):
         if safe_ef > 2048:
             safe_ef = 2048
 
-        var c_dist_array = InlineArray[Float32, 2048](uninitialized=True)
-        var c_labels_array = InlineArray[Int32, 2048](uninitialized=True)
+        var c_dist_array = Array[Float32, 2048](uninitialized=True)
+        var c_labels_array = Array[Int32, 2048](uninitialized=True)
         var C_dist = c_dist_array.unsafe_ptr()
         var C_labels = c_labels_array.unsafe_ptr()
         var C_cap = 2048  # Max pre-allocated capacity
@@ -307,10 +307,10 @@ struct HNSWGraph(Movable):
             var max_links = neighbors_info.max_links
 
             var n_buffered = 0
-            var buffered_ids = InlineArray[Int32, 4](uninitialized=True)
+            var buffered_ids = Array[Int32, 4](uninitialized=True)
             var buffered_e = buffered_ids.unsafe_ptr()
 
-            @parameter
+            @__parameter
             def process_buffered_ids():
                 if n_buffered == 4:
                     var d0123 = comp.distance_batch4(Int(buffered_e[unsafe_offset=0]), Int(buffered_e[unsafe_offset=1]), Int(buffered_e[unsafe_offset=2]), Int(buffered_e[unsafe_offset=3]))
@@ -338,7 +338,7 @@ struct HNSWGraph(Movable):
                                 max_heap_replace_top(W_dist, W_labels, safe_ef, e_dist, e_id)
                     n_buffered = 0
 
-            @parameter
+            @__parameter
             def process_remainder():
                 for j in range(n_buffered):
                     var e_id = buffered_e[unsafe_offset=j]
@@ -471,8 +471,8 @@ struct HNSWGraph(Movable):
 
         # Simple heuristic: keep the closest max_links neighbors
         # Sort by distance
-        var dists_array = InlineArray[Float32, 2048](uninitialized=True)
-        var labels_array = InlineArray[Int32, 2048](uninitialized=True)
+        var dists_array = Array[Float32, 2048](uninitialized=True)
+        var labels_array = Array[Int32, 2048](uninitialized=True)
         var dists = dists_array.unsafe_ptr()
         var labels = labels_array.unsafe_ptr()
 
@@ -532,8 +532,8 @@ struct HNSWGraph(Movable):
             var C_size = info.max_links + 1
             if C_size > 2048:
                 C_size = 2048
-            var c_nodes_array = InlineArray[Int32, 2048](uninitialized=True)
-            var c_dists_array = InlineArray[Float32, 2048](uninitialized=True)
+            var c_nodes_array = Array[Int32, 2048](uninitialized=True)
+            var c_dists_array = Array[Float32, 2048](uninitialized=True)
             var C_nodes = c_nodes_array.unsafe_ptr()
             var C_dists = c_dists_array.unsafe_ptr()
 
@@ -544,7 +544,7 @@ struct HNSWGraph(Movable):
             var dest_dist = comp.symmetric_distance(src, dest)
             min_heap_push(C_dists, C_nodes, info.max_links, dest_dist, Int32(dest))
 
-            var return_list_array = InlineArray[Int32, 2048](uninitialized=True)
+            var return_list_array = Array[Int32, 2048](uninitialized=True)
             var return_list = return_list_array.unsafe_ptr()
             var return_size = 0
 

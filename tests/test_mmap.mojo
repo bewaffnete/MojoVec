@@ -1,4 +1,4 @@
-from std.collections import List
+from std.collections import Array, List
 from max.algorithm import parallelize
 from std.collections.span import Span
 from std.os import SEEK_END, SEEK_SET, mkdir, rmdir
@@ -103,7 +103,7 @@ def patch_snapshot_int(path: String, offset: Int, value: Int) raises:
 def patch_snapshot_byte(path: String, offset: Int, value: UInt8) raises:
     var file = open(path, "rw")
     _ = file.seek(offset, SEEK_SET)
-    var storage = InlineArray[UInt8, 1](uninitialized=True)
+    var storage = Array[UInt8, 1](uninitialized=True)
     storage[0] = value
     file.write_all(Span[UInt8](unsafe_ptr=storage.unsafe_ptr(), length=1))
     file.close()
@@ -130,7 +130,7 @@ def append_checksumming_payload_byte(path: String) raises:
 
     var writer = open(path, "w")
     writer.write_bytes(payload)
-    var extra = InlineArray[UInt8, 1](uninitialized=True)
+    var extra = Array[UInt8, 1](uninitialized=True)
     extra[0] = 0
     writer.write_all(Span[UInt8](unsafe_ptr=extra.unsafe_ptr(), length=1))
     writer.close()
@@ -272,8 +272,7 @@ def test_queries_continue_during_atomic_publication() raises:
     writer.add([40], vector(40.0), ["new document"])
     var failures = List[Int](length=2, fill=0)
 
-    @parameter
-    def work(worker: Int):
+    def work(worker: Int) {mut writer, mut failures, imm}:
         try:
             if worker == 0:
                 for _ in range(100):
@@ -285,7 +284,7 @@ def test_queries_continue_during_atomic_publication() raises:
         except:
             failures[worker] = 1
 
-    parallelize[work](2, 2)
+    parallelize(work, 2, 2)
     assert_equal(failures[0], 0)
     assert_equal(failures[1], 0)
     assert_true(reader.is_memory_mapped())
@@ -303,8 +302,7 @@ def test_same_collection_supports_concurrent_read_queries() raises:
     var collection = make_collection(False)
     var failures = List[Int](length=8, fill=0)
 
-    @parameter
-    def work(worker: Int):
+    def work(worker: Int) {mut failures, imm}:
         try:
             for _ in range(50):
                 var vector_result = collection.query(
@@ -327,7 +325,7 @@ def test_same_collection_supports_concurrent_read_queries() raises:
         except:
             failures[worker] = 1
 
-    parallelize[work](8, 8)
+    parallelize(work, 8, 8)
     for failure in failures:
         assert_equal(failure, 0)
 

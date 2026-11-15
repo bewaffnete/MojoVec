@@ -5,9 +5,8 @@ from ..utils.distances import l2_distance_simd, inner_product_simd
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from std.sys.intrinsics import prefetch, PrefetchOptions
-from std.memory import memcpy
 from std.memory.alloc import unsafe_alloc
-from std.collections import InlineArray
+from std.collections import Array
 from std.collections.span import Span
 
 struct SQDistanceComputer(DistanceComputerTrait):
@@ -66,8 +65,8 @@ struct SQDistanceComputer(DistanceComputerTrait):
             self.scratch_y.unsafe_free()
         
     @always_inline
-    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> InlineArray[Float32, 4]:
-        var res = InlineArray[Float32, 4](uninitialized=True)
+    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> Array[Float32, 4]:
+        var res = Array[Float32, 4](uninitialized=True)
         res[0] = self.distance(id0)
         res[1] = self.distance(id1)
         res[2] = self.distance(id2)

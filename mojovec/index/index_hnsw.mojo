@@ -8,10 +8,11 @@ from .hnsw_visited import VisitedTable, VisitedTablePool
 from .index_flat import IndexFlat
 from .index_flat_sq8 import IndexFlatSQ8
 from max.algorithm import parallelize
+from max.runtime.asyncrt import parallelism_level
+from std.collections import Array
 from std.ffi import external_call
 from std.collections.span import Span
 from std.memory.alloc import unsafe_alloc
-from std.runtime.asyncrt import parallelism_level
 from std.sys.info import num_logical_cores
 from mojovec.core.validation import (
     _validate_hnsw_parameters,
@@ -192,8 +193,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
             for l in range(pt_levels[unsafe_offset=i] + 1):
                 self.hnsw.set_neighbors_len(pt_id, l, 0)
 
-        @parameter
-        def add_point(i: Int):
+        def add_point(i: Int) {mut self, imm}:
             var actual_i = i + start_idx
             var pt_id = old_ntotal + actual_i
             var pt_level = pt_levels[unsafe_offset=actual_i]
@@ -230,8 +230,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
 
             var vt_id = self.vt_pool.acquire()
             var vt = self.vt_pool.get(vt_id)
-            var w_dist_array = InlineArray[Float32, 2048](uninitialized=True)
-            var w_labels_array = InlineArray[Int32, 2048](uninitialized=True)
+            var w_dist_array = Array[Float32, 2048](uninitialized=True)
+            var w_labels_array = Array[Int32, 2048](uninitialized=True)
             var W_dist = w_dist_array.unsafe_ptr()
             var W_labels = w_labels_array.unsafe_ptr()
 
@@ -248,10 +248,10 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     Span[UInt8, MutUntrackedOrigin]().unsafe_ptr()
                 )
 
-                var w_sorted_dist_array = InlineArray[Float32, 2048](
+                var w_sorted_dist_array = Array[Float32, 2048](
                     uninitialized=True
                 )
-                var w_sorted_labels_array = InlineArray[Int32, 2048](
+                var w_sorted_labels_array = Array[Int32, 2048](
                     uninitialized=True
                 )
                 var W_sorted_dist = w_sorted_dist_array.unsafe_ptr()
@@ -306,7 +306,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
 
             self.vt_pool.release(vt_id)
 
-        parallelize[add_point](n - start_idx)
+        parallelize(add_point, n - start_idx)
 
         # Update entry point globally
         for i in range(n):
@@ -385,8 +385,8 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         var vt = self.vt_pool.get(vt_id)
         var i = start
         while i < n:
-            var w_dist_array = InlineArray[Float32, 2048](uninitialized=True)
-            var w_labels_array = InlineArray[Int32, 2048](uninitialized=True)
+            var w_dist_array = Array[Float32, 2048](uninitialized=True)
+            var w_labels_array = Array[Int32, 2048](uninitialized=True)
             var W_dist = w_dist_array.unsafe_ptr()
             var W_labels = w_labels_array.unsafe_ptr()
 
@@ -533,7 +533,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         var filter_ptr = filter.unsafe_ptr()
         comptime storage_kind = Self.StorageType.HNSW_PTHREAD_STORAGE_KIND
         var native_workers = min(n, num_logical_cores())
-        var runtime_workers = parallelism_level()
+        var runtime_workers = parallelism_level(None)
         if runtime_workers <= 0:
             runtime_workers = 1
 
@@ -613,8 +613,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         # query while retaining a compact table count tied to the CPU.
         var num_workers = min(n, runtime_workers)
 
-        @parameter
-        def search_worker(worker_id: Int):
+        def search_worker(worker_id: Int) {imm}:
             self._search_range[HAS_FILTER](
                 worker_id,
                 num_workers,
@@ -626,7 +625,7 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                 filter_ptr,
             )
 
-        parallelize[search_worker](num_workers, num_workers)
+        parallelize(search_worker, num_workers, num_workers)
 
 
 def mojovec_hnsw_pthread_worker(context_address: Int) abi("C") -> Int:

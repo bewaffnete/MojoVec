@@ -1,4 +1,4 @@
-from std.collections import List
+from std.collections import Array, List
 from std.io.file import FileHandle
 from std.collections.span import Span
 from std.testing import (
@@ -19,7 +19,7 @@ from mojovec import (
 
 
 def _write_i32(mut file: FileHandle, value: Int32) raises:
-    var storage = InlineArray[Int32, 1](uninitialized=True)
+    var storage = Array[Int32, 1](uninitialized=True)
     storage[0] = value
     file.write_all(
         Span[UInt8](unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=4)
@@ -27,7 +27,7 @@ def _write_i32(mut file: FileHandle, value: Int32) raises:
 
 
 def _write_f32(mut file: FileHandle, value: Float32) raises:
-    var storage = InlineArray[Float32, 1](uninitialized=True)
+    var storage = Array[Float32, 1](uninitialized=True)
     storage[0] = value
     file.write_all(
         Span[UInt8](unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=4)
@@ -35,7 +35,7 @@ def _write_f32(mut file: FileHandle, value: Float32) raises:
 
 
 def _write_u16(mut file: FileHandle, value: Int) raises:
-    var storage = InlineArray[UInt8, 2](uninitialized=True)
+    var storage = Array[UInt8, 2](uninitialized=True)
     storage[0] = UInt8(value & 0xFF)
     storage[1] = UInt8((value >> 8) & 0xFF)
     file.write_all(storage)
@@ -91,7 +91,7 @@ def test_npy_reads_float32_matrix() raises:
         "   \n"
     )
     var writer = open(path, "w")
-    var magic = InlineArray[UInt8, 8](uninitialized=True)
+    var magic = Array[UInt8, 8](uninitialized=True)
     magic[0] = 0x93
     magic[1] = 78
     magic[2] = 85

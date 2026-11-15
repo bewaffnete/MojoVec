@@ -110,8 +110,7 @@ struct KMeans:
             # cross-thread assignment buffer hand-off is needed between the E
             # and M steps. The expensive O(n * k * d) distance work remains
             # parallel while reduction order stays deterministic below.
-            @parameter
-            def process_chunk(chunk_id: Int):
+            def process_chunk(chunk_id: Int) {imm}:
                 var start = chunk_id * chunk_size
                 var end = min(start + chunk_size, n)
                 var my_centroids = local_centroids_ptr.unsafe_offset(
@@ -160,7 +159,7 @@ struct KMeans:
                         j += 1
 
             comptime if PARALLEL:
-                parallelize[process_chunk](num_chunks)
+                parallelize(process_chunk, num_chunks)
             else:
                 for chunk_id in range(num_chunks):
                     process_chunk(chunk_id)

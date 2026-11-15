@@ -1,6 +1,7 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from std.memory.alloc import unsafe_alloc
+from std.collections import Array
 
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from ..utils.distances import sq8_signed_dot_product_simd_batch4
@@ -77,8 +78,8 @@ struct SQ8DistanceComputer(DistanceComputerTrait):
         self.scale_sq = move.scale_sq
 
     @always_inline
-    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> InlineArray[Float32, 4]:
-        var res = InlineArray[Float32, 4](uninitialized=True)
+    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> Array[Float32, 4]:
+        var res = Array[Float32, 4](uninitialized=True)
         if self.metric_type == METRIC_L2:
             res[0] = self._distance_l2(id0)
             res[1] = self._distance_l2(id1)
@@ -443,8 +444,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
         from max.algorithm import parallelize
         from std.sys.info import num_performance_cores
         
-        @parameter
-        def process_query(i: Int):
+        def process_query(i: Int) {imm}:
             var query_ptr = x_ptr.unsafe_offset(i * self_d)
             var res_dist_ptr = distances_ptr.unsafe_offset(i * k)
             var res_labels_ptr = labels_ptr.unsafe_offset(i * k)
@@ -523,7 +523,7 @@ struct IndexFlatSQ8(Index, StorageTrait, QuantizerTrait, Movable):
                         res_dist_ptr[unsafe_offset=j] = -res_dist_ptr[unsafe_offset=j]
                     
             query_u8.unsafe_free()
-        parallelize[process_query](n, n)
+        parallelize(process_query, n, n)
     def get_distance_computer(self, query: Pointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector.
 

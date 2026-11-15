@@ -1,4 +1,5 @@
 from std.io.file import FileHandle
+from std.collections import Array
 from std.collections.span import Span
 from std.os import SEEK_END, SEEK_SET
 
@@ -59,7 +60,7 @@ def _checksum_prefix(mut file: FileHandle, byte_count: Int) raises -> UInt64:
 
 
 def _write_uint64(mut file: FileHandle, value: UInt64) raises:
-    var storage = InlineArray[UInt64, 1](uninitialized=True)
+    var storage = Array[UInt64, 1](uninitialized=True)
     storage[0] = value
     file.write_all(
         Span[UInt8](

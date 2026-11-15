@@ -1,4 +1,4 @@
-from std.collections import List, Optional
+from std.collections import Array, List, Optional
 from std.ffi import external_call
 from std.io.file import FileHandle
 from std.collections.span import Span
@@ -71,7 +71,7 @@ def _checksum_update(checksum: UInt64, bytes: Span[UInt8, _]) -> UInt64:
 
 
 def _append_int(mut destination: List[UInt8], value: Int):
-    var storage = InlineArray[Int, 1](uninitialized=True)
+    var storage = Array[Int, 1](uninitialized=True)
     storage[0] = value
     var bytes = storage.unsafe_ptr().unsafe_bitcast[UInt8]()
     for index in range(8):
@@ -79,7 +79,7 @@ def _append_int(mut destination: List[UInt8], value: Int):
 
 
 def _append_uint64(mut destination: List[UInt8], value: UInt64):
-    var storage = InlineArray[UInt64, 1](uninitialized=True)
+    var storage = Array[UInt64, 1](uninitialized=True)
     storage[0] = value
     var bytes = storage.unsafe_ptr().unsafe_bitcast[UInt8]()
     for index in range(8):
@@ -186,14 +186,14 @@ def _write_metadata_and_hash(
         elif value.kind() == METADATA_INT:
             result = _write_int_and_hash(file, value.as_int(), result)
         elif value.kind() == METADATA_FLOAT:
-            var storage = InlineArray[Float64, 1](uninitialized=True)
+            var storage = Array[Float64, 1](uninitialized=True)
             storage[0] = value.as_float()
             var bytes = Span[UInt8](
                 unsafe_ptr=storage.unsafe_ptr().unsafe_bitcast[UInt8](), length=8
             )
             result = _write_and_hash(file, bytes, result)
         elif value.kind() == METADATA_BOOL:
-            var storage = InlineArray[UInt8, 1](uninitialized=True)
+            var storage = Array[UInt8, 1](uninitialized=True)
             storage[0] = 1 if value.as_bool() else 0
             result = _write_and_hash(
                 file,

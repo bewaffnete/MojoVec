@@ -1,6 +1,7 @@
 from ..core.index import Index, QuantizerTrait
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from std.memory import unsafe_memcpy, alloc
+from std.collections import Array
 from std.collections.span import Span
 
 # Hardware-optimized for Apple Silicon (ARM NEON)
@@ -68,7 +69,7 @@ struct FlatDistanceComputer(DistanceComputerTrait):
             return -inner_product_simd[SIMD_WIDTH](self.query, db_ptr, self.d)
             
     @always_inline
-    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> InlineArray[Float32, 4]:
+    def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> Array[Float32, 4]:
         """Computes distances between query and 4 database vectors simultaneously."""
         var ptr0 = self.codes.unsafe_offset(id0 * self.d)
         var ptr1 = self.codes.unsafe_offset(id1 * self.d)
@@ -271,8 +272,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
 
         from max.algorithm import parallelize
 
-        @parameter
-        def process_query(i: Int):
+        def process_query(i: Int) {imm}:
             var query_offset = i * self_d
             var query_ptr = x_ptr.unsafe_offset(query_offset)
 
@@ -321,7 +321,7 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
         # both slower and unstable on Linux x86 runtimes. Every query remains
         # parallel; only the amount of physical concurrency is bounded by the
         # runtime.
-        parallelize[process_query](n)
+        parallelize(process_query, n)
 
     def get_distance_computer(self, query: Pointer[Float32, _]) -> Self.ComputerType:
         """Creates a distance computer for the given query vector."""

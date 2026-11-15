@@ -1,11 +1,12 @@
 """Operating-system-backed persistent collection identity generation."""
 
 from std.ffi import external_call
+from std.collections import Array
 
 
 def _random_collection_identity() raises -> UInt64:
     """Returns a non-zero 64-bit identity from the operating-system CSPRNG."""
-    var storage = InlineArray[UInt64, 1](uninitialized=True)
+    var storage = Array[UInt64, 1](uninitialized=True)
     for _ in range(4):
         if external_call["getentropy", Int32](
             storage.unsafe_ptr(), 8
