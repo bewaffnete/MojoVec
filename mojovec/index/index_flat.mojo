@@ -4,16 +4,11 @@ from std.memory import unsafe_memcpy, alloc
 from std.collections import Array
 from std.collections.span import Span
 
-# Hardware-optimized for Apple Silicon (ARM NEON)
-# While NEON physical width is 4 (128-bit), we unroll by a larger multiple 
-# for maximum instruction-level parallelism.
-comptime SIMD_WIDTH = 8
-
 from ..utils.distances import (
-    l2_distance_simd,
-    inner_product_simd,
-    l2_distance_simd_batch4,
-    inner_product_simd_batch4,
+    l2_distance_tuned,
+    inner_product_tuned,
+    l2_distance_tuned_batch4,
+    inner_product_tuned_batch4,
 )
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
@@ -62,11 +57,11 @@ struct FlatDistanceComputer(DistanceComputerTrait):
         """Computes the distance between the query and a specified database vector."""
         var db_ptr = self.codes.unsafe_offset(id * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd[SIMD_WIDTH](
+            return l2_distance_tuned(
                 self.query, db_ptr, self.d, threshold
             )
         else:
-            return -inner_product_simd[SIMD_WIDTH](self.query, db_ptr, self.d)
+            return -inner_product_tuned(self.query, db_ptr, self.d)
             
     @always_inline
     def distance_batch4(self, id0: Int, id1: Int, id2: Int, id3: Int) -> Array[Float32, 4]:
@@ -76,11 +71,11 @@ struct FlatDistanceComputer(DistanceComputerTrait):
         var ptr2 = self.codes.unsafe_offset(id2 * self.d)
         var ptr3 = self.codes.unsafe_offset(id3 * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd_batch4[SIMD_WIDTH](
+            return l2_distance_tuned_batch4(
                 ptr0, ptr1, ptr2, ptr3, self.query, self.d
             )
         else:
-            var res = inner_product_simd_batch4[SIMD_WIDTH](
+            var res = inner_product_tuned_batch4(
                 ptr0, ptr1, ptr2, ptr3, self.query, self.d
             )
             res[0] = -res[0]
@@ -95,9 +90,9 @@ struct FlatDistanceComputer(DistanceComputerTrait):
         var ptr_i = self.codes.unsafe_offset(i * self.d)
         var ptr_j = self.codes.unsafe_offset(j * self.d)
         if self.metric_type == METRIC_L2:
-            return l2_distance_simd[SIMD_WIDTH](ptr_i, ptr_j, self.d)
+            return l2_distance_tuned(ptr_i, ptr_j, self.d)
         else:
-            return -inner_product_simd[SIMD_WIDTH](ptr_i, ptr_j, self.d)
+            return -inner_product_tuned(ptr_i, ptr_j, self.d)
 
     @always_inline
     def prefetch_vector(self, id: Int):
@@ -290,9 +285,9 @@ struct IndexFlat(Index, StorageTrait, QuantizerTrait, Movable):
 
                 # Compute distance based on metric
                 if self_metric_type == METRIC_L2:
-                    dist = l2_distance_simd[SIMD_WIDTH](query_ptr, db_ptr, self_d)
+                    dist = l2_distance_tuned(query_ptr, db_ptr, self_d)
                 else:
-                    dist = -inner_product_simd[SIMD_WIDTH](query_ptr, db_ptr, self_d)
+                    dist = -inner_product_tuned(query_ptr, db_ptr, self_d)
 
                 # Add to heap
                 if heap_size < k:

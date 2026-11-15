@@ -139,7 +139,7 @@ def main() -> None:
         "mode",
         choices=("build-flat", "build-sq8", "search-flat", "search-sq8"),
     )
-    parser.add_argument("--cooldown", type=int, default=30)
+    parser.add_argument("--cooldown", type=int, default=10)
     args = parser.parse_args()
 
     faiss.omp_set_num_threads(10)

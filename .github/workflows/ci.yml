@@ -45,6 +45,26 @@ jobs:
       - name: Run Mojo test suite
         run: pixi run test-mojo
 
+      - name: Test FP32 tuning on both x86 wheel targets
+        if: runner.os == 'Linux' && runner.arch == 'X64'
+        shell: bash
+        run: |
+          for target_cpu in x86-64-v3 x86-64-v4; do
+            if [ "$target_cpu" = x86-64-v4 ]; then
+              supported=true
+              for feature in avx512f avx512dq avx512cd avx512bw avx512vl; do
+                if ! grep -qw "$feature" /proc/cpuinfo; then supported=false; fi
+              done
+              if [ "$supported" = false ]; then
+                echo "Skipping AVX-512 execution: runner lacks x86-64-v4 features"
+                continue
+              fi
+            fi
+            pixi run mojo build -I . --target-cpu "$target_cpu" \
+              tests/test_simd_tuning.mojo -o "$RUNNER_TEMP/mojovec-$target_cpu"
+            "$RUNNER_TEMP/mojovec-$target_cpu"
+          done
+
       - name: Test portable SQ8 kernels without ARM dotprod
         if: runner.os == 'macOS' && runner.arch == 'ARM64'
         run: |

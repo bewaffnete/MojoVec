@@ -3,6 +3,7 @@ Provides optimized SIMD implementations for computing various vector distances.
 """
 
 from std.math import fma
+from std.collections import Array
 
 
 @always_inline
@@ -40,7 +41,9 @@ def inner_product_short4(
 
 
 @always_inline
-def l2_distance_simd[simd_width: Int](
+def l2_distance_simd[
+    simd_width: Int, unroll: Int = 4, short_scalar: Bool = True
+](
     x: Pointer[Float32, _],
     y: Pointer[Float32, _],
     d: Int,
@@ -52,50 +55,37 @@ def l2_distance_simd[simd_width: Int](
     """
     # A subvector shorter than one SIMD register is common in PQ. Keep that
     # path entirely scalar: it avoids constructing/reducing an otherwise
-    # unused vector register and works around incorrect tail-only codegen in
-    # optimized x86 builds of Mojo 1.0.0b2.
-    if d < simd_width:
+    # unused vector register. This also preserves the Mojo 1.0.0b2 x86
+    # workaround: 1.2.0 passes correctness without it, but disabling it still
+    # regresses some short-vector cases. False is for tuning experiments only.
+    comptime assert unroll > 0, "unroll must be positive"
+    if short_scalar and d < simd_width:
         var scalar_result: Float32 = 0.0
         for index in range(d):
             var scalar_diff = x[unsafe_offset=index] - y[unsafe_offset=index]
             scalar_result += scalar_diff * scalar_diff
         return scalar_result
 
-    # These accumulators must be initialized explicitly. A default-constructed
-    # SIMD value is not a portable zero and dimensions below ``simd_width``
-    # reach the tail path without executing an FMA first (PQ commonly has
-    # four-dimensional subvectors with an eight-lane kernel).
-    var dist0 = SIMD[DType.float32, simd_width](0.0)
-    var dist1 = SIMD[DType.float32, simd_width](0.0)
-    var dist2 = SIMD[DType.float32, simd_width](0.0)
-    var dist3 = SIMD[DType.float32, simd_width](0.0)
+    var accumulators = Array[SIMD[DType.float32, simd_width], unroll](
+        uninitialized=True
+    )
+    comptime for lane in range(unroll):
+        accumulators[lane] = SIMD[DType.float32, simd_width](0.0)
 
     var i = 0
-    # Unroll 4x for Instruction Level Parallelism
-    while i <= d - (simd_width * 4):
-        var vx0 = x.unsafe_load[width=simd_width](i)
-        var vy0 = y.unsafe_load[width=simd_width](i)
-        var diff0 = vx0 - vy0
-        dist0 = fma(diff0, diff0, dist0)
+    while i <= d - simd_width * unroll:
+        comptime for lane in range(unroll):
+            var offset = i + lane * simd_width
+            var diff = (
+                x.unsafe_load[width=simd_width](offset)
+                - y.unsafe_load[width=simd_width](offset)
+            )
+            accumulators[lane] = fma(diff, diff, accumulators[lane])
+        i += simd_width * unroll
 
-        var vx1 = x.unsafe_load[width=simd_width](i + simd_width)
-        var vy1 = y.unsafe_load[width=simd_width](i + simd_width)
-        var diff1 = vx1 - vy1
-        dist1 = fma(diff1, diff1, dist1)
-
-        var vx2 = x.unsafe_load[width=simd_width](i + simd_width * 2)
-        var vy2 = y.unsafe_load[width=simd_width](i + simd_width * 2)
-        var diff2 = vx2 - vy2
-        dist2 = fma(diff2, diff2, dist2)
-
-        var vx3 = x.unsafe_load[width=simd_width](i + simd_width * 3)
-        var vy3 = y.unsafe_load[width=simd_width](i + simd_width * 3)
-        var diff3 = vx3 - vy3
-        dist3 = fma(diff3, diff3, dist3)
-
-        i += simd_width * 4
-
-    var dist = dist0 + dist1 + dist2 + dist3
+    var dist = accumulators[0]
+    comptime for lane in range(1, unroll):
+        dist += accumulators[lane]
 
     # 1x for remaining SIMD chunks
     while i <= d - simd_width:
@@ -143,7 +133,9 @@ def l2_distance_simd[simd_width: Int](
     return res
 
 @always_inline
-def inner_product_simd[simd_width: Int](x: Pointer[Float32, _], y: Pointer[Float32, _], d: Int) -> Float32:
+def inner_product_simd[
+    simd_width: Int, unroll: Int = 4, short_scalar: Bool = True
+](x: Pointer[Float32, _], y: Pointer[Float32, _], d: Int) -> Float32:
     """
     Computes the inner product between two vectors of dimension `d` using SIMD instructions.
 
@@ -155,38 +147,33 @@ def inner_product_simd[simd_width: Int](x: Pointer[Float32, _], y: Pointer[Float
     Returns:
         The computed inner product.
     """
-    if d < simd_width:
+    comptime assert unroll > 0, "unroll must be positive"
+    if short_scalar and d < simd_width:
         var scalar_result: Float32 = 0.0
         for index in range(d):
             scalar_result += x[unsafe_offset=index] * y[unsafe_offset=index]
         return scalar_result
 
-    var prod0 = SIMD[DType.float32, simd_width](0.0)
-    var prod1 = SIMD[DType.float32, simd_width](0.0)
-    var prod2 = SIMD[DType.float32, simd_width](0.0)
-    var prod3 = SIMD[DType.float32, simd_width](0.0)
+    var accumulators = Array[SIMD[DType.float32, simd_width], unroll](
+        uninitialized=True
+    )
+    comptime for lane in range(unroll):
+        accumulators[lane] = SIMD[DType.float32, simd_width](0.0)
     var i = 0
 
-    while i <= d - (simd_width * 4):
-        var vx0 = x.unsafe_load[width=simd_width](i)
-        var vy0 = y.unsafe_load[width=simd_width](i)
-        prod0 = fma(vx0, vy0, prod0)
+    while i <= d - simd_width * unroll:
+        comptime for lane in range(unroll):
+            var offset = i + lane * simd_width
+            accumulators[lane] = fma(
+                x.unsafe_load[width=simd_width](offset),
+                y.unsafe_load[width=simd_width](offset),
+                accumulators[lane],
+            )
+        i += simd_width * unroll
 
-        var vx1 = x.unsafe_load[width=simd_width](i + simd_width)
-        var vy1 = y.unsafe_load[width=simd_width](i + simd_width)
-        prod1 = fma(vx1, vy1, prod1)
-
-        var vx2 = x.unsafe_load[width=simd_width](i + simd_width * 2)
-        var vy2 = y.unsafe_load[width=simd_width](i + simd_width * 2)
-        prod2 = fma(vx2, vy2, prod2)
-
-        var vx3 = x.unsafe_load[width=simd_width](i + simd_width * 3)
-        var vy3 = y.unsafe_load[width=simd_width](i + simd_width * 3)
-        prod3 = fma(vx3, vy3, prod3)
-
-        i += simd_width * 4
-
-    var prod = prod0 + prod1 + prod2 + prod3
+    var prod = accumulators[0]
+    comptime for lane in range(1, unroll):
+        prod += accumulators[lane]
 
     while i <= d - simd_width:
         var vx = x.unsafe_load[width=simd_width](i)
@@ -240,6 +227,41 @@ comptime _HAS_NEON_DOTPROD = (
     and is_64bit()
     and CompilationTarget.has_neon_int8_dotprod()
 )
+
+# Measured on Mojo 1.2.0: retain width8/unroll4 on ARM and AVX2; use the
+# native 16 FP32 lanes on AVX-512 only for full-size embeddings. Wider logical
+# vectors and more unrolling did not consistently improve both L2 and IP.
+comptime FP32_SIMD_WIDTH = 16 if CompilationTarget.has_avx512f() else 8
+comptime FP32_SIMD_UNROLL = 4
+
+
+@always_inline
+def l2_distance_tuned(
+    x: Pointer[Float32, _],
+    y: Pointer[Float32, _],
+    d: Int,
+    threshold: Float32 = Float32.MAX,
+) -> Float32:
+    comptime if FP32_SIMD_WIDTH != 8:
+        if d >= 128:
+            return l2_distance_simd[FP32_SIMD_WIDTH, FP32_SIMD_UNROLL](
+                x, y, d, threshold
+            )
+    return l2_distance_simd[8, FP32_SIMD_UNROLL](x, y, d, threshold)
+
+
+@always_inline
+def inner_product_tuned(
+    x: Pointer[Float32, _],
+    y: Pointer[Float32, _],
+    d: Int,
+) -> Float32:
+    comptime if FP32_SIMD_WIDTH != 8:
+        if d >= 128:
+            return inner_product_simd[FP32_SIMD_WIDTH, FP32_SIMD_UNROLL](
+                x, y, d
+            )
+    return inner_product_simd[8, FP32_SIMD_UNROLL](x, y, d)
 
 @always_inline
 def sq8_dot_product_simd(
@@ -460,9 +482,6 @@ def sq8_l2_from_dot(norm_a: UInt32, norm_b: UInt32, dot: UInt32) -> UInt32:
     return UInt32(math.max(d, 0))
 
 
-from std.collections import Array
-
-
 @always_inline
 def sq8_signed_dot_product_simd_batch4(
     x0: Pointer[Int8, _],
@@ -665,3 +684,37 @@ def inner_product_simd_batch4[simd_width: Int](
     ret_ptr[unsafe_offset=2] = res2
     ret_ptr[unsafe_offset=3] = res3
     return ret^
+
+
+@always_inline
+def l2_distance_tuned_batch4(
+    x0: Pointer[Float32, MutUntrackedOrigin],
+    x1: Pointer[Float32, MutUntrackedOrigin],
+    x2: Pointer[Float32, MutUntrackedOrigin],
+    x3: Pointer[Float32, MutUntrackedOrigin],
+    y: Pointer[Float32, MutUntrackedOrigin],
+    d: Int,
+) -> Array[Float32, 4]:
+    comptime if FP32_SIMD_WIDTH != 8:
+        if d >= 128:
+            return l2_distance_simd_batch4[FP32_SIMD_WIDTH](
+                x0, x1, x2, x3, y, d
+            )
+    return l2_distance_simd_batch4[8](x0, x1, x2, x3, y, d)
+
+
+@always_inline
+def inner_product_tuned_batch4(
+    x0: Pointer[Float32, MutUntrackedOrigin],
+    x1: Pointer[Float32, MutUntrackedOrigin],
+    x2: Pointer[Float32, MutUntrackedOrigin],
+    x3: Pointer[Float32, MutUntrackedOrigin],
+    y: Pointer[Float32, MutUntrackedOrigin],
+    d: Int,
+) -> Array[Float32, 4]:
+    comptime if FP32_SIMD_WIDTH != 8:
+        if d >= 128:
+            return inner_product_simd_batch4[FP32_SIMD_WIDTH](
+                x0, x1, x2, x3, y, d
+            )
+    return inner_product_simd_batch4[8](x0, x1, x2, x3, y, d)

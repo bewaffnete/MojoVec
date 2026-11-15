@@ -16,7 +16,7 @@ Reproducible cold-search benchmarks for MojoVec and FAISS on SIFT1M.
 
 Every MojoVec and FAISS sample follows the same sequence:
 
-1. Wait 30 seconds.
+1. Wait 10 seconds.
 2. Run an untimed 256-query warm-up through `Collection.query()`.
 3. Run five full 10,000-query searches.
 4. Record QPS without including cooldown or warm-up time.
@@ -77,16 +77,16 @@ The FAISS wrapper can recreate its local index files:
   benchmarks/cold_bench/faiss_python_hnsw_benchmark.py build-sq8
 ```
 
-Run the saved indexes with the same per-sample 30-second cooldown:
+Run the saved indexes with the same per-sample 10-second cooldown:
 
 ```bash
 .venv/bin/python \
   benchmarks/cold_bench/faiss_python_hnsw_benchmark.py \
-  search-flat --cooldown 30
+  search-flat --cooldown 10
 
 .venv/bin/python \
   benchmarks/cold_bench/faiss_python_hnsw_benchmark.py \
-  search-sq8 --cooldown 30
+  search-sq8 --cooldown 10
 ```
 
 See `RESULTS.md` for the recorded Apple Silicon measurements.

@@ -2,7 +2,7 @@ from ..core.index import Index
 from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
-from ..utils.distances import l2_distance_simd, inner_product_simd
+from ..utils.distances import l2_distance_tuned, inner_product_tuned
 from .hnsw_graph import HNSWGraph
 from .hnsw_visited import VisitedTable, VisitedTablePool
 from .index_flat import IndexFlat
@@ -455,11 +455,11 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                     var db_f32 = self.storage.get_vector(label)
                     var exact_dist: Float32
                     if self.metric_type == METRIC_L2:
-                        exact_dist = l2_distance_simd[64](
+                        exact_dist = l2_distance_tuned(
                             q_ptr, db_f32, self.d
                         )
                     else:
-                        exact_dist = -inner_product_simd[64](
+                        exact_dist = -inner_product_tuned(
                             q_ptr, db_f32, self.d
                         )
 
