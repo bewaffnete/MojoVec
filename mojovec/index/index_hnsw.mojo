@@ -1,5 +1,15 @@
 from ..core.index import Index
-from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
+from ..core.types import (
+    MetricType,
+    METRIC_L2,
+    METRIC_INNER_PRODUCT,
+    MODE_AUTO,
+    MODE_SERIAL,
+    MODE_RUNTIME,
+    MODE_PTHREAD,
+    get_hnsw_dispatch_mode,
+    set_hnsw_dispatch_mode,
+)
 from ..utils.heap import max_heap_push, max_heap_replace_top, max_heap_pop
 from ..utils.distance_computer import StorageTrait, DistanceComputerTrait
 from ..utils.distances import l2_distance_tuned, inner_product_tuned
@@ -532,19 +542,59 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         var labels_ptr = labels.unsafe_ptr()
         var filter_ptr = filter.unsafe_ptr()
         comptime storage_kind = Self.StorageType.HNSW_PTHREAD_STORAGE_KIND
-        var native_workers = min(n, num_logical_cores())
-        var runtime_workers = parallelism_level(None)
-        if runtime_workers <= 0:
-            runtime_workers = 1
 
-        # AsyncRT exposes only the performance-core pool on Apple Silicon.
-        # For large batches, native pthreads let the OS schedule work across
-        # every logical core. Small batches keep the lower-overhead std path.
-        if (
-            n >= 256
-            and native_workers > runtime_workers
-            and (storage_kind == 0 or storage_kind == 1)
-        ):
+        var mode = get_hnsw_dispatch_mode()
+        var use_serial = (mode == MODE_SERIAL)
+        var use_pthread = False
+
+        if mode == MODE_AUTO:
+            var native_workers = min(n, num_logical_cores())
+            var runtime_workers = parallelism_level(None)
+            if runtime_workers <= 0:
+                runtime_workers = 1
+            # AsyncRT exposes only the performance-core pool on Apple Silicon.
+            # For large batches, native pthreads let the OS schedule work across
+            # every logical core. Small batches keep the lower-overhead std path.
+            if (
+                n >= 256
+                and native_workers > runtime_workers
+                and (storage_kind == 0 or storage_kind == 1)
+            ):
+                use_pthread = True
+        elif mode == MODE_PTHREAD:
+            if storage_kind == 0 or storage_kind == 1:
+                use_pthread = True
+            else:
+                use_pthread = False
+
+        if use_serial:
+            self._search_range[HAS_FILTER](
+                0,
+                1,
+                n,
+                k,
+                x_ptr,
+                distances_ptr,
+                labels_ptr,
+                filter_ptr,
+            )
+            return
+
+        if use_pthread:
+            var native_workers = min(n, num_logical_cores())
+            if native_workers <= 1:
+                self._search_range[HAS_FILTER](
+                    0,
+                    1,
+                    n,
+                    k,
+                    x_ptr,
+                    distances_ptr,
+                    labels_ptr,
+                    filter_ptr,
+                )
+                return
+
             var threads = unsafe_alloc[UInt](native_workers)
             var contexts = unsafe_alloc[HNSWPThreadContext](native_workers)
             var self_address = Int(Pointer(to=self))
@@ -600,9 +650,20 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
                         filter_ptr,
                     )
                 else:
-                    _ = external_call["pthread_join", Int](
+                    var join_status = external_call["pthread_join", Int](
                         threads[unsafe_offset=worker_id], Int(0)
                     )
+                    if join_status != 0:
+                        self._search_range[HAS_FILTER](
+                            worker_id,
+                            native_workers,
+                            n,
+                            k,
+                            x_ptr,
+                            distances_ptr,
+                            labels_ptr,
+                            filter_ptr,
+                        )
 
             contexts.unsafe_free()
             threads.unsafe_free()
@@ -611,7 +672,23 @@ struct IndexHNSW[StorageType: StorageTrait](Index, Movable):
         # Give each parallel task exclusive ownership of one visited table for
         # its whole query chunk. This removes pool scans and atomics from every
         # query while retaining a compact table count tied to the CPU.
+        var runtime_workers = parallelism_level(None)
+        if runtime_workers <= 0:
+            runtime_workers = 1
         var num_workers = min(n, runtime_workers)
+
+        if num_workers <= 1:
+            self._search_range[HAS_FILTER](
+                0,
+                1,
+                n,
+                k,
+                x_ptr,
+                distances_ptr,
+                labels_ptr,
+                filter_ptr,
+            )
+            return
 
         def search_worker(worker_id: Int) {imm}:
             self._search_range[HAS_FILTER](

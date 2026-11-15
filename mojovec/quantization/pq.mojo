@@ -2,6 +2,8 @@ from std.collections import List
 from std.ffi import external_call
 from std.memory.alloc import unsafe_alloc
 from std.collections.span import Span
+from max.algorithm import parallelize
+from max.runtime.asyncrt import parallelism_level
 from ..clustering.kmeans import KMeans
 from ..utils.distances import (
     inner_product_short4,
@@ -9,7 +11,17 @@ from ..utils.distances import (
     l2_distance_short4,
     l2_distance_simd,
 )
-from ..core.types import MetricType, METRIC_L2, METRIC_INNER_PRODUCT
+from ..core.types import (
+    MetricType,
+    METRIC_L2,
+    METRIC_INNER_PRODUCT,
+    MODE_AUTO,
+    MODE_SERIAL,
+    MODE_RUNTIME,
+    MODE_PTHREAD,
+    get_pq_dispatch_mode,
+    set_pq_dispatch_mode,
+)
 
 
 struct PQTrainContext(Movable):
@@ -42,31 +54,55 @@ struct PQTrainContext(Movable):
         self.subspace = subspace
 
 
-def _train_pq_subspace(context: PQTrainContext):
+def _train_pq_subspace[
+    x_origin: Origin,
+    centroids_origin: MutOrigin,
+](
+    subspace: Int,
+    n: Int,
+    d: Int,
+    dsub: Int,
+    ksub: Int,
+    x_ptr: Pointer[Float32, x_origin],
+    centroids_ptr: Pointer[Float32, centroids_origin],
+):
     """Extracts and trains one independent PQ subspace."""
-    var x_ptr = Pointer[
-        Float32, MutUntrackedOrigin
-    ](unsafe_from_address=context.input_address)
-    var pq_centroids = Pointer[
-        Float32, MutUntrackedOrigin
-    ](unsafe_from_address=context.output_address)
     var sub_x = List[Float32](
-        unsafe_uninit_length=context.n * context.dsub
+        unsafe_uninit_length=n * dsub
     )
     var sub_x_ptr = sub_x.unsafe_ptr()
 
-    for i in range(context.n):
-        for j in range(context.dsub):
-            sub_x_ptr[unsafe_offset=i * context.dsub + j] = x_ptr[unsafe_offset=
-                i * context.d + context.subspace * context.dsub + j
+    for i in range(n):
+        for j in range(dsub):
+            sub_x_ptr[unsafe_offset=i * dsub + j] = x_ptr[unsafe_offset=
+                i * d + subspace * dsub + j
             ]
 
-    var kmeans = KMeans(context.dsub, context.ksub, 15)
+    var kmeans = KMeans(dsub, ksub, 15)
     kmeans.train_serial(Span[mut=True, Float32](sub_x))
 
-    var offset = context.subspace * context.ksub * context.dsub
-    for i in range(context.ksub * context.dsub):
-        pq_centroids[unsafe_offset=offset + i] = kmeans.centroids[i]
+    var offset = subspace * ksub * dsub
+    for i in range(ksub * dsub):
+        centroids_ptr[unsafe_offset=offset + i] = kmeans.centroids[i]
+
+
+def _train_pq_subspace(context: PQTrainContext):
+    """Compatibility wrapper extracting and training one independent PQ subspace."""
+    var x_ptr = Pointer[
+        Float32, MutUntrackedOrigin
+    ](unsafe_from_address=context.input_address)
+    var centroids_ptr = Pointer[
+        Float32, MutUntrackedOrigin
+    ](unsafe_from_address=context.output_address)
+    _train_pq_subspace(
+        context.subspace,
+        context.n,
+        context.d,
+        context.dsub,
+        context.ksub,
+        x_ptr,
+        centroids_ptr,
+    )
 
 
 def mojovec_pq_pthread_worker(context_address: Int) abi("C") -> Int:
@@ -133,10 +169,63 @@ struct ProductQuantizer(Movable):
         var x_ptr = x.unsafe_ptr()
         var centroids_ptr = self.centroids.unsafe_ptr()
 
-        # Train independent subspaces on native pthreads. This keeps the
+        var mode = get_pq_dispatch_mode()
+        var use_serial = (mode == MODE_SERIAL)
+        var use_runtime = (mode == MODE_RUNTIME)
+
+        if use_serial:
+            for m in range(self.M):
+                _train_pq_subspace(
+                    m,
+                    n,
+                    self.d,
+                    self.dsub,
+                    self.ksub,
+                    x_ptr,
+                    centroids_ptr,
+                )
+            self.is_trained = True
+            return
+
+        if use_runtime:
+            var runtime_workers = parallelism_level(None)
+            if runtime_workers <= 0:
+                runtime_workers = 1
+            var num_workers = min(self.M, runtime_workers)
+
+            def train_worker(subspace: Int) {imm}:
+                _train_pq_subspace(
+                    subspace,
+                    n,
+                    self.d,
+                    self.dsub,
+                    self.ksub,
+                    x_ptr,
+                    centroids_ptr,
+                )
+
+            parallelize(train_worker, self.M, num_workers)
+            self.is_trained = True
+            return
+
+        # Pthread backend (MODE_PTHREAD or MODE_AUTO fallback/default).
+        # Trains independent subspaces on native pthreads. This keeps the
         # parallelism at the algorithm level while avoiding AsyncRT's repeated
         # raw-pointer worker-pool corruption on Linux x86. Each context owns a
         # disjoint output slice; the caller joins every worker before publish.
+        if self.M <= 1:
+            _train_pq_subspace(
+                0,
+                n,
+                self.d,
+                self.dsub,
+                self.ksub,
+                x_ptr,
+                centroids_ptr,
+            )
+            self.is_trained = True
+            return
+
         var threads = unsafe_alloc[UInt](self.M)
         var contexts = unsafe_alloc[PQTrainContext](self.M)
         for m in range(self.M):
@@ -162,13 +251,41 @@ struct ProductQuantizer(Movable):
             if status != 0:
                 threads[unsafe_offset=m] = 0
 
-        _train_pq_subspace(contexts[unsafe_offset=0])
+        _train_pq_subspace(
+            0,
+            n,
+            self.d,
+            self.dsub,
+            self.ksub,
+            x_ptr,
+            centroids_ptr,
+        )
 
         for m in range(1, self.M):
             if threads[unsafe_offset=m] == 0:
-                _train_pq_subspace(contexts[unsafe_offset=m])
+                _train_pq_subspace(
+                    m,
+                    n,
+                    self.d,
+                    self.dsub,
+                    self.ksub,
+                    x_ptr,
+                    centroids_ptr,
+                )
             else:
-                _ = external_call["pthread_join", Int](threads[unsafe_offset=m], Int(0))
+                var join_status = external_call["pthread_join", Int](
+                    threads[unsafe_offset=m], Int(0)
+                )
+                if join_status != 0:
+                    _train_pq_subspace(
+                        m,
+                        n,
+                        self.d,
+                        self.dsub,
+                        self.ksub,
+                        x_ptr,
+                        centroids_ptr,
+                    )
 
         contexts.unsafe_free()
         threads.unsafe_free()

@@ -2,7 +2,15 @@ from std.collections.span import Span
 from std.memory.alloc import unsafe_alloc
 from std.random.philox import Random
 from std.testing import assert_true, assert_equal, assert_almost_equal, assert_raises, TestSuite
-from mojovec.quantization.pq import ProductQuantizer
+from mojovec.quantization.pq import (
+    ProductQuantizer,
+    MODE_AUTO,
+    MODE_SERIAL,
+    MODE_RUNTIME,
+    MODE_PTHREAD,
+    get_pq_dispatch_mode,
+    set_pq_dispatch_mode,
+)
 from mojovec.utils.distances import l2_distance_simd
 
 def test_pq_encoding_error() raises:
@@ -112,6 +120,65 @@ def test_pq_symmetric_distances() raises:
     codes.unsafe_free()
     decoded.unsafe_free()
     dis_table.unsafe_free()
+
+def test_pq_dispatch_modes() raises:
+    # Verify get/set
+    set_pq_dispatch_mode(MODE_SERIAL)
+    assert_equal(get_pq_dispatch_mode(), MODE_SERIAL)
+    set_pq_dispatch_mode(MODE_RUNTIME)
+    assert_equal(get_pq_dispatch_mode(), MODE_RUNTIME)
+    set_pq_dispatch_mode(MODE_PTHREAD)
+    assert_equal(get_pq_dispatch_mode(), MODE_PTHREAD)
+    set_pq_dispatch_mode(MODE_AUTO)
+    assert_equal(get_pq_dispatch_mode(), MODE_AUTO)
+
+    var d = 16
+    var n = 100
+    var M = 4
+    var ksub = 16
+    var generator = Random(seed=UInt64(223))
+    var data = unsafe_alloc[Float32](n * d)
+    var values = generator.step_uniform()
+    for i in range(n * d):
+        if i != 0 and i % 4 == 0:
+            values = generator.step_uniform()
+        data[unsafe_offset=i] = values[i % 4] * 2.0 - 1.0
+    var data_span = Span[Float32, MutUntrackedOrigin](
+        unsafe_ptr=data, length=n * d
+    )
+
+    # Train under serial mode
+    set_pq_dispatch_mode(MODE_SERIAL)
+    var pq_serial = ProductQuantizer(d, M, ksub)
+    pq_serial.train(data_span)
+    assert_true(pq_serial.is_trained)
+
+    # Train under runtime mode
+    set_pq_dispatch_mode(MODE_RUNTIME)
+    var pq_runtime = ProductQuantizer(d, M, ksub)
+    pq_runtime.train(data_span)
+    assert_true(pq_runtime.is_trained)
+
+    # Train under pthread mode
+    set_pq_dispatch_mode(MODE_PTHREAD)
+    var pq_pthread = ProductQuantizer(d, M, ksub)
+    pq_pthread.train(data_span)
+    assert_true(pq_pthread.is_trained)
+
+    # Train under auto mode
+    set_pq_dispatch_mode(MODE_AUTO)
+    var pq_auto = ProductQuantizer(d, M, ksub)
+    pq_auto.train(data_span)
+    assert_true(pq_auto.is_trained)
+
+    # Verify that centroids across all modes are identical
+    var total_centroids = M * ksub * (d // M)
+    for i in range(total_centroids):
+        assert_equal(pq_serial.centroids[i], pq_runtime.centroids[i])
+        assert_equal(pq_serial.centroids[i], pq_pthread.centroids[i])
+        assert_equal(pq_serial.centroids[i], pq_auto.centroids[i])
+
+    data.unsafe_free()
 
 def main() raises:
     TestSuite.discover_tests[__functions_in_module()]().run()
