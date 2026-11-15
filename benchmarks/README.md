@@ -22,7 +22,7 @@ programs.
 All HNSW suite programs use one million 128-dimensional base vectors, 10,000
 queries, L2 distance, `M=32`, `efConstruction=200`, `efSearch=96`, and `k=10`.
 SQ8 searches rerank 20 candidates with the original Float32 vectors
-(`k_factor=2`) so all four HNSW variants exceed 99% Recall@10.
+(`k_factor=2`) so all HNSW variants exceed 99% Recall@10.
 
 ```bash
 # MojoVec

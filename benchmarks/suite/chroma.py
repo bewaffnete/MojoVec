@@ -33,7 +33,7 @@ config = {
     "hnsw": {
         "space": "l2",
         "ef_construction": 200,
-        "ef_search": 40,
+        "ef_search": 96,
         "max_neighbors": 32,
         "num_threads": 10,
     }
