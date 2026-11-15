@@ -268,7 +268,7 @@ def py_where_predicate(
         String(py=key),
         value,
     )
-    return PythonObject(alloc=PyWhere(where^))
+    return PythonObject(alloc=PyWhere(where))
 
 
 def py_where_combine(
@@ -292,7 +292,7 @@ def py_where_combine(
         where = Where.not_(conditions[0])
     else:
         raise Error("Unsupported where logical operator.")
-    return PythonObject(alloc=PyWhere(where^))
+    return PythonObject(alloc=PyWhere(where))
 
 
 struct PyCollection(Movable, Writable):
@@ -581,7 +581,7 @@ struct PyCollection(Movable, Writable):
         var metadata = self_ptr[].ptr[].get_metadata(
             Int(py=py_record_id)
         )
-        return _metadata_to_python(metadata^)
+        return _metadata_to_python(metadata)
 
     @staticmethod
     def py_get_document(
@@ -605,14 +605,14 @@ struct PyCollection(Movable, Writable):
         self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         var stats = self_ptr[].ptr[].stats()
-        return _stats_to_python(stats^)
+        return _stats_to_python(stats)
 
     @staticmethod
     def py_compact(
         self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         var report = self_ptr[].ptr[].compact()
-        return _report_to_python(report^)
+        return _report_to_python(report)
 
     @staticmethod
     def py_compact_if_needed(
@@ -621,7 +621,7 @@ struct PyCollection(Movable, Writable):
     ) raises -> PythonObject:
         var deleted_ratio = Float64(py=py_deleted_ratio)
         var report = self_ptr[].ptr[].compact_if_needed(deleted_ratio)
-        return _report_to_python(report^)
+        return _report_to_python(report)
 
     @staticmethod
     def py_query(
@@ -634,7 +634,7 @@ struct PyCollection(Movable, Writable):
         var released = _ReleasedPythonThreadState()
         var res = self_ptr[].ptr[].query(mojo_embeddings, num_res)
         released.restore()
-        return _query_results_to_python(res^)
+        return _query_results_to_python(res)
 
     @staticmethod
     def py_query_where(
@@ -654,7 +654,7 @@ struct PyCollection(Movable, Writable):
             num_res,
         )
         released.restore()
-        return _query_results_to_python(results^)
+        return _query_results_to_python(results)
 
     @staticmethod
     def py_query_text(
@@ -670,7 +670,7 @@ struct PyCollection(Movable, Writable):
             num_res,
         )
         released.restore()
-        return _query_results_to_python(results^)
+        return _query_results_to_python(results)
 
     @staticmethod
     def py_query_text_where(
@@ -690,7 +690,7 @@ struct PyCollection(Movable, Writable):
             num_res,
         )
         released.restore()
-        return _query_results_to_python(results^)
+        return _query_results_to_python(results)
 
     @staticmethod
     def py_query_hybrid(
@@ -715,7 +715,7 @@ struct PyCollection(Movable, Writable):
             multiplier,
         )
         released.restore()
-        return _query_results_to_python(results^)
+        return _query_results_to_python(results)
 
     @staticmethod
     def py_query_hybrid_where(
@@ -744,7 +744,7 @@ struct PyCollection(Movable, Writable):
             multiplier,
         )
         released.restore()
-        return _query_results_to_python(results^)
+        return _query_results_to_python(results)
 
     @staticmethod
     def py_add_numpy(
@@ -1042,7 +1042,7 @@ struct PyIVFPQCollection(Movable, Writable):
         var released = _ReleasedPythonThreadState()
         var results = self_ptr[].ptr[].query(embeddings, n_results)
         released.restore()
-        return _query_results_to_python(results^)
+        return _query_results_to_python(results)
 
     @staticmethod
     def py_query_numpy(
@@ -1066,7 +1066,7 @@ struct PyIVFPQCollection(Movable, Writable):
             Int(py=py_n_results),
         )
         released.restore()
-        return _query_results_to_python(results^)
+        return _query_results_to_python(results)
 
     @staticmethod
     def py_name(
@@ -1129,7 +1129,7 @@ struct PyIVFPQCollection(Movable, Writable):
         self_ptr: Pointer[Self, MutAnyOrigin]
     ) raises -> PythonObject:
         var stats = self_ptr[].ptr[].stats()
-        return _ivfpq_stats_to_python(stats^)
+        return _ivfpq_stats_to_python(stats)
 
     @staticmethod
     def py_save(
