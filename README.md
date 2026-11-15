@@ -45,20 +45,20 @@ formats where mature ecosystem decoders are preferable.
 
 **Dataset:** SIFT1M (1,000,000 base vectors, 10,000 query vectors, 128 dimensions).
 **MojoVec/FAISS parameters:** `M=32`, `efConstruction=200`,
-`efSearch=96`, `k=10`. L2 Distance. SQ8 results use exact reranking of
+`efSearch=96`, `k=10`. Squared L2. SQ8 uses exact reranking of
 20 candidates (`k_factor=2`).
 
-### Apple Silicon (ARM64)
+### Apple Silicon (Apple M4, 10 logical cores, 16 GiB RAM)
 
 | Index | Build Time | QPS | Recall@10 |
 |---|---|---|---|
-| MojoVec Flat | ~97.9 s | **23,783** | 99.160% |
-| MojoVec Quantized (SQ8) | **~59.3 s** | **36,353** | 99.144% |
+| MojoVec Flat | ~97.9 s | **25,501** | 99.147% |
+| MojoVec Quantized (SQ8) | **~59.3 s** | **42,212** | 99.163% |
 | FAISS Flat | ~100.8 s | 17,330 | 99.201% |
 | FAISS Quantized (SQ8) | ~104.9 s | 14,712 | 99.185% |
 | ChromaDB (hnswlib, Python) | ~105.6 s | ~1,990 | 99.22% |
 
-### x86_64 (4 Cores VM)
+### x86_64 (4-core VM reference run)
 
 | Index | Build Time | QPS | Recall@10 |
 |---|---|---|---|
@@ -66,19 +66,28 @@ formats where mature ecosystem decoders are preferable.
 | FAISS (HNSW, C++ via Python) | ~693.2 s | ~4,773 | 95.88% |
 | ChromaDB (hnswlib, Python) | ~658.3 s | ~1,610 | 99.20% |
 
-**Methodology:** FAISS uses 10 OpenMP threads. MojoVec uses the Mojo AsyncRT
-worker pool for construction and small query batches; large Flat/SQ8 HNSW
-batches use native OS threads so that all logical CPU cores participate. Apple
-Silicon QPS and recall are isolated cold search-only measurements over ten
-samples; build times come from separate end-to-end runs and are more sensitive
-to thermal state. Recall is the exact intersection against SIFT1M's provided
-ground truth (`sift_groundtruth.ivecs`).
+**Methodology:** Apple M4 MojoVec QPS was refreshed on 2026-11-15 with
+Mojo 1.2.0 and the tuned SIMD kernels (source revision `d662d77`), through the public
+`Collection.query()` API, including managed result allocation, using prebuilt
+indexes. Each of ten samples rests for 10 seconds, warms up on 256 queries,
+then times five searches over all 10,000 queries. MojoVec QPS is the arithmetic
+mean of the ten sample QPS values. Loading, cooldown,
+warm-up and recall calculation are excluded. "Cold" means cooldown, not OS
+file-cache eviction. Recall is the intersection with the supplied SIFT1M
+ground truth. FAISS uses 10 OpenMP threads.
 
-On Apple Silicon, MojoVec Flat delivers **about 1.37x the QPS of FAISS Flat**,
-while MojoVec SQ8 delivers **about 2.47x the QPS of FAISS SQ8**, without
-handwritten assembly in the search kernels.
+FAISS and Chroma figures are retained as the reported reference measurements; they were not
+rerun during the SIMD update. Build times are also from separate construction
+runs, not the search-only rerun. The four-core VM results are a separate
+reference run, not the two-vCPU Codespace used for SIMD tuning.
+See the [raw search samples](benchmarks/cold_bench/RESULTS.md) and
+[cold-search protocol](benchmarks/cold_bench/README.md).
 
-
+FP32 kernel tuning was measured separately on native Apple M4 and Xeon
+AVX2/AVX-512 targets with Mojo 1.2.0. AVX-512 uses width 16 for dimensions
+>=128; ARM and AVX2 retain width 8. The resulting kernel speedups are not used
+to extrapolate the search QPS above. See the
+[SIMD measurements and raw CSVs](benchmarks/simd/README.md).
 
 ---
 

@@ -17,12 +17,19 @@ Reproducible cold-search benchmarks for MojoVec and FAISS on SIFT1M.
 Every MojoVec and FAISS sample follows the same sequence:
 
 1. Wait 10 seconds.
-2. Run an untimed 256-query warm-up through `Collection.query()`.
+2. Run an untimed 256-query warm-up through `Collection.query()` (MojoVec)
+   or `index.search()` (FAISS).
 3. Run five full 10,000-query searches.
 4. Record QPS without including cooldown or warm-up time.
 
-Recall@10 is computed from the final managed `QueryResults` against the
-provided SIFT1M ground truth.
+Recall@10 is computed from the final search results against the provided
+SIFT1M ground truth. MojoVec uses managed `QueryResults`; FAISS uses its
+returned label array.
+
+"Cold" means a cooldown between timed samples, not a cold OS file cache.
+Report the arithmetic mean of the ten sample QPS values separately from
+aggregate QPS (total timed queries / total search time). The executables print
+the latter as `aggregate`; the two statistics are not interchangeable.
 
 ## Required local files
 

@@ -2,47 +2,67 @@
 
 Hardware: Apple Silicon M4, fanless Mac.
 
-## Public MojoVec API
+## Public MojoVec API: tuned SIMD, 2026-11-15
 
 Recorded with `Collection.load()`, `set_ef_search()`, and `query()`. These
 measurements include creation and destruction of managed `QueryResults`.
 
-| Index | Aggregate QPS | Recall@10 |
+Protocol: 10 samples, five 10,000-query searches per sample, 10-second cooldown
+and an untimed 256-query warm-up before each sample. Loading and recall
+calculation are not timed. Both executables were rebuilt with Mojo 1.2.0
+(2016d0cd) from source revision `d662d77`, after FP32 SIMD tuning. Existing
+indexes were loaded without rebuilding their graphs.
+
+| Index | QPS | Recall@10 |
 |---|---:|---:|
-| MojoVec Flat HNSW | 25,588 | 99.147% |
-| MojoVec SQ8 HNSW | 41,808 | 99.163% |
+| MojoVec Flat HNSW | 25,501 | 99.147% |
+| MojoVec SQ8 HNSW | 42,212 | 99.163% |
+
+QPS is the arithmetic mean of the ten sample QPS values. Values are rounded to
+whole QPS in the table; sample values below are recorded to three decimal
+places. The full-precision logs are saved in [results/](results/).
+The executables also print a time-weighted `aggregate` (total queries / total
+measured time): 25,457.541 QPS for Flat and 42,026.430 QPS for SQ8. This is a
+different statistic and is not the mean reported in the README QPS column.
 
 MojoVec Flat public API samples:
 
 ```text
-26085.414
-25800.739
-25062.556
-25689.335
-25321.648
-27129.209
-26418.209
-25230.595
-24406.221
-24952.441
+25851.497
+26524.172
+26294.187
+25195.339
+26404.090
+23378.218
+25620.910
+23804.196
+26069.542
+25867.104
 ```
 
 MojoVec SQ8 public API samples:
 
 ```text
-45900.321
-42168.898
-40900.565
-42391.742
-41163.579
-42107.249
-39729.616
-40297.557
-41630.795
-42375.970
+43624.612
+43927.814
+38605.060
+43119.730
+45247.517
+40137.269
+41757.629
+36675.444
+44933.238
+44093.383
 ```
 
-## Zero-copy search kernel
+## Reference search records
+
+The FAISS figures below remain the reference baseline used in the main README;
+FAISS was not rerun during the MojoVec SIMD update. The MojoVec rows in this
+table are the earlier low-level search records, not the refreshed public API
+measurements above. Index sizes refer to those reference artifacts, not the
+currently saved collection files. Comparisons use separately recorded runs,
+not a fresh simultaneous head-to-head measurement.
 
 | Index | Aggregate QPS | Recall@10 | Saved size |
 |---|---:|---:|---:|

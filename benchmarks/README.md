@@ -9,6 +9,8 @@ consistently.
 - `tools/` — dataset generation utilities.
 - `data/` — local benchmark datasets and generated binary data.
 - `cold_bench/` — saved indexes and reproducible cold search-only programs.
+- `simd/` — FP32 width/unroll microbenchmarks, raw ARM/AVX2/AVX-512 results,
+  and tuning methodology; these are not end-to-end search QPS measurements.
 - `scratch/` — experimental benchmarks that are not part of the supported suite.
 
 `data/sift1m/`, `cold_bench/`, and `scratch/` are intentionally excluded from
