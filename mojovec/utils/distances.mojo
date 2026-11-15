@@ -230,7 +230,16 @@ def inner_product_simd[simd_width: Int](x: Pointer[Float32, _], y: Pointer[Float
 from std.sys.intrinsics import llvm_intrinsic
 import std.math as math
 
-from std.sys.info import is_apple_gpu
+from std.sys import CompilationTarget
+from std.sys.info import is_64bit
+
+# These LLVM intrinsics are AArch64 CPU instructions, not Metal operations.
+# Keep the portable SIMD path on targets without the optional dotprod feature.
+comptime _HAS_NEON_DOTPROD = (
+    CompilationTarget.is_arm()
+    and is_64bit()
+    and CompilationTarget.has_neon_int8_dotprod()
+)
 
 @always_inline
 def sq8_dot_product_simd(
@@ -242,7 +251,7 @@ def sq8_dot_product_simd(
     Computes the dot product between two UInt8 vectors using explicit UDOT intrinsics
     when available, and falls back to generic SIMD multiplication otherwise.
     """
-    comptime if is_apple_gpu():
+    comptime if _HAS_NEON_DOTPROD:
         var acc0 = SIMD[DType.uint32, 4]()
         var acc1 = SIMD[DType.uint32, 4]()
         var acc2 = SIMD[DType.uint32, 4]()
@@ -347,7 +356,7 @@ def sq8_signed_dot_product_simd(
     d: Int,
 ) -> Int32:
     """Computes an Int8 dot product with SDOT on AArch64 and SIMD elsewhere."""
-    comptime if is_apple_gpu():
+    comptime if _HAS_NEON_DOTPROD:
         var acc0 = SIMD[DType.int32, 4]()
         var acc1 = SIMD[DType.int32, 4]()
         var acc2 = SIMD[DType.int32, 4]()
@@ -465,7 +474,7 @@ def sq8_signed_dot_product_simd_batch4(
 ) -> Array[Int32, 4]:
     """Computes four signed SQ8 dots while loading each query block once."""
     var result = Array[Int32, 4](uninitialized=True)
-    comptime if is_apple_gpu():
+    comptime if _HAS_NEON_DOTPROD:
         var acc0 = SIMD[DType.int32, 4]()
         var acc1 = SIMD[DType.int32, 4]()
         var acc2 = SIMD[DType.int32, 4]()

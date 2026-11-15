@@ -45,6 +45,13 @@ jobs:
       - name: Run Mojo test suite
         run: pixi run test-mojo
 
+      - name: Test portable SQ8 kernels without ARM dotprod
+        if: runner.os == 'macOS' && runner.arch == 'ARM64'
+        run: |
+          pixi run mojo build -I . --target-features=-dotprod \
+            tests/test_distances_simd.mojo -o "$RUNNER_TEMP/mojovec-simd-fallback"
+          "$RUNNER_TEMP/mojovec-simd-fallback"
+
   python:
     name: Python ${{ matrix.python-version }} (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
