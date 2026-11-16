@@ -6,6 +6,7 @@ import ctypes
 import os
 import site
 import sys
+import warnings
 from pathlib import Path
 
 from ._dispatch import load_native
@@ -64,12 +65,24 @@ def _preload_mojo_runtime() -> bool:
     return False
 
 
-try:
-    _native, _native_backend = load_native()
-except ImportError as native_import_error:
-    runtime_names = ("libKGENCompilerRTShared", "libAsyncRTMojoBindings")
-    if not any(name in str(native_import_error) for name in runtime_names):
-        raise
-    if not _preload_mojo_runtime():
-        raise
-    _native, _native_backend = load_native()
+with warnings.catch_warnings():
+    warnings.filterwarnings(
+        "ignore",
+        category=DeprecationWarning,
+        message=r"builtin type _.* has no __module__ attribute",
+    )
+    try:
+        _native, _native_backend = load_native()
+    except ImportError as native_import_error:
+        runtime_names = ("libKGENCompilerRTShared", "libAsyncRTMojoBindings")
+        if not any(name in str(native_import_error) for name in runtime_names):
+            raise
+        if not _preload_mojo_runtime():
+            raise
+        _native, _native_backend = load_native()
+
+for _type_name in ("_Collection", "_Where", "_IVFPQCollection"):
+    _type = getattr(_native, _type_name, None)
+    if _type is not None:
+        _type.__module__ = "mojovec._native"
+

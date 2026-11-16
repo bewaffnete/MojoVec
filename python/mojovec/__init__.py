@@ -6,7 +6,8 @@ small, stable, and easy for IDEs and documentation tools to inspect.
 
 from __future__ import annotations
 
-from ._version import __version__
+from . import io
+from ._client import Client
 from ._collection import Collection, load, recover
 from ._ivfpq import IVFPQCollection, IVFPQStats
 from ._runtime import _native_backend
@@ -18,6 +19,9 @@ from ._types import (
     QueryResult,
     Where,
 )
+from ._version import __version__
+from .io import read_fvecs, read_ivecs
+
 
 def native_backend() -> str:
     """Return the native CPU backend selected for this Python process.
@@ -31,6 +35,7 @@ def native_backend() -> str:
 
 # Re-exported objects should appear to users and documentation tools as members
 # of the public package rather than implementation modules.
+Client.__module__ = __name__
 Collection.__module__ = __name__
 IVFPQCollection.__module__ = __name__
 IVFPQStats.__module__ = __name__
@@ -38,6 +43,7 @@ load.__module__ = __name__
 recover.__module__ = __name__
 
 __all__ = [
+    "Client",
     "Collection",
     "IVFPQCollection",
     "IVFPQStats",
@@ -48,7 +54,10 @@ __all__ = [
     "WAL_SYNC",
     "Where",
     "__version__",
+    "io",
     "load",
     "native_backend",
+    "read_fvecs",
+    "read_ivecs",
     "recover",
 ]
