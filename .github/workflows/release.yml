@@ -67,8 +67,8 @@ jobs:
         run: |
           wheel_path="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
           smoke_dir="$(mktemp -d)"
-          python3 -m venv "$smoke_dir/venv"
-          "$smoke_dir/venv/bin/python" -m pip install "$wheel_path"
+          "$pythonLocation/bin/python" -m venv "$smoke_dir/venv"
+          "$smoke_dir/venv/bin/python" -m pip install "$wheel_path" numpy pyarrow datasets
           cd "$smoke_dir"
           "$smoke_dir/venv/bin/python" -c \
             'import mojovec; from importlib.metadata import version; assert mojovec.__version__ == version("mojovec"); print(mojovec.__version__, mojovec._native_backend)'
@@ -85,13 +85,13 @@ jobs:
         shell: bash
         run: |
           wheel_path="$(find "$GITHUB_WORKSPACE/dist" -name '*.whl' -print -quit)"
-          pixi run pip install --force-reinstall "$wheel_path"
-          pixi run pytest python/tests/
+          "$pythonLocation/bin/python" -m pip install --force-reinstall "$wheel_path"
+          "$pythonLocation/bin/python" -m pytest python/tests/
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: mojovec-wheel-${{ matrix.os }}
+          name: mojovec-wheel-${{ matrix.os }}-py${{ matrix.python-version }}
           path: dist/*.whl
           if-no-files-found: error
 
